@@ -270,7 +270,11 @@ def validate_campaign(root: Path) -> int:
         entity_rule = entity_types.get(entity_type, {})
         if not isinstance(entity_rule, dict):
             entity_rule = {}
-        if entity_rule and not relative.as_posix().startswith("templates/"):
+        if (
+            entity_rule
+            and metadata.get("ownership") == "campaign"
+            and not relative.as_posix().startswith("templates/")
+        ):
             for field in entity_rule.get("required_fields", []):
                 if field not in metadata:
                     errors.append(f"{relative}: missing required field {field}")

@@ -287,4 +287,25 @@ class GeneratorTest(unittest.TestCase):
                 self.assertIn('warden_only: true',text)
             self.assertEqual(validate_campaign(root),0)
 
+    def test_world_record_family_creates_and_validates(self):
+        expected={
+            'system':'03-world/systems/system-ypsilon.md',
+            'location':'03-world/locations/location-station.md',
+            'creature':'06-creatures/creature-signal.md',
+            'ship':'07-ships/ship-prospero.md',
+            'item':'08-items/item-sample.md',
+        }
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            for kind,relative in expected.items():
+                entity_id=Path(relative).stem
+                created=create_entity(root,kind,entity_id,kind.title())
+                self.assertEqual(created.relative_to(root).as_posix(),relative)
+                text=created.read_text(encoding='utf-8').lower()
+                self.assertNotIn('armor:',text)
+                self.assertNotIn('wounds:',text)
+                self.assertNotIn('combat:',text)
+            self.assertEqual(validate_campaign(root),0)
+
 if __name__=='__main__': unittest.main()
