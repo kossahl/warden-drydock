@@ -20,9 +20,21 @@ python scripts/drydock.py validate
 python scripts/drydock.py context
 ```
 
+When a newer Warden Drydock package is available, ask the AI to preview the
+update before applying it:
+
+```bash
+drydock upgrade .
+drydock upgrade . --apply
+```
+
+The preview is non-mutating. An upgrade never overwrites campaign-owned or
+generated files and stops without changes when managed customizations conflict.
+
 ## Repository ownership
 
 - Campaign content belongs to this repository.
 - The framework is not a Git submodule.
 - `.drydock.json` records the generator and adapter versions.
+- `.drydock-lock.json` records installed ownership and content baselines.
 - Framework updates must be applied as reviewable, non-destructive migrations.

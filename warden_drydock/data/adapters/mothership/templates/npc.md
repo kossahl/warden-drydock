@@ -2,7 +2,7 @@
 id: npc-000
 type: npc
 status: idea
-ownership: campaign
+ownership: shared
 name: ""
 factions: []
 locations: []

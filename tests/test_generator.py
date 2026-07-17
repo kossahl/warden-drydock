@@ -1,5 +1,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from contextlib import redirect_stdout
+from io import StringIO
 import json
 import subprocess
 import sys
@@ -10,6 +12,7 @@ from warden_drydock.cli import main
 from warden_drydock.core.generator import init_campaign
 from warden_drydock.core.validation import validate_campaign
 from warden_drydock.core.context import build_context
+from warden_drydock.core.upgrade import upgrade_campaign
 
 class GeneratorTest(unittest.TestCase):
     def test_mothership_campaign_generation(self):
@@ -19,6 +22,17 @@ class GeneratorTest(unittest.TestCase):
             self.assertTrue((root/'.drydock.json').exists())
             manifest=json.loads((root/'.drydock.json').read_text())
             self.assertEqual(manifest['framework_version'],__version__)
+            lock=json.loads((root/'.drydock-lock.json').read_text())
+            self.assertEqual(lock['schema_version'],1)
+            self.assertEqual(
+                lock['files']['01-campaign/campaign-overview.md']['ownership'],
+                'campaign',
+            )
+            self.assertEqual(
+                lock['files']['00-drydock/ai-context.md']['ownership'],
+                'generated',
+            )
+            self.assertEqual(lock['files']['templates/npc.md']['ownership'],'shared')
             self.assertIn('Test Campaign',(root/'README.md').read_text())
             self.assertTrue((root/'templates'/'npc.md').exists())
             self.assertEqual(
@@ -89,5 +103,38 @@ class GeneratorTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode,1)
             self.assertIn('merge conflict marker',result.stdout)
+
+    def test_upgrade_previews_then_restores_missing_managed_file(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            readme=root/'README.md'
+            readme.unlink()
+            preview=StringIO()
+            with redirect_stdout(preview):
+                self.assertEqual(upgrade_campaign(root),0)
+            self.assertFalse(readme.exists())
+            self.assertIn('Would update: README.md',preview.getvalue())
+            self.assertEqual(upgrade_campaign(root,apply=True),0)
+            self.assertTrue(readme.exists())
+
+    def test_upgrade_blocks_modified_managed_file_and_preserves_campaign(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            readme=root/'README.md'
+            readme.write_text('local customization',encoding='utf-8')
+            campaign=root/'01-campaign'/'campaign-overview.md'
+            original=campaign.read_text(encoding='utf-8')
+            # Simulate a framework update by changing the recorded baseline.
+            lock=json.loads((root/'.drydock-lock.json').read_text())
+            lock['files']['README.md']['sha256']='obsolete-baseline'
+            (root/'.drydock-lock.json').write_text(json.dumps(lock),encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(upgrade_campaign(root,apply=True),1)
+            self.assertEqual(readme.read_text(encoding='utf-8'),'local customization')
+            self.assertEqual(campaign.read_text(encoding='utf-8'),original)
+            self.assertIn('CONFLICT: README.md',output.getvalue())
 
 if __name__=='__main__': unittest.main()

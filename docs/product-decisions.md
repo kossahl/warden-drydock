@@ -68,6 +68,11 @@ Future update behavior should distinguish:
 
 Updates must be non-destructive and reviewable, preferably through a branch or patch when conflicts exist.
 
+The implemented ownership lock records the installed baseline for each
+generated path. `drydock upgrade` is preview-only unless `--apply` is supplied,
+never updates campaign-owned or generated files, and aborts without changes if
+a managed file has a local modification that conflicts with the new baseline.
+
 ## Adapter model
 
 The core understands generic concepts such as:

@@ -44,6 +44,20 @@ then initializes Git and creates the first commit after reviewing the result.
 The lower-level `drydock init` command remains available for development and
 workflows that intentionally orchestrate those steps separately.
 
+## Updating a campaign
+
+An agent previews framework and adapter updates before changing a campaign:
+
+```bash
+drydock upgrade /path/to/campaign
+drydock upgrade /path/to/campaign --apply
+```
+
+The generated `.drydock-lock.json` records file ownership and baseline hashes.
+Campaign-owned and generated files are never overwritten. Locally modified
+managed or shared files block the entire upgrade so the agent can review the
+conflict before retrying.
+
 ## Architecture
 
 - `warden_drydock/core/`: system-agnostic project generation and validation

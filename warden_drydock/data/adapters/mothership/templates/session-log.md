@@ -2,7 +2,7 @@
 id: session-000
 type: session
 status: draft
-ownership: campaign
+ownership: shared
 date:
 characters: []
 ---

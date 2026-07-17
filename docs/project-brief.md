@@ -41,6 +41,7 @@ The current implementation provides:
 - a Python CLI;
 - a cohesive bootstrap command for AI-assisted onboarding;
 - standalone campaign generation;
+- ownership-aware, preview-first framework upgrades;
 - a system-agnostic core;
 - a Mothership adapter;
 - generated campaign validation;
@@ -57,6 +58,10 @@ explicit, agent-reviewed follow-up operation.
 The installed script and framework commands share one source implementation.
 Generated AI context excludes provisional session logs and contains only
 sessions whose status indicates human approval.
+
+Generated repositories contain `.drydock-lock.json`, which records ownership
+and installed hashes. Framework upgrades are all-or-nothing when conflicts are
+detected and require an explicit `--apply` flag.
 
 ## Explicit non-goals for the current milestone
 

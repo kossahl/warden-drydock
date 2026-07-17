@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from . import __version__
 from .core.generator import init_campaign
+from .core.upgrade import upgrade_campaign
 from .core.validation import validate_campaign
 from .core.context import build_context
 
@@ -34,6 +35,10 @@ def parser() -> argparse.ArgumentParser:
 
     ctx = sub.add_parser("context", help="Build generated AI context")
     ctx.add_argument("path", type=Path, nargs="?", default=Path.cwd())
+
+    upgrade = sub.add_parser("upgrade", help="Preview or apply managed framework updates")
+    upgrade.add_argument("path", type=Path, nargs="?", default=Path.cwd())
+    upgrade.add_argument("--apply", action="store_true")
 
     return p
 
@@ -68,4 +73,6 @@ def main(argv=None) -> int:
     if args.command == "context":
         build_context(args.path)
         return 0
+    if args.command == "upgrade":
+        return upgrade_campaign(args.path, apply=args.apply)
     return 2

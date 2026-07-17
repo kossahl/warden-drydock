@@ -43,6 +43,10 @@ python scripts/drydock.py context
 
 Do not rebuild repository structures from memory when a Drydock operation exists.
 
+For framework updates, use `drydock upgrade .` to preview first. Use
+`drydock upgrade . --apply` only after reviewing the preview. Never work around
+an ownership conflict by overwriting campaign files.
+
 ## Canon gate
 
 New material starts as `idea`, `draft`, or `review`. Promote it to `canon` only after explicit approval.

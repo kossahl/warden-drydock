@@ -2,7 +2,7 @@
 id: adventure-000
 type: adventure
 status: draft
-ownership: campaign
+ownership: shared
 name: ""
 ---
 

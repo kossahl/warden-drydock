@@ -2,7 +2,7 @@
 id: faction-000
 type: faction
 status: idea
-ownership: campaign
+ownership: shared
 name: ""
 clock: 0
 clock_max: 6
