@@ -68,6 +68,22 @@
       "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
       "required_values": {"visibility": "warden", "warden_only": "true"}
     },
+    "clock": {
+      "template": "templates/clock.md", "destination": "11-campaign-engine/clocks/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"], "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
+    "consequence": {
+      "template": "templates/consequence.md", "destination": "11-campaign-engine/consequences/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"], "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
+    "faction-turn": {
+      "template": "templates/faction-turn.md", "destination": "11-campaign-engine/faction-turns/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"], "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
+    "random-table": {
+      "template": "templates/random-table.md", "destination": "14-random-tables/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"], "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
     "faction": {
       "template": "templates/faction.md",
       "destination": "04-factions/{id}.md",

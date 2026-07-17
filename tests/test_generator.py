@@ -326,4 +326,13 @@ class GeneratorTest(unittest.TestCase):
                 self.assertIn('player',text.lower())
             self.assertEqual(validate_campaign(root),0)
 
+    def test_campaign_engine_record_family_creates_and_validates(self):
+        expected={'clock':'11-campaign-engine/clocks/clock-decay.md','consequence':'11-campaign-engine/consequences/consequence-loss.md','faction-turn':'11-campaign-engine/faction-turns/faction-turn-001.md','random-table':'14-random-tables/random-table-signals.md'}
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            for kind,relative in expected.items():
+                created=create_entity(root,kind,Path(relative).stem,kind.title())
+                self.assertEqual(created.relative_to(root).as_posix(),relative)
+            self.assertEqual(validate_campaign(root),0)
+
 if __name__=='__main__': unittest.main()
