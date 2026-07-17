@@ -6,7 +6,7 @@
    documentation.
 2. Set `warden_drydock.__version__`; package metadata and generated manifests
    read that value dynamically.
-3. Update user-facing release notes when a changelog is introduced.
+3. Update `CHANGELOG.md` with user-facing release notes.
 
 ## Verify
 

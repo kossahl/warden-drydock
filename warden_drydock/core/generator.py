@@ -73,9 +73,9 @@ def _write_lock(path: Path, ownership: dict[str, str]) -> None:
     )
 
 
-def init_campaign(path: Path, *, name: str, adapter: str, force: bool = False) -> None:
+def init_campaign(path: Path, *, name: str, adapter: str) -> None:
     path = path.resolve()
-    if path.exists() and any(path.iterdir()) and not force:
+    if path.exists() and any(path.iterdir()):
         raise SystemExit(f"Refusing to initialize non-empty directory: {path}")
     path.mkdir(parents=True, exist_ok=True)
     ownership: dict[str, str] = {}

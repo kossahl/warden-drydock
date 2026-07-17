@@ -21,7 +21,6 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--adapter", default="mothership", choices=["mothership"])
     init.add_argument("--name")
     init.add_argument("--interactive", action="store_true")
-    init.add_argument("--force", action="store_true")
 
     bootstrap = sub.add_parser(
         "bootstrap", help="Create, build context for, and validate a campaign repository"
@@ -59,12 +58,7 @@ def main(argv=None) -> int:
             entered = input(f"Campaign name [{default}]: ").strip()
             name = entered or default
         name = name or args.path.resolve().name.replace("-", " ").title()
-        init_campaign(
-            args.path,
-            name=name,
-            adapter=args.adapter,
-            force=args.force if args.command == "init" else False,
-        )
+        init_campaign(args.path, name=name, adapter=args.adapter)
         print(f"Created Warden Drydock campaign at {args.path.resolve()}", flush=True)
         if args.command == "bootstrap":
             script = args.path.resolve() / "scripts" / "drydock.py"

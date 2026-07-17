@@ -58,7 +58,7 @@ Requirements:
 Open the generated campaign repository instead and tell Codex:
 
 ```text
-Read AGENTS.md, README.md, START_HERE.md, 00-system/ai-context.md, and all system instructions before making changes.
+Read AGENTS.md, README.md, .drydock.json, and 00-drydock/ai-context.md before making changes.
 
 This campaign was created by Warden Drydock. The human Warden has final authority, and no AI-generated material becomes canon without explicit approval.
 

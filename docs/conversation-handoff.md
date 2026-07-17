@@ -66,13 +66,15 @@ The name retains the Warden/Mothership heritage and suggests a place where campa
 The repository currently includes:
 
 - a Python package and CLI;
+- deterministic bootstrap and adapter-driven entity creation;
 - a generic project template;
 - a Mothership adapter;
 - temporary generated campaigns used by tests and release smoke checks;
-- validation and context-building behavior;
+- semantic validation and canon-safe context-building behavior;
+- ownership locks and preview-first non-destructive upgrades;
 - initial ADRs;
-- unit tests for campaign generation;
-- AI-assisted setup documentation.
+- unit and standalone workflow tests;
+- user, developer, adapter, setup, and release documentation.
 
 No campaign content is committed to the framework repository. One known fact
 from the original design conversation remains relevant when a real campaign is
@@ -101,16 +103,16 @@ The cohesive deterministic command for steps 2 through 5 is `drydock
 bootstrap`. It runs the generated campaign's local context and validation
 commands, while Git initialization remains an explicit agent-reviewed step.
 
-## Immediate engineering priorities
+## Post-MVP engineering priorities
 
-The next likely priorities are:
+The alpha MVP is complete locally. Work beyond it should be prioritized from
+real campaign use and release feedback. Likely follow-ups are:
 
-1. harden the AI-assisted bootstrap experience for Codex and VS Code;
-2. define and implement version-lock and non-destructive update behavior;
-3. formalize file ownership metadata;
-4. improve validation beyond syntax toward campaign semantics;
-5. strengthen generated campaign instructions and first-run onboarding;
-6. add release packaging so agents can install or invoke Drydock without a source checkout.
+1. publish and verify a public package installation path;
+2. test a real framework-version upgrade with migrated campaign fixtures;
+3. expand context selection as real campaign scale reveals retrieval needs;
+4. add adapter-specific semantics only when concrete Mothership workflows need them;
+5. evaluate a second adapter before generalizing the adapter contract further.
 
 ## Constraints for future work
 
