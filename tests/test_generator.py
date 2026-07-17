@@ -387,4 +387,22 @@ class GeneratorTest(unittest.TestCase):
                 self.assertEqual(validate_campaign(root),1)
             self.assertIn('forbidden field combination',output.getvalue())
 
+    def test_mothership_workflow_guides_are_packaged_and_command_driven(self):
+        guides=[
+            'campaign-inception.md','situation-design.md','mystery-design.md',
+            'session-preparation.md','debrief-workflow.md',
+            'faction-turn-workflow.md','world-state.md',
+            'canon-and-revelation.md','handout-safety.md',
+        ]
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            for guide in guides:
+                text=(root/'docs'/guide).read_text(encoding='utf-8')
+                self.assertIn('python scripts/drydock.py',text)
+                self.assertTrue('review' in text.lower() or 'warden' in text.lower())
+            principles=(root/'00-drydock/system-principles.md').read_text(encoding='utf-8')
+            self.assertIn('narrative records',principles)
+            self.assertIn('provisional',principles)
+
 if __name__=='__main__': unittest.main()
