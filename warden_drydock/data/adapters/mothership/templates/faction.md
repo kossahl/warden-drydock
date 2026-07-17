@@ -1,0 +1,20 @@
+---
+id: faction-000
+type: faction
+status: idea
+ownership: campaign
+name: ""
+clock: 0
+clock_max: 6
+---
+
+# Name
+
+## Public identity
+## Actual objective
+## Current plan
+## Resources
+## Constraints
+## Internal conflict
+## If unopposed
+## Warden truth
