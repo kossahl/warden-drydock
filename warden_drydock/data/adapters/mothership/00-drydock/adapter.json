@@ -16,6 +16,12 @@
     {"path": "10-adventures", "canonical": "10-adventures/available", "direct_files_only": true}
   ],
   "entity_types": {
+    "character": {
+      "template": "templates/character.md",
+      "destination": "02-players/characters/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
     "adventure": {
       "template": "templates/adventure.md",
       "destination": "10-adventures/available/{id}.md",
