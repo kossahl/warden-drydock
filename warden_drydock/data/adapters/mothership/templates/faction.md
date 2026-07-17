@@ -4,17 +4,23 @@ type: faction
 status: idea
 ownership: shared
 name: ""
-clock: 0
-clock_max: 6
+visibility: warden
+warden_only: true
 ---
 
 # Name
 
 ## Public identity
+## Reputation and relationships
 ## Actual objective
 ## Current plan
 ## Resources
+## Reach and scarcity
 ## Constraints
 ## Internal conflict
+## Recent actions
+## Current state
 ## If unopposed
+## Player knowledge
+## Player beliefs
 ## Warden truth

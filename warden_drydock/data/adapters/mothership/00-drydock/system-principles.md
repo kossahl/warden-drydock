@@ -15,3 +15,11 @@ system: mothership
 - Do not require one clue, NPC, scene, or outcome for progression.
 - Combat is dangerous and not a balanced default solution.
 - Mysteries may remain partially unresolved.
+- Record numeric characteristics, saves, armor, wounds, and combat profiles in
+  the tools or sheets chosen by the table, not in Drydock narrative records.
+- Separate Warden truth, observable evidence, and player beliefs.
+- Treat generated records as provisional until the Warden reviews them.
+- Use `python scripts/drydock.py new` for records, then validate and rebuild
+  context; never improvise campaign files in place of deterministic commands.
+- Share only records explicitly marked for players and approved for their
+  stated audience.

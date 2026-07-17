@@ -24,7 +24,7 @@ Create a new Warden Drydock campaign in this directory.
 Use the Mothership adapter.
 Ask only for campaign-specific facts that cannot be inferred.
 Follow the complete bootstrap contract at
-https://github.com/kossahl/warden-drydock/blob/v0.1.0/BOOTSTRAP.md. Do not
+https://github.com/kossahl/warden-drydock/blob/v0.2.0/BOOTSTRAP.md. Do not
 invent campaign canon.
 ```
 
@@ -61,6 +61,16 @@ For adapter-defined records, the agent invokes `drydock new` or the campaign's
 local `python scripts/drydock.py new` command. It then edits the new provisional
 record with the details supplied by the Warden.
 
+The Mothership adapter covers the full narrative lifecycle: people and
+factions; systems, locations, ships, creatures, and items; clues, beliefs,
+revelations, and adventures; clocks, consequences, and faction turns; session
+preparation, logs, and debriefs; player handouts; and random tables. Mechanical
+statistics remain in the table's chosen character or rules tools.
+
+Handouts are the only records that default to player visibility. The agent must
+name their audience, include only reviewed information available to that
+audience, and validate before sharing.
+
 ## Canon and session records
 
 The lifecycle is `idea -> draft -> review -> canon -> revealed`. The agent must
@@ -93,6 +103,10 @@ Campaign-owned content and generated context are never overwritten. If a
 framework, adapter, or shared file was locally changed and its upstream version
 also changed, the upgrade aborts without modifying anything. Resolve the
 customization deliberately and preview again.
+
+Campaign-owned files in the legacy `06-factions`, `05-characters/npcs`, and
+root `10-adventures` locations are not moved during upgrade. Validation warns
+about them; moving them to canonical paths is optional and manual.
 
 ## Backups and portability
 

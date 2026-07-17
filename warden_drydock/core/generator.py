@@ -53,7 +53,28 @@ def _declared_ownership(path: Path) -> str | None:
     return None
 
 
-def _write_lock(path: Path, ownership: dict[str, str]) -> None:
+def _adapter_metadata(adapter: str) -> tuple[str, str]:
+    config_path = DATA / "adapters" / adapter / "00-drydock" / "adapter.json"
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Cannot read adapter metadata for {adapter}: {exc}") from exc
+    declared_name = config.get("adapter")
+    declared_version = config.get("adapter_version")
+    if not isinstance(declared_name, str) or not declared_name:
+        raise SystemExit(f"Adapter {adapter} has no valid adapter name")
+    if declared_name != adapter:
+        raise SystemExit(
+            f"Adapter directory {adapter} declares a different name: {declared_name}"
+        )
+    if not isinstance(declared_version, str) or not declared_version:
+        raise SystemExit(f"Adapter {adapter} has no valid adapter version")
+    return declared_name, declared_version
+
+
+def _write_lock(
+    path: Path, ownership: dict[str, str], *, adapter_version: str
+) -> None:
     files = {}
     for relative, default in sorted(ownership.items()):
         target = path / relative
@@ -65,7 +86,7 @@ def _write_lock(path: Path, ownership: dict[str, str]) -> None:
     lock = {
         "schema_version": 1,
         "framework_version": __version__,
-        "adapter_version": "0.1.0",
+        "adapter_version": adapter_version,
         "files": files,
     }
     (path / ".drydock-lock.json").write_text(
@@ -78,6 +99,7 @@ def init_campaign(path: Path, *, name: str, adapter: str) -> None:
     if path.exists() and any(path.iterdir()):
         raise SystemExit(f"Refusing to initialize non-empty directory: {path}")
     path.mkdir(parents=True, exist_ok=True)
+    adapter_name, adapter_version = _adapter_metadata(adapter)
     ownership: dict[str, str] = {}
     _copy_tree(
         DATA / "project_template", path, ownership, default_ownership="framework"
@@ -91,12 +113,12 @@ def init_campaign(path: Path, *, name: str, adapter: str) -> None:
     manifest = {
         "framework": "warden-drydock",
         "framework_version": __version__,
-        "adapter": adapter,
-        "adapter_version": "0.1.0",
+        "adapter": adapter_name,
+        "adapter_version": adapter_version,
         "ownership_model": 1,
         "campaign_name": name,
     }
     (path / ".drydock.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )
-    _write_lock(path, ownership)
+    _write_lock(path, ownership, adapter_version=adapter_version)

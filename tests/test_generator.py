@@ -23,8 +23,12 @@ class GeneratorTest(unittest.TestCase):
             self.assertTrue((root/'.drydock.json').exists())
             manifest=json.loads((root/'.drydock.json').read_text())
             self.assertEqual(manifest['framework_version'],__version__)
+            adapter=json.loads((root/'00-drydock'/'adapter.json').read_text())
+            self.assertEqual(manifest['adapter'],adapter['adapter'])
+            self.assertEqual(manifest['adapter_version'],adapter['adapter_version'])
             lock=json.loads((root/'.drydock-lock.json').read_text())
             self.assertEqual(lock['schema_version'],1)
+            self.assertEqual(lock['adapter_version'],adapter['adapter_version'])
             self.assertEqual(
                 lock['files']['01-campaign/campaign-overview.md']['ownership'],
                 'campaign',
@@ -144,7 +148,7 @@ class GeneratorTest(unittest.TestCase):
             init_campaign(root,name='Test Campaign',adapter='mothership')
             entity=create_entity(root,'npc','npc-ripley','Ripley')
             text=entity.read_text(encoding='utf-8')
-            self.assertEqual(entity.relative_to(root).as_posix(),'05-characters/npcs/npc-ripley.md')
+            self.assertEqual(entity.relative_to(root).as_posix(),'05-npcs/npc-ripley.md')
             self.assertIn('id: npc-ripley',text)
             self.assertIn('ownership: campaign',text)
             self.assertIn('name: "Ripley"',text)
@@ -166,5 +170,278 @@ class GeneratorTest(unittest.TestCase):
             with redirect_stdout(output):
                 self.assertEqual(validate_campaign(root),1)
             self.assertIn('missing required field status',output.getvalue())
+
+    def test_validation_rejects_inconsistent_adapter_metadata(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            adapter_path=root/'00-drydock'/'adapter.json'
+            adapter=json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['adapter_version']='9.9.9'
+            adapter_path.write_text(json.dumps(adapter),encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            self.assertIn(
+                'adapter_version does not match adapter.json', output.getvalue()
+            )
+
+    def test_adapter_visibility_rules_are_declarative(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            entity=create_entity(root,'npc','npc-leak','Leak')
+            entity.write_text(
+                entity.read_text(encoding='utf-8').replace(
+                    'visibility: warden', 'visibility: players'
+                ),
+                encoding='utf-8',
+            )
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            result=output.getvalue()
+            self.assertIn('visibility must be warden for npc',result)
+            self.assertIn(
+                'forbidden field combination visibility=players, warden_only=true',
+                result,
+            )
+
+    def test_adapter_validation_rejects_malformed_declarations(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            adapter_path=root/'00-drydock'/'adapter.json'
+            adapter=json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['validation']['field_values']='not-an-object'
+            adapter_path.write_text(json.dumps(adapter),encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            self.assertIn(
+                'validation.field_values must map fields', output.getvalue()
+            )
+
+    def test_legacy_paths_warn_and_upgrade_never_moves_campaign_files(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            legacy_files={
+                '06-factions/old-faction.md': '# Old faction\n',
+                '05-characters/npcs/old-npc.md': '# Old NPC\n',
+                '10-adventures/old-adventure.md': '# Old adventure\n',
+            }
+            for relative,content in legacy_files.items():
+                path=root/relative
+                path.parent.mkdir(parents=True,exist_ok=True)
+                path.write_text(content,encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),0)
+            self.assertEqual(output.getvalue().count('legacy adapter path'),3)
+            (root/'README.md').unlink()
+            self.assertEqual(upgrade_campaign(root,apply=True),0)
+            for relative,content in legacy_files.items():
+                self.assertEqual((root/relative).read_text(encoding='utf-8'),content)
+            self.assertFalse((root/'04-factions'/'old-faction.md').exists())
+            self.assertFalse((root/'05-npcs'/'old-npc.md').exists())
+            self.assertFalse(
+                (root/'10-adventures'/'available'/'old-adventure.md').exists()
+            )
+
+    def test_new_records_use_canonical_mothership_paths(self):
+        expected={
+            'faction':'04-factions/faction-test.md',
+            'npc':'05-npcs/npc-test.md',
+            'adventure':'10-adventures/available/adventure-test.md',
+            'session':'12-sessions/logs/session-test.md',
+        }
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            for kind,relative in expected.items():
+                created=create_entity(root,kind,f'{kind}-test','Test')
+                self.assertEqual(created.relative_to(root).as_posix(),relative)
+
+    def test_people_records_are_narrative_only_and_validate(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            expected={
+                'character':'02-players/characters/character-ripley.md',
+                'npc':'05-npcs/npc-mu-th-ur.md',
+                'faction':'04-factions/faction-company.md',
+            }
+            ids={
+                'character':'character-ripley',
+                'npc':'npc-mu-th-ur',
+                'faction':'faction-company',
+            }
+            forbidden={'strength:','speed:','intellect:','combat:','sanity:','fear:','body:','armor:','wounds:'}
+            for kind,relative in expected.items():
+                entity=create_entity(root,kind,ids[kind],kind.title())
+                self.assertEqual(entity.relative_to(root).as_posix(),relative)
+                text=entity.read_text(encoding='utf-8').lower()
+                self.assertTrue(forbidden.isdisjoint(text.splitlines()))
+                self.assertIn('visibility: warden',text)
+                self.assertIn('warden_only: true',text)
+            self.assertEqual(validate_campaign(root),0)
+
+    def test_world_record_family_creates_and_validates(self):
+        expected={
+            'system':'03-world/systems/system-ypsilon.md',
+            'location':'03-world/locations/location-station.md',
+            'creature':'06-creatures/creature-signal.md',
+            'ship':'07-ships/ship-prospero.md',
+            'item':'08-items/item-sample.md',
+        }
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            for kind,relative in expected.items():
+                entity_id=Path(relative).stem
+                created=create_entity(root,kind,entity_id,kind.title())
+                self.assertEqual(created.relative_to(root).as_posix(),relative)
+                text=created.read_text(encoding='utf-8').lower()
+                self.assertNotIn('armor:',text)
+                self.assertNotIn('wounds:',text)
+                self.assertNotIn('combat:',text)
+            self.assertEqual(validate_campaign(root),0)
+
+    def test_mystery_record_family_creates_and_validates(self):
+        expected={
+            'clue':'09-mysteries/clues/clue-signal.md',
+            'false-belief':'09-mysteries/false-beliefs/false-belief-rescue.md',
+            'revelation':'09-mysteries/revelations/revelation-origin.md',
+            'adventure':'10-adventures/available/adventure-derelict.md',
+        }
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            for kind,relative in expected.items():
+                created=create_entity(root,kind,Path(relative).stem,kind.title())
+                self.assertEqual(created.relative_to(root).as_posix(),relative)
+                text=created.read_text(encoding='utf-8')
+                self.assertIn('## Warden truth',text)
+                self.assertIn('player',text.lower())
+            self.assertEqual(validate_campaign(root),0)
+
+    def test_campaign_engine_record_family_creates_and_validates(self):
+        expected={'clock':'11-campaign-engine/clocks/clock-decay.md','consequence':'11-campaign-engine/consequences/consequence-loss.md','faction-turn':'11-campaign-engine/faction-turns/faction-turn-001.md','random-table':'14-random-tables/random-table-signals.md'}
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            for kind,relative in expected.items():
+                created=create_entity(root,kind,Path(relative).stem,kind.title())
+                self.assertEqual(created.relative_to(root).as_posix(),relative)
+            self.assertEqual(validate_campaign(root),0)
+
+    def test_session_lifecycle_creates_and_validates(self):
+        expected={
+            'session-prep':'12-sessions/preparation/session-prep-001.md',
+            'session':'12-sessions/logs/session-001.md',
+            'debrief':'12-sessions/debriefs/debrief-001.md',
+        }
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            for kind,relative in expected.items():
+                created=create_entity(root,kind,Path(relative).stem,'Session 001')
+                self.assertEqual(created.relative_to(root).as_posix(),relative)
+                text=created.read_text(encoding='utf-8')
+                self.assertIn('visibility: warden',text)
+                self.assertIn('warden_only: true',text)
+            session=(root/'12-sessions/logs/session-001.md').read_text(encoding='utf-8')
+            self.assertIn('## Unconfirmed beliefs and interpretations',session)
+            self.assertIn('## Canon updates requiring review',session)
+            self.assertEqual(validate_campaign(root),0)
+
+    def test_player_handout_enforces_adapter_secrecy_contract(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            handout=create_entity(root,'handout','handout-distress','Distress Call')
+            self.assertEqual(handout.relative_to(root).as_posix(),'13-handouts/handout-distress.md')
+            text=handout.read_text(encoding='utf-8')
+            self.assertIn('visibility: players',text)
+            self.assertIn('warden_only: false',text)
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            self.assertIn('field audience must not be empty',output.getvalue())
+            handout.write_text(text.replace('audience: ""','audience: "all players"'),encoding='utf-8')
+            self.assertEqual(validate_campaign(root),0)
+            handout.write_text(handout.read_text(encoding='utf-8')+'\n## Warden truth\nLeak\n',encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            self.assertIn('forbidden heading Warden truth',output.getvalue())
+
+    def test_player_visibility_cannot_be_warden_only(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            handout=create_entity(root,'handout','handout-unsafe','Unsafe')
+            handout.write_text(handout.read_text(encoding='utf-8').replace('warden_only: false','warden_only: true'),encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            self.assertIn('forbidden field combination',output.getvalue())
+
+    def test_mothership_workflow_guides_are_packaged_and_command_driven(self):
+        guides=[
+            'campaign-inception.md','situation-design.md','mystery-design.md',
+            'session-preparation.md','debrief-workflow.md',
+            'faction-turn-workflow.md','world-state.md',
+            'canon-and-revelation.md','handout-safety.md',
+        ]
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            for guide in guides:
+                text=(root/'docs'/guide).read_text(encoding='utf-8')
+                self.assertIn('python scripts/drydock.py',text)
+                self.assertTrue('review' in text.lower() or 'warden' in text.lower())
+            principles=(root/'00-drydock/system-principles.md').read_text(encoding='utf-8')
+            self.assertIn('narrative records',principles)
+            self.assertIn('provisional',principles)
+
+    def test_complete_mothership_registry_contract(self):
+        expected={
+            'character':'02-players/characters/{id}.md','location':'03-world/locations/{id}.md',
+            'system':'03-world/systems/{id}.md','faction':'04-factions/{id}.md',
+            'npc':'05-npcs/{id}.md','creature':'06-creatures/{id}.md',
+            'ship':'07-ships/{id}.md','item':'08-items/{id}.md',
+            'clue':'09-mysteries/clues/{id}.md','false-belief':'09-mysteries/false-beliefs/{id}.md',
+            'revelation':'09-mysteries/revelations/{id}.md','adventure':'10-adventures/available/{id}.md',
+            'clock':'11-campaign-engine/clocks/{id}.md','consequence':'11-campaign-engine/consequences/{id}.md',
+            'faction-turn':'11-campaign-engine/faction-turns/{id}.md','session-prep':'12-sessions/preparation/{id}.md',
+            'session':'12-sessions/logs/{id}.md','debrief':'12-sessions/debriefs/{id}.md',
+            'handout':'13-handouts/{id}.md','random-table':'14-random-tables/{id}.md',
+        }
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            config=json.loads((root/'00-drydock/adapter.json').read_text(encoding='utf-8'))
+            self.assertEqual(config['adapter_version'],'0.2.0')
+            self.assertEqual(set(config['entity_types']),set(expected))
+            forbidden=('strength:','speed:','intellect:','combat:','sanity:','fear:','body:','armor:','wounds:')
+            for kind,destination in expected.items():
+                rule=config['entity_types'][kind]
+                self.assertEqual(rule['destination'],destination)
+                template=root/rule['template']
+                self.assertTrue(template.is_file())
+                lower=template.read_text(encoding='utf-8').lower()
+                self.assertFalse(any(field in lower for field in forbidden))
+
+    def test_validation_rejects_unsafe_adapter_entity_paths(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            path=root/'00-drydock/adapter.json'
+            config=json.loads(path.read_text(encoding='utf-8'))
+            config['entity_types']['npc']['destination']='../escape/{id}.md'
+            path.write_text(json.dumps(config),encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            self.assertIn('npc.destination is unsafe',output.getvalue())
 
 if __name__=='__main__': unittest.main()

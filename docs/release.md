@@ -23,12 +23,21 @@ the source checkout, and run:
 drydock bootstrap campaign --adapter mothership --name "Release Smoke Test"
 cd campaign
 python scripts/drydock.py new npc npc-smoke --name "Smoke Test"
+python scripts/drydock.py new handout handout-smoke --name "Player Notice"
 python scripts/drydock.py validate
 python scripts/drydock.py context
 ```
 
 Inspect the generated repository, `.drydock.json`, `.drydock-lock.json`, and AI
 context. Confirm that packaged templates and adapter declarations are present.
+For a handout smoke test, fill its audience before validation. Exercise at
+least one representative record from every entity family and preview/apply an
+upgrade against campaign-owned legacy content before tagging.
+
+After the final PR merges, create the annotated release tag and install the
+exact pinned GitHub ref in a fresh environment. Verify the raw tagged
+`BOOTSTRAP.md`, reported version, bootstrap, standalone validation/context, and
+explicit separation of Git initialization before advertising the release.
 
 ## Publish
 

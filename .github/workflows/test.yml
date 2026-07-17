@@ -28,7 +28,7 @@ jobs:
           mkdir "$CAMPAIGN"
           python -m venv "$ENVIRONMENT"
           "$ENVIRONMENT/bin/python" -m pip install .
-          test "$("$ENVIRONMENT/bin/python" -m warden_drydock --version)" = "Warden Drydock 0.1.0"
+          test "$("$ENVIRONMENT/bin/python" -m warden_drydock --version)" = "Warden Drydock 0.2.0"
           "$ENVIRONMENT/bin/python" -m warden_drydock bootstrap "$CAMPAIGN" --adapter mothership --name "CI Onboarding"
           "$ENVIRONMENT/bin/python" "$CAMPAIGN/scripts/drydock.py" validate
           test ! -d "$CAMPAIGN/.git"

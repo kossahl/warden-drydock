@@ -1,31 +1,24 @@
 ---
 id: ""
-type: npc
+type: character
 status: idea
 ownership: shared
 name: ""
-factions: []
-locations: []
-current_status: unknown
 visibility: warden
 warden_only: true
 ---
 
 # Name
 
-## Immediate impression
 ## Identity and role
-## Wants
-## Fears
+## Immediate impression
+## Drives and fears
 ## Relationships
-## Resources
-## Methods
 ## Current fictional position
+## Resources and scarcity
 ## Injuries and limitations
 ## Stress and Panic history
-## Secrets
-## Hidden objective
-## What they do without intervention
-## Player knowledge
-## Player beliefs
+## Decisions and consequences
+## Player-stated beliefs
+## Open questions
 ## Warden truth
