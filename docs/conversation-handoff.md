@@ -68,13 +68,17 @@ The repository currently includes:
 - a Python package and CLI;
 - a generic project template;
 - a Mothership adapter;
-- a generated standalone example campaign;
+- temporary generated campaigns used by tests and release smoke checks;
 - validation and context-building behavior;
 - initial ADRs;
 - unit tests for campaign generation;
 - AI-assisted setup documentation.
 
-The generated example campaign preserves one known campaign fact: the group has completed **Another Bug Hunt**, but the table-specific outcome has not been recorded. The framework must not invent survivors, decisions, recovered material, employers, or consequences.
+No campaign content is committed to the framework repository. One known fact
+from the original design conversation remains relevant when a real campaign is
+created: the group completed **Another Bug Hunt**, but its table-specific
+outcome was not recorded. An agent must ask for that outcome rather than invent
+survivors, decisions, recovered material, employers, or consequences.
 
 ## Desired end-user experience
 

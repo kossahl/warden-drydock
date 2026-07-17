@@ -13,6 +13,11 @@ The end-user experience is intentionally simple:
 
 The AI is the interface. Drydock is the dependable tool underneath it.
 
+For the complete end-user workflow, see [the user guide](docs/user-guide.md).
+Framework contributors should start with [the developer guide](docs/developer-guide.md).
+Adapter work is covered by [the adapter guide](docs/adapter-development.md), and
+artifact verification by [the release guide](docs/release.md).
+
 ## AI-assisted setup
 
 Give your agent this instruction:
@@ -106,3 +111,10 @@ For a curated handoff from the original architecture conversation, read:
 - `docs/continue-in-codex.md`
 
 The continuation guide contains a ready-to-paste Codex prompt.
+
+## MVP status
+
+Version `0.1.0` is an alpha MVP. It supports Mothership campaign bootstrap,
+adapter-driven entity creation, semantic validation, canon-safe context
+generation, and preview-first ownership-aware upgrades. The package is
+buildable locally but is not yet published to a package registry.

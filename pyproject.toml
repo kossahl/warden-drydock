@@ -1,18 +1,32 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "warden-drydock"
-version = "0.1.0"
+dynamic = ["version"]
 description = "AI-native campaign development framework"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
 authors = [{name = "Warden Drydock contributors"}]
+keywords = ["tabletop-rpg", "campaign-management", "ai-agent", "markdown"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Games/Entertainment :: Role-Playing",
+]
+
+[project.optional-dependencies]
+dev = ["build>=1"]
 
 [project.scripts]
 drydock = "warden_drydock.cli:main"
 
 [tool.setuptools.package-data]
 warden_drydock = ["data/**/*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "warden_drydock.__version__"}
