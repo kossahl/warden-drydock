@@ -335,4 +335,24 @@ class GeneratorTest(unittest.TestCase):
                 self.assertEqual(created.relative_to(root).as_posix(),relative)
             self.assertEqual(validate_campaign(root),0)
 
+    def test_session_lifecycle_creates_and_validates(self):
+        expected={
+            'session-prep':'12-sessions/preparation/session-prep-001.md',
+            'session':'12-sessions/logs/session-001.md',
+            'debrief':'12-sessions/debriefs/debrief-001.md',
+        }
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            for kind,relative in expected.items():
+                created=create_entity(root,kind,Path(relative).stem,'Session 001')
+                self.assertEqual(created.relative_to(root).as_posix(),relative)
+                text=created.read_text(encoding='utf-8')
+                self.assertIn('visibility: warden',text)
+                self.assertIn('warden_only: true',text)
+            session=(root/'12-sessions/logs/session-001.md').read_text(encoding='utf-8')
+            self.assertIn('## Unconfirmed beliefs and interpretations',session)
+            self.assertIn('## Canon updates requiring review',session)
+            self.assertEqual(validate_campaign(root),0)
+
 if __name__=='__main__': unittest.main()
