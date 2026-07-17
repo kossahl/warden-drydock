@@ -33,6 +33,7 @@ REQUIRED_MANIFEST_FIELDS = {
     "campaign_name": str,
 }
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+HEADING_PATTERN = re.compile(r"(?m)^#{1,6}\s+(.+?)\s*$")
 
 
 def frontmatter(text: str) -> dict[str, str]:
@@ -123,6 +124,9 @@ def validate_campaign(root: Path) -> int:
 
     try:
         adapter_config = _adapter_config(root)
+        if not isinstance(adapter_config, dict):
+            errors.append("00-drydock/adapter.json: root must be an object")
+            adapter_config = {}
         adapter_name = adapter_config.get("adapter")
         adapter_version = adapter_config.get("adapter_version")
         if not isinstance(adapter_name, str) or not adapter_name:
@@ -135,13 +139,86 @@ def validate_campaign(root: Path) -> int:
             errors.append(".drydock.json: adapter_version does not match adapter.json")
         if lock and adapter_version != lock.get("adapter_version"):
             errors.append(".drydock-lock.json: adapter_version does not match adapter.json")
+        validation_rules = adapter_config.get("validation", {})
+        if not isinstance(validation_rules, dict):
+            errors.append("00-drydock/adapter.json: validation must be an object")
+            validation_rules = {}
+        field_values = validation_rules.get("field_values", {})
+        if not isinstance(field_values, dict) or any(
+            not isinstance(field, str)
+            or not isinstance(values, list)
+            or not values
+            or any(not isinstance(value, str) for value in values)
+            for field, values in (
+                field_values.items() if isinstance(field_values, dict) else []
+            )
+        ):
+            errors.append(
+                "00-drydock/adapter.json: validation.field_values must map fields "
+                "to non-empty string lists"
+            )
+            field_values = {}
+        forbidden_combinations = validation_rules.get("forbidden_combinations", [])
+        if not isinstance(forbidden_combinations, list) or any(
+            not isinstance(combination, dict)
+            or not combination
+            or any(
+                not isinstance(field, str) or not isinstance(value, str)
+                for field, value in combination.items()
+            )
+            for combination in (
+                forbidden_combinations
+                if isinstance(forbidden_combinations, list)
+                else []
+            )
+        ):
+            errors.append(
+                "00-drydock/adapter.json: validation.forbidden_combinations must "
+                "be a list of field-value objects"
+            )
+            forbidden_combinations = []
         entity_types = adapter_config.get("entity_types", {})
         if not isinstance(entity_types, dict):
             errors.append("00-drydock/adapter.json: entity_types must be an object")
             entity_types = {}
+        for entity_type, rule in entity_types.items():
+            if not isinstance(rule, dict):
+                errors.append(
+                    f"00-drydock/adapter.json: entity type {entity_type} must be an object"
+                )
+                continue
+            required_values = rule.get("required_values", {})
+            if not isinstance(required_values, dict) or any(
+                not isinstance(field, str) or not isinstance(value, str)
+                for field, value in (
+                    required_values.items() if isinstance(required_values, dict) else []
+                )
+            ):
+                errors.append(
+                    f"00-drydock/adapter.json: {entity_type}.required_values must "
+                    "be a field-value object"
+                )
+            required_fields = rule.get("required_fields", [])
+            if not isinstance(required_fields, list) or any(
+                not isinstance(field, str) for field in required_fields
+            ):
+                errors.append(
+                    f"00-drydock/adapter.json: {entity_type}.required_fields "
+                    "must be a string list"
+                )
+            forbidden_headings = rule.get("forbidden_headings", [])
+            if not isinstance(forbidden_headings, list) or any(
+                not isinstance(heading, str) for heading in forbidden_headings
+            ):
+                errors.append(
+                    f"00-drydock/adapter.json: {entity_type}.forbidden_headings "
+                    "must be a string list"
+                )
     except (OSError, json.JSONDecodeError) as exc:
         errors.append(f"Invalid 00-drydock/adapter.json: {exc}")
         entity_types = {}
+        field_values = {}
+        forbidden_combinations = []
 
     files = list(root.rglob("*.md"))
     known = {path.stem.lower() for path in files} | {
@@ -157,12 +234,33 @@ def validate_campaign(root: Path) -> int:
         ownership = metadata.get("ownership")
         if ownership and ownership not in VALID_OWNERSHIP:
             errors.append(f"{relative}: invalid ownership {ownership}")
+        for field, allowed_values in field_values.items():
+            value = metadata.get(field)
+            if value is not None and value not in allowed_values:
+                errors.append(f"{relative}: invalid {field} {value}")
+        for combination in forbidden_combinations:
+            if all(metadata.get(field) == value for field, value in combination.items()):
+                rendered = ", ".join(
+                    f"{field}={value}" for field, value in combination.items()
+                )
+                errors.append(f"{relative}: forbidden field combination {rendered}")
         entity_type = metadata.get("type")
         entity_rule = entity_types.get(entity_type, {})
+        if not isinstance(entity_rule, dict):
+            entity_rule = {}
         if entity_rule and not relative.as_posix().startswith("templates/"):
             for field in entity_rule.get("required_fields", []):
                 if field not in metadata:
                     errors.append(f"{relative}: missing required field {field}")
+            for field, required_value in entity_rule.get("required_values", {}).items():
+                if metadata.get(field) != required_value:
+                    errors.append(
+                        f"{relative}: {field} must be {required_value} for {entity_type}"
+                    )
+            headings = {heading.casefold() for heading in HEADING_PATTERN.findall(text)}
+            for heading in entity_rule.get("forbidden_headings", []):
+                if heading.casefold() in headings:
+                    errors.append(f"{relative}: forbidden heading {heading}")
         entity_id = metadata.get("id")
         if entity_id:
             if entity_id in ids:

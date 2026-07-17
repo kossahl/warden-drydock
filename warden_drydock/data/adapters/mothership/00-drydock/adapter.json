@@ -1,26 +1,39 @@
 {
   "adapter": "mothership",
   "adapter_version": "0.1.0",
+  "validation": {
+    "field_values": {
+      "visibility": ["warden", "players", "shared"],
+      "warden_only": ["true", "false"]
+    },
+    "forbidden_combinations": [
+      {"visibility": "players", "warden_only": "true"}
+    ]
+  },
   "entity_types": {
     "adventure": {
       "template": "templates/adventure.md",
       "destination": "10-adventures/{id}.md",
-      "required_fields": ["id", "type", "status", "ownership", "name"]
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
     },
     "faction": {
       "template": "templates/faction.md",
       "destination": "06-factions/{id}.md",
-      "required_fields": ["id", "type", "status", "ownership", "name"]
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
     },
     "npc": {
       "template": "templates/npc.md",
       "destination": "05-characters/npcs/{id}.md",
-      "required_fields": ["id", "type", "status", "ownership", "name"]
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
     },
     "session": {
       "template": "templates/session-log.md",
       "destination": "12-sessions/logs/{id}.md",
-      "required_fields": ["id", "type", "status", "ownership", "date"]
+      "required_fields": ["id", "type", "status", "ownership", "date", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
     }
   }
 }
