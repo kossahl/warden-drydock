@@ -148,7 +148,7 @@ class GeneratorTest(unittest.TestCase):
             init_campaign(root,name='Test Campaign',adapter='mothership')
             entity=create_entity(root,'npc','npc-ripley','Ripley')
             text=entity.read_text(encoding='utf-8')
-            self.assertEqual(entity.relative_to(root).as_posix(),'05-characters/npcs/npc-ripley.md')
+            self.assertEqual(entity.relative_to(root).as_posix(),'05-npcs/npc-ripley.md')
             self.assertIn('id: npc-ripley',text)
             self.assertIn('ownership: campaign',text)
             self.assertIn('name: "Ripley"',text)
@@ -221,5 +221,46 @@ class GeneratorTest(unittest.TestCase):
             self.assertIn(
                 'validation.field_values must map fields', output.getvalue()
             )
+
+    def test_legacy_paths_warn_and_upgrade_never_moves_campaign_files(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            legacy_files={
+                '06-factions/old-faction.md': '# Old faction\n',
+                '05-characters/npcs/old-npc.md': '# Old NPC\n',
+                '10-adventures/old-adventure.md': '# Old adventure\n',
+            }
+            for relative,content in legacy_files.items():
+                path=root/relative
+                path.parent.mkdir(parents=True,exist_ok=True)
+                path.write_text(content,encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),0)
+            self.assertEqual(output.getvalue().count('legacy adapter path'),3)
+            (root/'README.md').unlink()
+            self.assertEqual(upgrade_campaign(root,apply=True),0)
+            for relative,content in legacy_files.items():
+                self.assertEqual((root/relative).read_text(encoding='utf-8'),content)
+            self.assertFalse((root/'04-factions'/'old-faction.md').exists())
+            self.assertFalse((root/'05-npcs'/'old-npc.md').exists())
+            self.assertFalse(
+                (root/'10-adventures'/'available'/'old-adventure.md').exists()
+            )
+
+    def test_new_records_use_canonical_mothership_paths(self):
+        expected={
+            'faction':'04-factions/faction-test.md',
+            'npc':'05-npcs/npc-test.md',
+            'adventure':'10-adventures/available/adventure-test.md',
+            'session':'12-sessions/logs/session-test.md',
+        }
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            for kind,relative in expected.items():
+                created=create_entity(root,kind,f'{kind}-test','Test')
+                self.assertEqual(created.relative_to(root).as_posix(),relative)
 
 if __name__=='__main__': unittest.main()
