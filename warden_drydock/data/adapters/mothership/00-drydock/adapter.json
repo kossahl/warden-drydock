@@ -22,6 +22,31 @@
       "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
       "required_values": {"visibility": "warden", "warden_only": "true"}
     },
+    "location": {
+      "template": "templates/location.md", "destination": "03-world/locations/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
+    "system": {
+      "template": "templates/system.md", "destination": "03-world/systems/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
+    "creature": {
+      "template": "templates/creature.md", "destination": "06-creatures/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
+    "ship": {
+      "template": "templates/ship.md", "destination": "07-ships/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
+    "item": {
+      "template": "templates/item.md", "destination": "08-items/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
     "adventure": {
       "template": "templates/adventure.md",
       "destination": "10-adventures/available/{id}.md",
