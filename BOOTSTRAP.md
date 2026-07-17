@@ -14,7 +14,7 @@ Warden Drydock is the deterministic repository tool underneath this AI-assisted
 workflow. Its canonical source is:
 https://github.com/kossahl/warden-drydock
 
-Use the pinned release v0.1.0. Do not use the default branch, reconstruct the
+Use the pinned release v0.2.0. Do not use the default branch, reconstruct the
 campaign layout manually, or invent campaign canon.
 
 Follow this procedure exactly:
@@ -30,13 +30,13 @@ Follow this procedure exactly:
    its Python executable by absolute path.
 4. Using that virtual environment's Python, run:
 
-   python -m pip install "warden-drydock @ git+https://github.com/kossahl/warden-drydock.git@v0.1.0"
+   python -m pip install "warden-drydock @ git+https://github.com/kossahl/warden-drydock.git@v0.2.0"
 
    If network access or installation fails, remove the temporary environment,
    leave the campaign target untouched, and report the exact failure and a
    corrective action.
 5. Run `python -m warden_drydock --version` with the temporary environment's
-   Python. Continue only if it reports `Warden Drydock 0.1.0`; otherwise clean
+   Python. Continue only if it reports `Warden Drydock 0.2.0`; otherwise clean
    up, leave the campaign untouched, and report the mismatch.
 6. Now ask me for the campaign name. Ask only for campaign-specific facts that
    cannot be inferred. Do not invent setting details, prior events, player
@@ -69,6 +69,6 @@ At no point should you replace a Drydock command with improvised file generation
 ## Availability gate
 
 The pinned command above becomes the supported onboarding path only after the
-`v0.1.0` tag exists on GitHub and has passed the clean-environment release smoke
+`v0.2.0` tag exists on GitHub and has passed the clean-environment release smoke
 test. Before that tag is published, use the local-development procedure in
 `docs/ai-assisted-setup.md` instead.

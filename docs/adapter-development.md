@@ -21,6 +21,14 @@ Each `entity_types` entry declares:
 - `template`: repository-relative template path;
 - `destination`: repository-relative output pattern containing `{id}`;
 - `required_fields`: frontmatter fields enforced outside `templates/`.
+- `nonempty_fields`: fields that must contain a value;
+- `required_values`: exact field values for the entity type;
+- `forbidden_headings`: headings rejected in campaign-owned records.
+
+Top-level adapter validation declarations define allowed field values and
+forbidden field combinations. `legacy_paths` provides non-destructive warnings
+and canonical migration guidance. Adapter identity and version come from
+`adapter.json` and propagate into generated manifests and ownership locks.
 
 Paths must remain within the campaign. Entity IDs use lowercase letters,
 numbers, and hyphens. Templates should have an empty `id`, an explicit

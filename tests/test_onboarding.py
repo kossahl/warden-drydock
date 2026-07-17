@@ -10,12 +10,12 @@ class OnboardingContractTest(unittest.TestCase):
         contract = (ROOT / "BOOTSTRAP.md").read_text(encoding="utf-8")
         required = [
             "https://github.com/kossahl/warden-drydock",
-            "v0.1.0",
+            "v0.2.0",
             "Python 3.11",
             "temporary virtual environment",
-            "git+https://github.com/kossahl/warden-drydock.git@v0.1.0",
+            "git+https://github.com/kossahl/warden-drydock.git@v0.2.0",
             "python -m warden_drydock --version",
-            "Warden Drydock 0.1.0",
+            "Warden Drydock 0.2.0",
             "python -m warden_drydock bootstrap",
             "Confirm that it is empty",
             "do not initialize or commit Git",
