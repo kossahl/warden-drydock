@@ -39,6 +39,7 @@ The user should not need to know package installation, repository layout, adapte
 The current implementation provides:
 
 - a Python CLI;
+- a cohesive bootstrap command for AI-assisted onboarding;
 - standalone campaign generation;
 - a system-agnostic core;
 - a Mothership adapter;
@@ -47,6 +48,11 @@ The current implementation provides:
 - agent instruction files;
 - architecture decision records;
 - deterministic generator tests.
+
+The primary setup operation is `drydock bootstrap`. It initializes a campaign,
+builds the generated AI context, and validates the result using the standalone
+maintenance script installed into that campaign. Git initialization remains an
+explicit, agent-reviewed follow-up operation.
 
 ## Explicit non-goals for the current milestone
 

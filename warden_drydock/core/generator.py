@@ -3,6 +3,8 @@ from pathlib import Path
 import json
 import shutil
 
+from warden_drydock import __version__
+
 PACKAGE = Path(__file__).resolve().parents[1]
 DATA = PACKAGE / "data"
 
@@ -38,7 +40,7 @@ def init_campaign(path: Path, *, name: str, adapter: str, force: bool = False) -
     _render(path, {"campaign_name": name, "adapter": adapter})
     manifest = {
         "framework": "warden-drydock",
-        "framework_version": "0.1.0",
+        "framework_version": __version__,
         "adapter": adapter,
         "adapter_version": "0.1.0",
         "ownership_model": 1,

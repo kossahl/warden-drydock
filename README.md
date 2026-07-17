@@ -8,7 +8,7 @@ The end-user experience is intentionally simple:
 
 1. Open an empty folder in Codex, Claude Code, or another repository-capable agent.
 2. Tell the agent to create a Warden Drydock campaign.
-3. The agent runs Drydock's deterministic setup command.
+3. The agent runs Drydock's deterministic bootstrap command.
 4. Continue managing the campaign through natural language.
 
 The AI is the interface. Drydock is the dependable tool underneath it.
@@ -21,27 +21,34 @@ Give your agent this instruction:
 Create a new Warden Drydock campaign in this directory.
 Use the Mothership adapter.
 Ask me only for campaign-specific information that cannot be inferred.
-Run the initializer, validate the result, initialize Git, and explain what was created.
+Run the bootstrap command, initialize Git, and explain what was created.
 Do not invent campaign canon.
 ```
 
-The agent should then run:
+The agent should then run the cohesive onboarding command:
 
 ```bash
-python -m warden_drydock init . --adapter mothership --interactive
+drydock bootstrap . --adapter mothership --interactive
 ```
 
 For development from this source checkout:
 
 ```bash
-python -m warden_drydock init ../my-campaign --adapter mothership   --name "My Campaign"
+python -m warden_drydock bootstrap ../my-campaign --adapter mothership --name "My Campaign"
 ```
+
+`bootstrap` initializes the standalone campaign, builds its initial AI context,
+and validates it using the maintenance script installed in the campaign. The AI
+then initializes Git and creates the first commit after reviewing the result.
+
+The lower-level `drydock init` command remains available for development and
+workflows that intentionally orchestrate those steps separately.
 
 ## Architecture
 
 - `warden_drydock/core/`: system-agnostic project generation and validation
-- `warden_drydock/adapters/`: RPG-system adapters
-- `project_template/`: generic generated campaign files
+- `warden_drydock/data/adapters/`: RPG-system adapter assets
+- `warden_drydock/data/project_template/`: generic generated campaign files
 - `tests/`: deterministic behavior tests
 - `docs/adr/`: architecture decisions
 

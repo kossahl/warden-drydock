@@ -93,6 +93,10 @@ The AI should:
 
 The user should not need to understand the underlying Python commands.
 
+The cohesive deterministic command for steps 2 through 5 is `drydock
+bootstrap`. It runs the generated campaign's local context and validation
+commands, while Git initialization remains an explicit agent-reviewed step.
+
 ## Immediate engineering priorities
 
 The next likely priorities are:
