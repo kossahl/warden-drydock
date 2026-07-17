@@ -214,13 +214,35 @@ def validate_campaign(root: Path) -> int:
                     f"00-drydock/adapter.json: {entity_type}.forbidden_headings "
                     "must be a string list"
                 )
+        legacy_paths = adapter_config.get("legacy_paths", [])
+        if not isinstance(legacy_paths, list) or any(
+            not isinstance(rule, dict)
+            or not isinstance(rule.get("path"), str)
+            or not isinstance(rule.get("canonical"), str)
+            or not rule.get("path")
+            or not rule.get("canonical")
+            for rule in (legacy_paths if isinstance(legacy_paths, list) else [])
+        ):
+            errors.append(
+                "00-drydock/adapter.json: legacy_paths must declare path and canonical"
+            )
+            legacy_paths = []
     except (OSError, json.JSONDecodeError) as exc:
         errors.append(f"Invalid 00-drydock/adapter.json: {exc}")
         entity_types = {}
         field_values = {}
         forbidden_combinations = []
+        legacy_paths = []
 
     files = list(root.rglob("*.md"))
+    for rule in legacy_paths:
+        legacy_root = root / rule["path"]
+        candidates = legacy_root.glob("*.md") if rule.get("direct_files_only") else legacy_root.rglob("*.md")
+        for legacy_file in candidates:
+            warnings.append(
+                f"{legacy_file.relative_to(root)}: legacy adapter path; optional manual "
+                f"move to {rule['canonical']} after reviewing links"
+            )
     known = {path.stem.lower() for path in files} | {
         path.relative_to(root).with_suffix("").as_posix().lower() for path in files
     }

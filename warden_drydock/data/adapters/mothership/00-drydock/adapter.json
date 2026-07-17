@@ -10,22 +10,27 @@
       {"visibility": "players", "warden_only": "true"}
     ]
   },
+  "legacy_paths": [
+    {"path": "06-factions", "canonical": "04-factions"},
+    {"path": "05-characters/npcs", "canonical": "05-npcs"},
+    {"path": "10-adventures", "canonical": "10-adventures/available", "direct_files_only": true}
+  ],
   "entity_types": {
     "adventure": {
       "template": "templates/adventure.md",
-      "destination": "10-adventures/{id}.md",
+      "destination": "10-adventures/available/{id}.md",
       "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
       "required_values": {"visibility": "warden", "warden_only": "true"}
     },
     "faction": {
       "template": "templates/faction.md",
-      "destination": "06-factions/{id}.md",
+      "destination": "04-factions/{id}.md",
       "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
       "required_values": {"visibility": "warden", "warden_only": "true"}
     },
     "npc": {
       "template": "templates/npc.md",
-      "destination": "05-characters/npcs/{id}.md",
+      "destination": "05-npcs/{id}.md",
       "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
       "required_values": {"visibility": "warden", "warden_only": "true"}
     },
