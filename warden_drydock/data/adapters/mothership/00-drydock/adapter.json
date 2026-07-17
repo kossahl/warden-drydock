@@ -101,6 +101,18 @@
       "destination": "12-sessions/logs/{id}.md",
       "required_fields": ["id", "type", "status", "ownership", "date", "visibility", "warden_only"],
       "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
+    "session-prep": {
+      "template": "templates/session-prep.md",
+      "destination": "12-sessions/preparation/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "date", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
+    "debrief": {
+      "template": "templates/debrief.md",
+      "destination": "12-sessions/debriefs/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "date", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
     }
   }
 }
