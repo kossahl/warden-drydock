@@ -263,4 +263,28 @@ class GeneratorTest(unittest.TestCase):
                 created=create_entity(root,kind,f'{kind}-test','Test')
                 self.assertEqual(created.relative_to(root).as_posix(),relative)
 
+    def test_people_records_are_narrative_only_and_validate(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            expected={
+                'character':'02-players/characters/character-ripley.md',
+                'npc':'05-npcs/npc-mu-th-ur.md',
+                'faction':'04-factions/faction-company.md',
+            }
+            ids={
+                'character':'character-ripley',
+                'npc':'npc-mu-th-ur',
+                'faction':'faction-company',
+            }
+            forbidden={'strength:','speed:','intellect:','combat:','sanity:','fear:','body:','armor:','wounds:'}
+            for kind,relative in expected.items():
+                entity=create_entity(root,kind,ids[kind],kind.title())
+                self.assertEqual(entity.relative_to(root).as_posix(),relative)
+                text=entity.read_text(encoding='utf-8').lower()
+                self.assertTrue(forbidden.isdisjoint(text.splitlines()))
+                self.assertIn('visibility: warden',text)
+                self.assertIn('warden_only: true',text)
+            self.assertEqual(validate_campaign(root),0)
+
 if __name__=='__main__': unittest.main()
