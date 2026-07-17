@@ -44,7 +44,7 @@ writing requires `--apply`.
 
 The portable engine reads `00-drydock/adapter.json` from the campaign. The
 adapter declares entity names, source templates, destination patterns, and
-required frontmatter fields. This powers both `new` and semantic validation,
+required metadata and secrecy constraints. This powers both `new` and semantic validation,
 keeping Mothership concepts outside the generic core.
 
 See [adapter development](adapter-development.md) before adding or changing an

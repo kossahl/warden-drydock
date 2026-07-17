@@ -405,4 +405,43 @@ class GeneratorTest(unittest.TestCase):
             self.assertIn('narrative records',principles)
             self.assertIn('provisional',principles)
 
+    def test_complete_mothership_registry_contract(self):
+        expected={
+            'character':'02-players/characters/{id}.md','location':'03-world/locations/{id}.md',
+            'system':'03-world/systems/{id}.md','faction':'04-factions/{id}.md',
+            'npc':'05-npcs/{id}.md','creature':'06-creatures/{id}.md',
+            'ship':'07-ships/{id}.md','item':'08-items/{id}.md',
+            'clue':'09-mysteries/clues/{id}.md','false-belief':'09-mysteries/false-beliefs/{id}.md',
+            'revelation':'09-mysteries/revelations/{id}.md','adventure':'10-adventures/available/{id}.md',
+            'clock':'11-campaign-engine/clocks/{id}.md','consequence':'11-campaign-engine/consequences/{id}.md',
+            'faction-turn':'11-campaign-engine/faction-turns/{id}.md','session-prep':'12-sessions/preparation/{id}.md',
+            'session':'12-sessions/logs/{id}.md','debrief':'12-sessions/debriefs/{id}.md',
+            'handout':'13-handouts/{id}.md','random-table':'14-random-tables/{id}.md',
+        }
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            config=json.loads((root/'00-drydock/adapter.json').read_text(encoding='utf-8'))
+            self.assertEqual(config['adapter_version'],'0.2.0')
+            self.assertEqual(set(config['entity_types']),set(expected))
+            forbidden=('strength:','speed:','intellect:','combat:','sanity:','fear:','body:','armor:','wounds:')
+            for kind,destination in expected.items():
+                rule=config['entity_types'][kind]
+                self.assertEqual(rule['destination'],destination)
+                template=root/rule['template']
+                self.assertTrue(template.is_file())
+                lower=template.read_text(encoding='utf-8').lower()
+                self.assertFalse(any(field in lower for field in forbidden))
+
+    def test_validation_rejects_unsafe_adapter_entity_paths(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            path=root/'00-drydock/adapter.json'
+            config=json.loads(path.read_text(encoding='utf-8'))
+            config['entity_types']['npc']['destination']='../escape/{id}.md'
+            path.write_text(json.dumps(config),encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            self.assertIn('npc.destination is unsafe',output.getvalue())
+
 if __name__=='__main__': unittest.main()

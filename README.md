@@ -31,7 +31,7 @@ In abbreviated form, the user asks:
 Create a new Warden Drydock campaign in this directory.
 Use the Mothership adapter.
 Ask me only for campaign-specific information that cannot be inferred.
-Follow https://github.com/kossahl/warden-drydock/blob/v0.1.0/BOOTSTRAP.md,
+Follow https://github.com/kossahl/warden-drydock/blob/v0.2.0/BOOTSTRAP.md,
 run the deterministic bootstrap command, initialize Git only after validation,
 and explain what was created.
 Do not invent campaign canon.
@@ -86,6 +86,13 @@ Inside a generated campaign, the equivalent standalone form is `python
 scripts/drydock.py new TYPE ID --name "NAME"`. Entity types, templates,
 destinations, and required metadata come from the selected adapter.
 
+Mothership 1e supplies 20 narrative record types covering characters, world
+elements, factions, NPCs, creatures, ships, items, mysteries, adventures,
+campaign pressures, session lifecycle, handouts, and random tables. These
+records track fictional state, not numeric characteristics or copied rules.
+Player handouts require an explicit audience and are validated against
+Warden-only headings.
+
 ## Architecture
 
 - `warden_drydock/core/`: system-agnostic project generation and validation
@@ -121,8 +128,9 @@ The continuation guide contains a ready-to-paste Codex prompt.
 
 ## MVP status
 
-Version `0.1.0` is an alpha MVP. It supports Mothership campaign bootstrap,
-adapter-driven entity creation, semantic validation, canon-safe context
-generation, and preview-first ownership-aware upgrades. The package is
-buildable locally and installable from its pinned GitHub tag after that tag's
-release gate has completed. It is not yet published to a package registry.
+Version `0.2.0` is the narrative-adapter MVP. It supports complete Mothership
+campaign inception, situation and mystery design, world-state maintenance,
+session preparation/debrief, safe player handouts, semantic validation,
+canon-safe context generation, and preview-first ownership-aware upgrades.
+The package remains distributed from its pinned GitHub tag rather than a
+package registry.

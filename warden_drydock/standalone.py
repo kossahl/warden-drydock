@@ -187,6 +187,25 @@ def validate_campaign(root: Path) -> int:
                     f"00-drydock/adapter.json: entity type {entity_type} must be an object"
                 )
                 continue
+            template = rule.get("template")
+            destination = rule.get("destination")
+            for label, declared_path in (
+                ("template", template),
+                ("destination", destination),
+            ):
+                if (
+                    not isinstance(declared_path, str)
+                    or not declared_path
+                    or Path(declared_path).is_absolute()
+                    or ".." in Path(declared_path).parts
+                ):
+                    errors.append(
+                        f"00-drydock/adapter.json: {entity_type}.{label} is unsafe"
+                    )
+            if isinstance(destination, str) and "{id}" not in destination:
+                errors.append(
+                    f"00-drydock/adapter.json: {entity_type}.destination must contain {{id}}"
+                )
             required_values = rule.get("required_values", {})
             if not isinstance(required_values, dict) or any(
                 not isinstance(field, str) or not isinstance(value, str)

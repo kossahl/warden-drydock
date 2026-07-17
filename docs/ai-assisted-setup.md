@@ -39,11 +39,11 @@ The canonical prompt creates a temporary virtual environment outside the empty
 campaign directory and installs:
 
 ```bash
-python -m pip install "warden-drydock @ git+https://github.com/kossahl/warden-drydock.git@v0.1.0"
+python -m pip install "warden-drydock @ git+https://github.com/kossahl/warden-drydock.git@v0.2.0"
 python -m warden_drydock --version
 ```
 
-The agent must observe `Warden Drydock 0.1.0` before asking for the campaign
+The agent must observe `Warden Drydock 0.2.0` before asking for the campaign
 name or writing campaign files. This path is supported only after the tag's
 release gate has passed.
 
@@ -60,7 +60,7 @@ git commit -m "Initialize Warden Drydock campaign"
 
 ## Local framework development
 
-Before `v0.1.0` is tagged, or while developing the framework, target a
+Before `v0.2.0` is tagged, or while developing the framework, target a
 separate empty directory:
 
 ```bash
