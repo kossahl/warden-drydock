@@ -23,6 +23,16 @@ VALID_STATUSES = {
     "accepted",
 }
 APPROVED_SESSION_STATUSES = {"canon", "revealed", "accepted"}
+VALID_OWNERSHIP = {"framework", "adapter", "shared", "campaign", "generated"}
+REQUIRED_MANIFEST_FIELDS = {
+    "framework": str,
+    "framework_version": str,
+    "adapter": str,
+    "adapter_version": str,
+    "ownership_model": int,
+    "campaign_name": str,
+}
+ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 def frontmatter(text: str) -> dict[str, str]:
@@ -47,6 +57,17 @@ def body(text: str) -> str:
     return text.strip()
 
 
+def _read_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _adapter_config(root: Path) -> dict:
+    path = root / "00-drydock" / "adapter.json"
+    if not path.exists():
+        return {"entity_types": {}}
+    return _read_json(path)
+
+
 def validate_campaign(root: Path) -> int:
     root = root.resolve()
     errors: list[str] = []
@@ -57,9 +78,56 @@ def validate_campaign(root: Path) -> int:
         errors.append("Missing .drydock.json")
     else:
         try:
-            json.loads(manifest.read_text(encoding="utf-8"))
+            manifest_data = _read_json(manifest)
+            for field, expected_type in REQUIRED_MANIFEST_FIELDS.items():
+                value = manifest_data.get(field)
+                if not isinstance(value, expected_type) or value == "":
+                    errors.append(f".drydock.json: invalid or missing {field}")
         except json.JSONDecodeError as exc:
             errors.append(f"Invalid .drydock.json: {exc}")
+
+    lock_path = root / ".drydock-lock.json"
+    if not lock_path.exists():
+        errors.append("Missing .drydock-lock.json")
+    else:
+        try:
+            lock = _read_json(lock_path)
+            if lock.get("schema_version") != 1:
+                errors.append(".drydock-lock.json: unsupported schema_version")
+            lock_files = lock.get("files")
+            if not isinstance(lock_files, dict):
+                errors.append(".drydock-lock.json: files must be an object")
+            else:
+                for relative, record in lock_files.items():
+                    if (
+                        not isinstance(relative, str)
+                        or Path(relative).is_absolute()
+                        or ".." in Path(relative).parts
+                    ):
+                        errors.append(f".drydock-lock.json: unsafe path {relative!r}")
+                        continue
+                    if not isinstance(record, dict):
+                        errors.append(f".drydock-lock.json: invalid record for {relative}")
+                        continue
+                    if record.get("ownership") not in VALID_OWNERSHIP:
+                        errors.append(f".drydock-lock.json: invalid ownership for {relative}")
+                    digest = record.get("sha256")
+                    if not isinstance(digest, str) or not re.fullmatch(
+                        r"[0-9a-f]{64}", digest
+                    ):
+                        errors.append(f".drydock-lock.json: invalid sha256 for {relative}")
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"Invalid .drydock-lock.json: {exc}")
+
+    try:
+        adapter_config = _adapter_config(root)
+        entity_types = adapter_config.get("entity_types", {})
+        if not isinstance(entity_types, dict):
+            errors.append("00-drydock/adapter.json: entity_types must be an object")
+            entity_types = {}
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"Invalid 00-drydock/adapter.json: {exc}")
+        entity_types = {}
 
     files = list(root.rglob("*.md"))
     known = {path.stem.lower() for path in files} | {
@@ -72,6 +140,15 @@ def validate_campaign(root: Path) -> int:
         status = metadata.get("status")
         if status and status not in VALID_STATUSES:
             errors.append(f"{relative}: invalid status {status}")
+        ownership = metadata.get("ownership")
+        if ownership and ownership not in VALID_OWNERSHIP:
+            errors.append(f"{relative}: invalid ownership {ownership}")
+        entity_type = metadata.get("type")
+        entity_rule = entity_types.get(entity_type, {})
+        if entity_rule and not relative.as_posix().startswith("templates/"):
+            for field in entity_rule.get("required_fields", []):
+                if field not in metadata:
+                    errors.append(f"{relative}: missing required field {field}")
         entity_id = metadata.get("id")
         if entity_id:
             if entity_id in ids:
@@ -93,6 +170,43 @@ def validate_campaign(root: Path) -> int:
         return 1
     print(f"Validation passed with {len(warnings)} warning(s).")
     return 0
+
+
+def create_entity(root: Path, kind: str, entity_id: str, name: str | None) -> Path:
+    root = root.resolve()
+    if not ID_PATTERN.fullmatch(entity_id):
+        raise SystemExit("Entity ID must use lowercase letters, numbers, and hyphens")
+    config = _adapter_config(root)
+    rule = config.get("entity_types", {}).get(kind)
+    if not isinstance(rule, dict):
+        available = ", ".join(sorted(config.get("entity_types", {}))) or "none"
+        raise SystemExit(f"Unknown entity type {kind!r}; available types: {available}")
+    template = (root / rule["template"]).resolve()
+    destination = (root / rule["destination"].format(id=entity_id)).resolve()
+    if not template.is_relative_to(root) or not destination.is_relative_to(root):
+        raise SystemExit("Adapter entity paths must remain inside the campaign")
+    if destination.exists():
+        raise SystemExit(f"Refusing to overwrite existing entity: {destination}")
+    for existing in root.rglob("*.md"):
+        metadata = frontmatter(existing.read_text(encoding="utf-8"))
+        if metadata.get("id") == entity_id:
+            raise SystemExit(
+                f"Refusing duplicate entity ID {entity_id}: {existing.relative_to(root)}"
+            )
+    text = template.read_text(encoding="utf-8")
+    text = re.sub(r"(?m)^id:\s*.*$", f"id: {entity_id}", text, count=1)
+    text = re.sub(r"(?m)^ownership:\s*.*$", "ownership: campaign", text, count=1)
+    if name is not None:
+        if re.search(r"(?m)^name:", text):
+            escaped_name = name.replace('"', '\\"')
+            text = re.sub(
+                r"(?m)^name:\s*.*$", f'name: "{escaped_name}"', text, count=1
+            )
+        text = re.sub(r"(?m)^# (Name|Adventure|Session)$", f"# {name}", text, count=1)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(text, encoding="utf-8")
+    print(f"Created {destination.relative_to(root)}")
+    return destination
 
 
 def _approved_session_logs(root: Path) -> list[Path]:
@@ -143,12 +257,21 @@ def build_context(root: Path) -> Path:
 
 def main(argv: list[str] | None = None, *, root: Path | None = None) -> int:
     parser = argparse.ArgumentParser(description="Warden Drydock campaign maintenance")
-    parser.add_argument("command", choices=["validate", "context"])
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("validate")
+    subparsers.add_parser("context")
+    new = subparsers.add_parser("new", help="Create an entity from an adapter template")
+    new.add_argument("kind")
+    new.add_argument("entity_id")
+    new.add_argument("--name")
     args = parser.parse_args(argv)
     campaign_root = root or Path(__file__).resolve().parents[1]
     if args.command == "validate":
         return validate_campaign(campaign_root)
-    build_context(campaign_root)
+    if args.command == "context":
+        build_context(campaign_root)
+        return 0
+    create_entity(campaign_root, args.kind, args.entity_id, args.name)
     return 0
 
 

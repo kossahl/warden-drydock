@@ -1,5 +1,5 @@
 ---
-id: npc-000
+id: ""
 type: npc
 status: idea
 ownership: shared

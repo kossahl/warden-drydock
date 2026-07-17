@@ -58,6 +58,22 @@ Campaign-owned and generated files are never overwritten. Locally modified
 managed or shared files block the entire upgrade so the agent can review the
 conflict before retrying.
 
+## Creating campaign entities
+
+Agents create adapter-defined entities with a deterministic command instead of
+manually reconstructing templates:
+
+```bash
+drydock new npc npc-ripley --name "Ripley" --path /path/to/campaign
+drydock new faction faction-company --name "The Company" --path /path/to/campaign
+drydock new adventure adventure-derelict --name "The Derelict" --path /path/to/campaign
+drydock new session session-001 --name "First Contact" --path /path/to/campaign
+```
+
+Inside a generated campaign, the equivalent standalone form is `python
+scripts/drydock.py new TYPE ID --name "NAME"`. Entity types, templates,
+destinations, and required metadata come from the selected adapter.
+
 ## Architecture
 
 - `warden_drydock/core/`: system-agnostic project generation and validation

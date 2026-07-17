@@ -20,6 +20,18 @@ python scripts/drydock.py validate
 python scripts/drydock.py context
 ```
 
+Create new campaign records through the adapter-defined entity command:
+
+```bash
+python scripts/drydock.py new npc npc-example --name "Example NPC"
+python scripts/drydock.py new faction faction-example --name "Example Faction"
+python scripts/drydock.py new adventure adventure-example --name "Example Adventure"
+python scripts/drydock.py new session session-001 --name "Session 1"
+```
+
+The command refuses invalid IDs and existing destinations. New records remain
+provisional and campaign-owned.
+
 When a newer Warden Drydock package is available, ask the AI to preview the
 update before applying it:
 

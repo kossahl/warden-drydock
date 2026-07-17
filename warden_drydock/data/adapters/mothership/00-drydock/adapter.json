@@ -1,0 +1,26 @@
+{
+  "adapter": "mothership",
+  "adapter_version": "0.1.0",
+  "entity_types": {
+    "adventure": {
+      "template": "templates/adventure.md",
+      "destination": "10-adventures/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name"]
+    },
+    "faction": {
+      "template": "templates/faction.md",
+      "destination": "06-factions/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name"]
+    },
+    "npc": {
+      "template": "templates/npc.md",
+      "destination": "05-characters/npcs/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name"]
+    },
+    "session": {
+      "template": "templates/session-log.md",
+      "destination": "12-sessions/logs/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "date"]
+    }
+  }
+}

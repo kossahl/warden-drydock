@@ -1,5 +1,5 @@
 ---
-id: adventure-000
+id: ""
 type: adventure
 status: draft
 ownership: shared

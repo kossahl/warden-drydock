@@ -1,5 +1,5 @@
 ---
-id: faction-000
+id: ""
 type: faction
 status: idea
 ownership: shared

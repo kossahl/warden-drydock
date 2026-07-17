@@ -39,9 +39,12 @@ The AI interprets the Warden's natural-language request, but uses deterministic 
 ```bash
 python scripts/drydock.py validate
 python scripts/drydock.py context
+python scripts/drydock.py new TYPE ID --name "NAME"
 ```
 
 Do not rebuild repository structures from memory when a Drydock operation exists.
+Use `new` for adapter-defined campaign records rather than copying templates by
+hand. Newly created records are provisional; the canon gate still applies.
 
 For framework updates, use `drydock upgrade .` to preview first. Use
 `drydock upgrade . --apply` only after reviewing the preview. Never work around

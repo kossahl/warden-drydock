@@ -1,5 +1,5 @@
 ---
-id: session-000
+id: ""
 type: session
 status: draft
 ownership: shared

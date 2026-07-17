@@ -8,6 +8,7 @@ from .core.generator import init_campaign
 from .core.upgrade import upgrade_campaign
 from .core.validation import validate_campaign
 from .core.context import build_context
+from .standalone import create_entity
 
 
 def parser() -> argparse.ArgumentParser:
@@ -39,6 +40,12 @@ def parser() -> argparse.ArgumentParser:
     upgrade = sub.add_parser("upgrade", help="Preview or apply managed framework updates")
     upgrade.add_argument("path", type=Path, nargs="?", default=Path.cwd())
     upgrade.add_argument("--apply", action="store_true")
+
+    new = sub.add_parser("new", help="Create a campaign entity from an adapter template")
+    new.add_argument("kind")
+    new.add_argument("entity_id")
+    new.add_argument("--name")
+    new.add_argument("--path", type=Path, default=Path.cwd())
 
     return p
 
@@ -75,4 +82,7 @@ def main(argv=None) -> int:
         return 0
     if args.command == "upgrade":
         return upgrade_campaign(args.path, apply=args.apply)
+    if args.command == "new":
+        create_entity(args.path, args.kind, args.entity_id, args.name)
+        return 0
     return 2

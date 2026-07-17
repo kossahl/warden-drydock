@@ -13,6 +13,7 @@ from warden_drydock.core.generator import init_campaign
 from warden_drydock.core.validation import validate_campaign
 from warden_drydock.core.context import build_context
 from warden_drydock.core.upgrade import upgrade_campaign
+from warden_drydock.standalone import create_entity
 
 class GeneratorTest(unittest.TestCase):
     def test_mothership_campaign_generation(self):
@@ -136,5 +137,34 @@ class GeneratorTest(unittest.TestCase):
             self.assertEqual(readme.read_text(encoding='utf-8'),'local customization')
             self.assertEqual(campaign.read_text(encoding='utf-8'),original)
             self.assertIn('CONFLICT: README.md',output.getvalue())
+
+    def test_adapter_declares_and_creates_campaign_entities(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            entity=create_entity(root,'npc','npc-ripley','Ripley')
+            text=entity.read_text(encoding='utf-8')
+            self.assertEqual(entity.relative_to(root).as_posix(),'05-characters/npcs/npc-ripley.md')
+            self.assertIn('id: npc-ripley',text)
+            self.assertIn('ownership: campaign',text)
+            self.assertIn('name: "Ripley"',text)
+            self.assertIn('# Ripley',text)
+            self.assertEqual(validate_campaign(root),0)
+            with self.assertRaises(SystemExit):
+                create_entity(root,'npc','npc-ripley','Duplicate')
+
+    def test_semantic_validation_rejects_missing_adapter_fields(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            entity=create_entity(root,'faction','faction-company','The Company')
+            entity.write_text(
+                entity.read_text(encoding='utf-8').replace('status: idea\n',''),
+                encoding='utf-8',
+            )
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            self.assertIn('missing required field status',output.getvalue())
 
 if __name__=='__main__': unittest.main()
