@@ -20,23 +20,30 @@ artifact verification by [the release guide](docs/release.md).
 
 ## AI-assisted setup
 
-Give your agent this instruction:
+The canonical onboarding contract is [BOOTSTRAP.md](BOOTSTRAP.md). Open an empty
+campaign directory and copy its complete prompt into the repository-capable AI
+agent. It defines what Drydock is, where to obtain the pinned release, how to
+verify it, and how to fail without damaging the campaign directory.
+
+In abbreviated form, the user asks:
 
 ```text
 Create a new Warden Drydock campaign in this directory.
 Use the Mothership adapter.
 Ask me only for campaign-specific information that cannot be inferred.
-Run the bootstrap command, initialize Git, and explain what was created.
+Follow https://github.com/kossahl/warden-drydock/blob/v0.1.0/BOOTSTRAP.md,
+run the deterministic bootstrap command, initialize Git only after validation,
+and explain what was created.
 Do not invent campaign canon.
 ```
 
-The agent should then run the cohesive onboarding command:
+After acquiring and verifying the pinned release, the agent runs:
 
 ```bash
 drydock bootstrap . --adapter mothership --interactive
 ```
 
-For development from this source checkout:
+Framework contributors working from this source checkout instead run:
 
 ```bash
 python -m warden_drydock bootstrap ../my-campaign --adapter mothership --name "My Campaign"
@@ -117,4 +124,5 @@ The continuation guide contains a ready-to-paste Codex prompt.
 Version `0.1.0` is an alpha MVP. It supports Mothership campaign bootstrap,
 adapter-driven entity creation, semantic validation, canon-safe context
 generation, and preview-first ownership-aware upgrades. The package is
-buildable locally but is not yet published to a package registry.
+buildable locally and installable from its pinned GitHub tag after that tag's
+release gate has completed. It is not yet published to a package registry.

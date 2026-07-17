@@ -11,16 +11,21 @@ the Warden explicitly approves them as canon.
 
 ## Start a campaign
 
-Until a public package is released, ask the agent to install Warden Drydock
-from a local source checkout or wheel. Then open an empty campaign directory
-and give the agent this prompt:
+Open an empty campaign directory and give the agent the complete prompt from
+[`BOOTSTRAP.md`](../BOOTSTRAP.md). That prompt is deliberately self-contained:
+it explains Drydock, identifies the pinned GitHub release, verifies Python and
+Git, installs into a temporary environment outside the campaign, and defines
+safe failure behavior.
+
+The short request is:
 
 ```text
 Create a new Warden Drydock campaign in this directory.
 Use the Mothership adapter.
 Ask only for campaign-specific facts that cannot be inferred.
-Run the bootstrap command, validate the result, initialize Git, and explain
-what was created. Do not invent campaign canon.
+Follow the complete bootstrap contract at
+https://github.com/kossahl/warden-drydock/blob/v0.1.0/BOOTSTRAP.md. Do not
+invent campaign canon.
 ```
 
 The deterministic operation underneath that request is:
@@ -45,14 +50,14 @@ deterministic repository operations.
 
 Natural-language requests can then include:
 
-- “Create an NPC draft named Ripley with ID `npc-ripley`.”
-- “Capture this faction idea without making it canon.”
-- “Prepare a situation for the next session; do not prescribe an ending.”
-- “Record tonight’s session as a draft for my review.”
-- “Promote the reviewed session to canon and rebuild context.”
-- “Audit unresolved links and duplicate IDs.”
+- "Create an NPC draft named Ripley with ID `npc-ripley`."
+- "Capture this faction idea without making it canon."
+- "Prepare a situation for the next session; do not prescribe an ending."
+- "Record tonight's session as a draft for my review."
+- "Promote the reviewed session to canon and rebuild context."
+- "Audit unresolved links and duplicate IDs."
 
-For adapter-defined records, the agent invokes `drydock new` or the campaign’s
+For adapter-defined records, the agent invokes `drydock new` or the campaign's
 local `python scripts/drydock.py new` command. It then edits the new provisional
 record with the details supplied by the Warden.
 
