@@ -206,6 +206,14 @@ def validate_campaign(root: Path) -> int:
                     f"00-drydock/adapter.json: {entity_type}.required_fields "
                     "must be a string list"
                 )
+            nonempty_fields = rule.get("nonempty_fields", [])
+            if not isinstance(nonempty_fields, list) or any(
+                not isinstance(field, str) for field in nonempty_fields
+            ):
+                errors.append(
+                    f"00-drydock/adapter.json: {entity_type}.nonempty_fields "
+                    "must be a string list"
+                )
             forbidden_headings = rule.get("forbidden_headings", [])
             if not isinstance(forbidden_headings, list) or any(
                 not isinstance(heading, str) for heading in forbidden_headings
@@ -278,6 +286,9 @@ def validate_campaign(root: Path) -> int:
             for field in entity_rule.get("required_fields", []):
                 if field not in metadata:
                     errors.append(f"{relative}: missing required field {field}")
+            for field in entity_rule.get("nonempty_fields", []):
+                if not metadata.get(field, "").strip():
+                    errors.append(f"{relative}: field {field} must not be empty")
             for field, required_value in entity_rule.get("required_values", {}).items():
                 if metadata.get(field) != required_value:
                     errors.append(

@@ -113,6 +113,14 @@
       "destination": "12-sessions/debriefs/{id}.md",
       "required_fields": ["id", "type", "status", "ownership", "date", "visibility", "warden_only"],
       "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
+    "handout": {
+      "template": "templates/handout.md",
+      "destination": "13-handouts/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "audience", "visibility", "warden_only"],
+      "nonempty_fields": ["audience"],
+      "required_values": {"visibility": "players", "warden_only": "false"},
+      "forbidden_headings": ["Warden truth", "Secrets", "Secret", "Hidden objective", "Hidden objectives", "Unrevealed information"]
     }
   }
 }
