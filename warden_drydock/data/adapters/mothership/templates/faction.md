@@ -4,6 +4,8 @@ type: faction
 status: idea
 ownership: shared
 name: ""
+visibility: warden
+warden_only: true
 clock: 0
 clock_max: 6
 ---

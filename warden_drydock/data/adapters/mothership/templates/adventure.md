@@ -4,6 +4,8 @@ type: adventure
 status: draft
 ownership: shared
 name: ""
+visibility: warden
+warden_only: true
 ---
 
 # Adventure

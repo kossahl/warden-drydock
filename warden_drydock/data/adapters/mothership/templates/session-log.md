@@ -5,6 +5,8 @@ status: draft
 ownership: shared
 date:
 characters: []
+visibility: warden
+warden_only: true
 ---
 
 # Session

@@ -186,4 +186,40 @@ class GeneratorTest(unittest.TestCase):
                 'adapter_version does not match adapter.json', output.getvalue()
             )
 
+    def test_adapter_visibility_rules_are_declarative(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            entity=create_entity(root,'npc','npc-leak','Leak')
+            entity.write_text(
+                entity.read_text(encoding='utf-8').replace(
+                    'visibility: warden', 'visibility: players'
+                ),
+                encoding='utf-8',
+            )
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            result=output.getvalue()
+            self.assertIn('visibility must be warden for npc',result)
+            self.assertIn(
+                'forbidden field combination visibility=players, warden_only=true',
+                result,
+            )
+
+    def test_adapter_validation_rejects_malformed_declarations(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            adapter_path=root/'00-drydock'/'adapter.json'
+            adapter=json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['validation']['field_values']='not-an-object'
+            adapter_path.write_text(json.dumps(adapter),encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            self.assertIn(
+                'validation.field_values must map fields', output.getvalue()
+            )
+
 if __name__=='__main__': unittest.main()

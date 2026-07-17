@@ -7,6 +7,7 @@ name: ""
 factions: []
 locations: []
 current_status: unknown
+visibility: warden
 warden_only: true
 ---
 
