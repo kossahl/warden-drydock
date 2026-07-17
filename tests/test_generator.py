@@ -5,6 +5,7 @@ import subprocess
 import sys
 import unittest
 from warden_drydock import __version__
+from warden_drydock import standalone
 from warden_drydock.cli import main
 from warden_drydock.core.generator import init_campaign
 from warden_drydock.core.validation import validate_campaign
@@ -20,6 +21,10 @@ class GeneratorTest(unittest.TestCase):
             self.assertEqual(manifest['framework_version'],__version__)
             self.assertIn('Test Campaign',(root/'README.md').read_text())
             self.assertTrue((root/'templates'/'npc.md').exists())
+            self.assertEqual(
+                (root/'scripts'/'drydock.py').read_text(encoding='utf-8'),
+                Path(standalone.__file__).read_text(encoding='utf-8'),
+            )
             self.assertEqual(validate_campaign(root),0)
             self.assertTrue(build_context(root).exists())
 
@@ -48,5 +53,41 @@ class GeneratorTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 main(['bootstrap',str(root),'--name','Test Campaign'])
             self.assertEqual(existing.read_text(encoding='utf-8'),'user content')
+
+    def test_context_uses_only_approved_sessions_and_is_stable(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            logs=root/'12-sessions'/'logs'
+            logs.mkdir(parents=True,exist_ok=True)
+            (logs/'001-approved.md').write_text(
+                '---\nid: session-001\ntype: session\nstatus: canon\n---\n\n# Approved Event\n',
+                encoding='utf-8',
+            )
+            (logs/'999-draft.md').write_text(
+                '---\nid: session-999\ntype: session\nstatus: draft\n---\n\n# Unapproved Idea\n',
+                encoding='utf-8',
+            )
+            output=build_context(root)
+            first=output.read_text(encoding='utf-8')
+            build_context(root)
+            self.assertEqual(output.read_text(encoding='utf-8'),first)
+            self.assertIn('Approved Event',first)
+            self.assertNotIn('Unapproved Idea',first)
+
+    def test_standalone_validator_detects_merge_conflicts(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            (root/'conflict.md').write_text('<<<<<<< ours\n=======\n>>>>>>> theirs\n')
+            result=subprocess.run(
+                [sys.executable,str(root/'scripts'/'drydock.py'),'validate'],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode,1)
+            self.assertIn('merge conflict marker',result.stdout)
 
 if __name__=='__main__': unittest.main()

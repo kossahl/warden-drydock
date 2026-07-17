@@ -37,6 +37,8 @@ def init_campaign(path: Path, *, name: str, adapter: str, force: bool = False) -
     path.mkdir(parents=True, exist_ok=True)
     _copy_tree(DATA / "project_template", path)
     _copy_tree(DATA / "adapters" / adapter, path)
+    (path / "scripts").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(PACKAGE / "standalone.py", path / "scripts" / "drydock.py")
     _render(path, {"campaign_name": name, "adapter": adapter})
     manifest = {
         "framework": "warden-drydock",

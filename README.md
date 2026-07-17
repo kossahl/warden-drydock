@@ -47,6 +47,7 @@ workflows that intentionally orchestrate those steps separately.
 ## Architecture
 
 - `warden_drydock/core/`: system-agnostic project generation and validation
+- `warden_drydock/standalone.py`: portable campaign maintenance implementation
 - `warden_drydock/data/adapters/`: RPG-system adapter assets
 - `warden_drydock/data/project_template/`: generic generated campaign files
 - `tests/`: deterministic behavior tests
@@ -59,6 +60,11 @@ workflows that intentionally orchestrate those steps separately.
 - The framework never silently overwrites campaign content.
 - AI agents invoke deterministic commands rather than reconstructing repositories from memory.
 - Mothership is the first adapter, not a hard-coded assumption in the core.
+
+The framework imports the same portable maintenance implementation that is
+copied into generated campaigns as `scripts/drydock.py`. Context generation is
+stable across unchanged runs and includes only approved session logs (`canon`,
+`revealed`, or the legacy `accepted` status).
 
 ## Continue development in Codex
 

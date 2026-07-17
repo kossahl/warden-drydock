@@ -54,6 +54,10 @@ builds the generated AI context, and validates the result using the standalone
 maintenance script installed into that campaign. Git initialization remains an
 explicit, agent-reviewed follow-up operation.
 
+The installed script and framework commands share one source implementation.
+Generated AI context excludes provisional session logs and contains only
+sessions whose status indicates human approval.
+
 ## Explicit non-goals for the current milestone
 
 - A bespoke web application or desktop GUI.
