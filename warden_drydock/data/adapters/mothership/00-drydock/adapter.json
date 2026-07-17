@@ -47,6 +47,21 @@
       "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
       "required_values": {"visibility": "warden", "warden_only": "true"}
     },
+    "clue": {
+      "template": "templates/clue.md", "destination": "09-mysteries/clues/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
+    "false-belief": {
+      "template": "templates/false-belief.md", "destination": "09-mysteries/false-beliefs/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
+    "revelation": {
+      "template": "templates/revelation.md", "destination": "09-mysteries/revelations/{id}.md",
+      "required_fields": ["id", "type", "status", "ownership", "name", "visibility", "warden_only"],
+      "required_values": {"visibility": "warden", "warden_only": "true"}
+    },
     "adventure": {
       "template": "templates/adventure.md",
       "destination": "10-adventures/available/{id}.md",
