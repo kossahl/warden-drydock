@@ -308,4 +308,22 @@ class GeneratorTest(unittest.TestCase):
                 self.assertNotIn('combat:',text)
             self.assertEqual(validate_campaign(root),0)
 
+    def test_mystery_record_family_creates_and_validates(self):
+        expected={
+            'clue':'09-mysteries/clues/clue-signal.md',
+            'false-belief':'09-mysteries/false-beliefs/false-belief-rescue.md',
+            'revelation':'09-mysteries/revelations/revelation-origin.md',
+            'adventure':'10-adventures/available/adventure-derelict.md',
+        }
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            for kind,relative in expected.items():
+                created=create_entity(root,kind,Path(relative).stem,kind.title())
+                self.assertEqual(created.relative_to(root).as_posix(),relative)
+                text=created.read_text(encoding='utf-8')
+                self.assertIn('## Warden truth',text)
+                self.assertIn('player',text.lower())
+            self.assertEqual(validate_campaign(root),0)
+
 if __name__=='__main__': unittest.main()
