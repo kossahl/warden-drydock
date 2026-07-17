@@ -355,4 +355,36 @@ class GeneratorTest(unittest.TestCase):
             self.assertIn('## Canon updates requiring review',session)
             self.assertEqual(validate_campaign(root),0)
 
+    def test_player_handout_enforces_adapter_secrecy_contract(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            handout=create_entity(root,'handout','handout-distress','Distress Call')
+            self.assertEqual(handout.relative_to(root).as_posix(),'13-handouts/handout-distress.md')
+            text=handout.read_text(encoding='utf-8')
+            self.assertIn('visibility: players',text)
+            self.assertIn('warden_only: false',text)
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            self.assertIn('field audience must not be empty',output.getvalue())
+            handout.write_text(text.replace('audience: ""','audience: "all players"'),encoding='utf-8')
+            self.assertEqual(validate_campaign(root),0)
+            handout.write_text(handout.read_text(encoding='utf-8')+'\n## Warden truth\nLeak\n',encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            self.assertIn('forbidden heading Warden truth',output.getvalue())
+
+    def test_player_visibility_cannot_be_warden_only(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            handout=create_entity(root,'handout','handout-unsafe','Unsafe')
+            handout.write_text(handout.read_text(encoding='utf-8').replace('warden_only: false','warden_only: true'),encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            self.assertIn('forbidden field combination',output.getvalue())
+
 if __name__=='__main__': unittest.main()
