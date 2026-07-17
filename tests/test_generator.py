@@ -23,8 +23,12 @@ class GeneratorTest(unittest.TestCase):
             self.assertTrue((root/'.drydock.json').exists())
             manifest=json.loads((root/'.drydock.json').read_text())
             self.assertEqual(manifest['framework_version'],__version__)
+            adapter=json.loads((root/'00-drydock'/'adapter.json').read_text())
+            self.assertEqual(manifest['adapter'],adapter['adapter'])
+            self.assertEqual(manifest['adapter_version'],adapter['adapter_version'])
             lock=json.loads((root/'.drydock-lock.json').read_text())
             self.assertEqual(lock['schema_version'],1)
+            self.assertEqual(lock['adapter_version'],adapter['adapter_version'])
             self.assertEqual(
                 lock['files']['01-campaign/campaign-overview.md']['ownership'],
                 'campaign',
@@ -166,5 +170,20 @@ class GeneratorTest(unittest.TestCase):
             with redirect_stdout(output):
                 self.assertEqual(validate_campaign(root),1)
             self.assertIn('missing required field status',output.getvalue())
+
+    def test_validation_rejects_inconsistent_adapter_metadata(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign'
+            init_campaign(root,name='Test Campaign',adapter='mothership')
+            adapter_path=root/'00-drydock'/'adapter.json'
+            adapter=json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['adapter_version']='9.9.9'
+            adapter_path.write_text(json.dumps(adapter),encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root),1)
+            self.assertIn(
+                'adapter_version does not match adapter.json', output.getvalue()
+            )
 
 if __name__=='__main__': unittest.main()

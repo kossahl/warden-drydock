@@ -74,6 +74,7 @@ def validate_campaign(root: Path) -> int:
     warnings: list[str] = []
     ids: dict[str, Path] = {}
     manifest = root / ".drydock.json"
+    manifest_data: dict = {}
     if not manifest.exists():
         errors.append("Missing .drydock.json")
     else:
@@ -87,6 +88,7 @@ def validate_campaign(root: Path) -> int:
             errors.append(f"Invalid .drydock.json: {exc}")
 
     lock_path = root / ".drydock-lock.json"
+    lock: dict = {}
     if not lock_path.exists():
         errors.append("Missing .drydock-lock.json")
     else:
@@ -121,6 +123,18 @@ def validate_campaign(root: Path) -> int:
 
     try:
         adapter_config = _adapter_config(root)
+        adapter_name = adapter_config.get("adapter")
+        adapter_version = adapter_config.get("adapter_version")
+        if not isinstance(adapter_name, str) or not adapter_name:
+            errors.append("00-drydock/adapter.json: invalid or missing adapter")
+        if not isinstance(adapter_version, str) or not adapter_version:
+            errors.append("00-drydock/adapter.json: invalid or missing adapter_version")
+        if manifest_data and adapter_name != manifest_data.get("adapter"):
+            errors.append(".drydock.json: adapter does not match adapter.json")
+        if manifest_data and adapter_version != manifest_data.get("adapter_version"):
+            errors.append(".drydock.json: adapter_version does not match adapter.json")
+        if lock and adapter_version != lock.get("adapter_version"):
+            errors.append(".drydock-lock.json: adapter_version does not match adapter.json")
         entity_types = adapter_config.get("entity_types", {})
         if not isinstance(entity_types, dict):
             errors.append("00-drydock/adapter.json: entity_types must be an object")
