@@ -76,3 +76,6 @@ framework source checkout.
 7. Review `git diff --check` and commit one coherent task.
 
 For artifact and clean-install verification, follow the [release guide](release.md).
+
+For contribution policy, branch naming, and PR expectations, see the
+[contribution guide](contributing.md).
