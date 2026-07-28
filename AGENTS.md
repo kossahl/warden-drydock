@@ -40,6 +40,12 @@ A user should not need to understand Python packaging, submodules, templates, or
 
 ## Change protocol
 
+Every change — feature, bug fix, documentation update, or refactor — is
+developed on a focused branch and delivered through a pull request. Direct
+commits to `master` are not accepted. See `docs/contributing.md` for branch
+naming, commit discipline, required checks, and review expectations. Parallel
+unrelated changes belong on separate branches or in separate worktrees.
+
 After changes:
 
 ```bash
