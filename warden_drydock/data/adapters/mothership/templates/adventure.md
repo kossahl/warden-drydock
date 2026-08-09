@@ -10,6 +10,18 @@ warden_only: true
 
 # Adventure
 
+## Summary
+
+<!-- One or two sentences: what this record is and why it matters now. -->
+
+## Current state
+
+<!-- Present truth only. Preserve how it changed in sessions or other event records. -->
+
+## Connections
+
+<!-- - `relationship` → [[target-id|Readable Name]] (`current`) — One concise sentence of context. -->
+
 ## Initial situation
 ## What happened before arrival
 ## Actors and objectives

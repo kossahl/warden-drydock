@@ -31,6 +31,11 @@
 - Make the smallest coherent edit.
 - Do not expose Warden-only information in player-facing files.
 - After material changes, run validation and rebuild AI context.
+- Start discovery with the generated entity index and focused retrieval; do not load the whole campaign.
+- Keep present truth under `## Current state` and preserve changes in approved session or event records.
+- Put typed links only under `## Connections`, using ``- `relationship` → [[target-id|Readable Name]] (`current`) — Brief context.``
+- Do not maintain inverse links manually; rebuild generated backlinks.
+- Review legacy connection proposals before editing records. Proposals never promote ideas to canon.
 
 ## AI-assisted operation
 
@@ -39,6 +44,8 @@ The AI interprets the Warden's natural-language request, but uses deterministic 
 ```bash
 python scripts/drydock.py validate
 python scripts/drydock.py context
+python scripts/drydock.py related ENTITY_ID
+python scripts/drydock.py connections audit
 python scripts/drydock.py new TYPE ID --name "NAME"
 ```
 

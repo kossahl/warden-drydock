@@ -8,6 +8,7 @@ the framework imports the same implementation.
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import re
 from pathlib import Path
@@ -34,6 +35,99 @@ REQUIRED_MANIFEST_FIELDS = {
 }
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 HEADING_PATTERN = re.compile(r"(?m)^#{1,6}\s+(.+?)\s*$")
+CONNECTION_PATTERN = re.compile(
+    r"^\s*-\s+`(?P<relationship>[a-z0-9][a-z0-9-]*)`\s+"
+    r"(?:→|->)\s+\[\[(?P<target>[a-z0-9][a-z0-9-]*)(?:\|[^\]]+)?\]\]\s+"
+    r"\(`(?P<state>[a-z0-9][a-z0-9-]*)`\)\s+—\s+(?P<context>\S.*)\s*$"
+)
+VALID_CONNECTION_STATES = {
+    "current", "former", "planned", "possible", "disputed", "believed",
+    "hidden", "confirmed", "inactive", "unknown", "active",
+}
+
+
+@dataclass(frozen=True)
+class Entity:
+    entity_id: str
+    entity_type: str
+    name: str
+    status: str
+    visibility: str
+    path: Path
+    text: str
+
+
+@dataclass(frozen=True)
+class Connection:
+    source_id: str
+    target_id: str
+    relationship: str
+    state: str
+    context: str
+    path: Path
+    line: int
+
+
+def _section_lines(text: str, heading: str) -> list[tuple[int, str]]:
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line.strip().casefold() == f"## {heading}".casefold():
+            start = index + 1
+            break
+    if start is None:
+        return []
+    result = []
+    for index in range(start, len(lines)):
+        if lines[index].startswith("## "):
+            break
+        result.append((index + 1, lines[index]))
+    return result
+
+
+def parse_connections(text: str, *, source_id: str, path: Path) -> tuple[list[Connection], list[str]]:
+    connections: list[Connection] = []
+    errors: list[str] = []
+    for line_number, line in _section_lines(text, "Connections"):
+        if not line.strip() or line.lstrip().startswith("<!--"):
+            continue
+        if not line.lstrip().startswith("-"):
+            continue
+        match = CONNECTION_PATTERN.fullmatch(line)
+        if not match:
+            errors.append(f"{path}:{line_number}: malformed connection")
+            continue
+        connections.append(Connection(source_id=source_id, target_id=match['target'],
+            relationship=match['relationship'], state=match['state'],
+            context=match['context'], path=path, line=line_number))
+    return connections, errors
+
+
+def _entities(root: Path) -> dict[str, Entity]:
+    result: dict[str, Entity] = {}
+    for path in sorted(root.rglob("*.md")):
+        relative = path.relative_to(root)
+        if relative.parts[0] in {"templates", "docs"} or relative.as_posix().startswith("00-drydock/"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        metadata = frontmatter(text)
+        entity_id = metadata.get("id")
+        if entity_id:
+            result[entity_id] = Entity(entity_id, metadata.get("type", "unknown"),
+                metadata.get("name") or entity_id, metadata.get("status", "unknown"),
+                metadata.get("visibility", "warden"), relative, text)
+    return result
+
+
+def _graph(root: Path) -> tuple[dict[str, Entity], list[Connection], list[str]]:
+    entities = _entities(root)
+    connections: list[Connection] = []
+    errors: list[str] = []
+    for entity in entities.values():
+        parsed, failures = parse_connections(entity.text, source_id=entity.entity_id, path=entity.path)
+        connections.extend(parsed)
+        errors.extend(failures)
+    return entities, connections, errors
 
 
 def frontmatter(text: str) -> dict[str, str]:
@@ -273,6 +367,11 @@ def validate_campaign(root: Path) -> int:
     known = {path.stem.lower() for path in files} | {
         path.relative_to(root).with_suffix("").as_posix().lower() for path in files
     }
+    known |= {
+        entity_id.lower()
+        for path in files
+        if (entity_id := frontmatter(path.read_text(encoding="utf-8")).get("id"))
+    }
     for path in files:
         text = path.read_text(encoding="utf-8")
         metadata = frontmatter(text)
@@ -324,10 +423,39 @@ def validate_campaign(root: Path) -> int:
             ids[entity_id] = relative
         for raw in re.findall(r"\[\[([^\]]+)\]\]", text):
             target = raw.split("|", 1)[0].split("#", 1)[0].strip().lower()
-            if target and target not in known:
+            if target and target != "target-id" and target not in known:
                 warnings.append(f"{relative}: unresolved wikilink [[{raw}]]")
         if any(marker in text for marker in ("<<<<<<<", "=======", ">>>>>>>")):
             errors.append(f"{relative}: merge conflict marker")
+
+    entities, connections, connection_errors = _graph(root)
+    errors.extend(connection_errors)
+    connection_config = adapter_config.get("connections", {}) if isinstance(adapter_config, dict) else {}
+    configured_states = connection_config.get("states", sorted(VALID_CONNECTION_STATES))
+    states = set(configured_states) if isinstance(configured_states, list) else VALID_CONNECTION_STATES
+    vocabulary = connection_config.get("relationships", {})
+    seen_edges: set[tuple[str, str, str, str]] = set()
+    for connection in connections:
+        target = entities.get(connection.target_id)
+        source = entities.get(connection.source_id)
+        location = f"{connection.path}:{connection.line}"
+        if target is None:
+            errors.append(f"{location}: connection target {connection.target_id} does not exist")
+            continue
+        if connection.state not in states:
+            errors.append(f"{location}: invalid connection state {connection.state}")
+        if connection.source_id == connection.target_id:
+            warnings.append(f"{location}: self-connection")
+        edge = (connection.source_id, connection.target_id, connection.relationship, connection.state)
+        if edge in seen_edges:
+            warnings.append(f"{location}: duplicate connection")
+        seen_edges.add(edge)
+        if isinstance(vocabulary, dict) and connection.relationship not in vocabulary:
+            warnings.append(f"{location}: unknown relationship {connection.relationship}")
+        if source and source.visibility == "players" and target.visibility == "warden":
+            errors.append(f"{location}: player-visible connection exposes Warden-only target {target.entity_id}")
+        if len(connection.context) > 200:
+            warnings.append(f"{location}: connection context exceeds 200 characters")
 
     print(f"Checked {len(files)} Markdown files.")
     for warning in warnings:
@@ -386,7 +514,65 @@ def _approved_session_logs(root: Path) -> list[Path]:
     return sorted(logs)
 
 
-def build_context(root: Path) -> Path:
+def _summary(entity: Entity) -> str:
+    lines = [line.strip() for _, line in _section_lines(entity.text, "Summary") if line.strip() and not line.startswith("<!--")]
+    return " ".join(lines) or "No summary recorded."
+
+
+def build_indexes(root: Path) -> tuple[Path, Path]:
+    root = root.resolve()
+    entities, connections, _ = _graph(root)
+    outgoing: dict[str, list[Connection]] = {key: [] for key in entities}
+    incoming: dict[str, list[Connection]] = {key: [] for key in entities}
+    for connection in connections:
+        outgoing.setdefault(connection.source_id, []).append(connection)
+        incoming.setdefault(connection.target_id, []).append(connection)
+    entity_lines = ["# Entity Index", "", "> Generated by Warden Drydock. Do not edit manually.", ""]
+    for entity_type in sorted({entity.entity_type for entity in entities.values()}):
+        entity_lines += [f"## {entity_type.replace('-', ' ').title()}", ""]
+        for entity in sorted((item for item in entities.values() if item.entity_type == entity_type), key=lambda item: item.entity_id):
+            links = "; ".join(f"{edge.relationship} [[{edge.target_id}]]" for edge in sorted(outgoing.get(entity.entity_id, []), key=lambda edge: (edge.relationship, edge.target_id)) if edge.state not in {"former", "inactive"})
+            suffix = f" Connections: {links}." if links else ""
+            entity_lines.append(f"- [[{entity.entity_id}|{entity.name}]] — {entity.status}; {_summary(entity)}{suffix} Source: `{entity.path.as_posix()}`")
+        entity_lines.append("")
+    entity_path = root / "00-drydock" / "entity-index.md"
+    entity_path.write_text("\n".join(entity_lines).rstrip() + "\n", encoding="utf-8")
+
+    connection_lines = ["# Connection Index", "", "> Generated by Warden Drydock. Backlinks are derived; edit source records instead.", ""]
+    for entity in sorted(entities.values(), key=lambda item: item.entity_id):
+        connection_lines += [f"## [[{entity.entity_id}|{entity.name}]]", ""]
+        for edge in sorted(outgoing.get(entity.entity_id, []), key=lambda item: (item.relationship, item.target_id)):
+            connection_lines.append(f"- outgoing `{edge.relationship}` → [[{edge.target_id}]] (`{edge.state}`) — {edge.context}")
+        for edge in sorted(incoming.get(entity.entity_id, []), key=lambda item: (item.relationship, item.source_id)):
+            connection_lines.append(f"- backlink `{edge.relationship}` ← [[{edge.source_id}]] (`{edge.state}`) — {edge.context}")
+        if not outgoing.get(entity.entity_id) and not incoming.get(entity.entity_id):
+            connection_lines.append("- No explicit connections.")
+        connection_lines.append("")
+    connection_path = root / "00-drydock" / "connection-index.md"
+    connection_path.write_text("\n".join(connection_lines).rstrip() + "\n", encoding="utf-8")
+    print(f"Wrote {entity_path.relative_to(root)}")
+    print(f"Wrote {connection_path.relative_to(root)}")
+    return entity_path, connection_path
+
+
+def related_entities(root: Path, focus: str, depth: int = 1) -> list[Entity]:
+    entities, connections, _ = _graph(root)
+    if focus not in entities:
+        raise SystemExit(f"Unknown entity ID {focus!r}")
+    selected = {focus}
+    frontier = {focus}
+    for _ in range(max(0, depth)):
+        neighbors = {edge.target_id for edge in connections if edge.source_id in frontier}
+        neighbors |= {edge.source_id for edge in connections if edge.target_id in frontier}
+        neighbors &= entities.keys()
+        frontier = neighbors - selected
+        selected |= frontier
+    ordered = [focus] + sorted(selected - {focus})
+    return [entities[key] for key in ordered]
+
+
+def build_context(root: Path, *, focus: str | None = None, depth: int = 1,
+                  max_records: int = 20, include_history: int = 1) -> Path:
     root = root.resolve()
     output = root / "00-drydock" / "ai-context.md"
     sources = [
@@ -417,17 +603,85 @@ def build_context(root: Path) -> Path:
         else "No approved session log recorded.",
         "",
     ]
+    entities = related_entities(root, focus, depth) if focus else []
+    included = entities[:max_records]
+    if included:
+        parts += ["## Focused Records", ""]
+        for entity in included:
+            parts += [f"### {entity.name} (`{entity.entity_id}`)", "", body(entity.text), ""]
+        omitted = len(entities) - len(included)
+        parts += ["## Retrieval Report", "", f"Included {len(included)} record(s) for `{focus}` at depth {depth}."]
+        if omitted:
+            parts.append(f"Omitted {omitted} record(s) because of `--max-records {max_records}`; use `related {focus}` to inspect them.")
+        parts.append("")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(parts).rstrip() + "\n", encoding="utf-8")
     print(f"Wrote {output.relative_to(root)}")
     return output
 
 
+def print_entities(root: Path, query: str | None = None) -> None:
+    entities = _entities(root.resolve())
+    matches = entities.values()
+    if query:
+        needle = query.casefold()
+        matches = [entity for entity in matches if needle in entity.entity_id.casefold() or needle in entity.name.casefold() or needle in _summary(entity).casefold()]
+    for entity in sorted(matches, key=lambda item: item.entity_id):
+        print(f"{entity.entity_id}\t{entity.entity_type}\t{entity.name}\t{entity.path.as_posix()}")
+
+
+def print_related(root: Path, focus: str, depth: int) -> None:
+    for entity in related_entities(root.resolve(), focus, depth):
+        print(f"{entity.entity_id}\t{entity.entity_type}\t{entity.name}\t{entity.path.as_posix()}")
+
+
+def print_history(root: Path, focus: str) -> None:
+    entities, connections, _ = _graph(root.resolve())
+    if focus not in entities:
+        raise SystemExit(f"Unknown entity ID {focus!r}")
+    historical = {"session", "debrief", "faction-turn", "consequence"}
+    for edge in connections:
+        source = entities.get(edge.source_id)
+        if edge.target_id == focus and source and source.entity_type in historical:
+            print(f"{source.entity_id}\t{edge.relationship}\t{edge.context}\t{source.path.as_posix()}")
+
+
+def audit_connections(root: Path) -> int:
+    count = 0
+    for entity in _entities(root.resolve()).values():
+        metadata = frontmatter(entity.text)
+        for field, relationship in (("factions", "affiliated-with"), ("locations", "located-at"), ("characters", "features")):
+            raw = metadata.get(field)
+            if raw and raw != "[]":
+                print(f"PROPOSED {entity.path.as_posix()}: {entity.entity_id} --{relationship}--> {raw}; evidence: legacy frontmatter field {field}; review required")
+                count += 1
+    print(f"Found {count} explicit legacy connection proposal(s); no campaign files changed.")
+    return 0
+
+
 def main(argv: list[str] | None = None, *, root: Path | None = None) -> int:
     parser = argparse.ArgumentParser(description="Warden Drydock campaign maintenance")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("validate")
-    subparsers.add_parser("context")
+    context = subparsers.add_parser("context")
+    context.add_argument("--focus")
+    context.add_argument("--depth", type=int, default=1)
+    context.add_argument("--max-records", type=int, default=20)
+    context.add_argument("--include-history", type=int, default=1)
+    subparsers.add_parser("index", help="Rebuild generated entity and connection indexes")
+    find = subparsers.add_parser("find", help="Find entities by ID, name, or summary")
+    find.add_argument("query")
+    show = subparsers.add_parser("show", help="Print one entity record")
+    show.add_argument("entity_id")
+    related = subparsers.add_parser("related", help="List a connected entity neighborhood")
+    related.add_argument("entity_id")
+    related.add_argument("--depth", type=int, default=1)
+    backlinks = subparsers.add_parser("backlinks", help="List records that connect to an entity")
+    backlinks.add_argument("entity_id")
+    history = subparsers.add_parser("history", help="List historical records connected to an entity")
+    history.add_argument("entity_id")
+    connections = subparsers.add_parser("connections", help="Audit legacy relationship fields")
+    connections.add_argument("action", choices=["audit"])
     new = subparsers.add_parser("new", help="Create an entity from an adapter template")
     new.add_argument("kind")
     new.add_argument("entity_id")
@@ -437,8 +691,38 @@ def main(argv: list[str] | None = None, *, root: Path | None = None) -> int:
     if args.command == "validate":
         return validate_campaign(campaign_root)
     if args.command == "context":
-        build_context(campaign_root)
+        build_indexes(campaign_root)
+        build_context(campaign_root, focus=args.focus, depth=args.depth,
+                      max_records=args.max_records, include_history=args.include_history)
         return 0
+    if args.command == "index":
+        build_indexes(campaign_root)
+        return 0
+    if args.command == "find":
+        print_entities(campaign_root, args.query)
+        return 0
+    if args.command == "show":
+        entities = _entities(campaign_root.resolve())
+        if args.entity_id not in entities:
+            raise SystemExit(f"Unknown entity ID {args.entity_id!r}")
+        print(entities[args.entity_id].text, end="")
+        return 0
+    if args.command == "related":
+        print_related(campaign_root, args.entity_id, args.depth)
+        return 0
+    if args.command == "backlinks":
+        entities, edges, _ = _graph(campaign_root.resolve())
+        if args.entity_id not in entities:
+            raise SystemExit(f"Unknown entity ID {args.entity_id!r}")
+        for edge in edges:
+            if edge.target_id == args.entity_id:
+                print(f"{edge.source_id}\t{edge.relationship}\t{edge.state}\t{edge.context}")
+        return 0
+    if args.command == "history":
+        print_history(campaign_root, args.entity_id)
+        return 0
+    if args.command == "connections":
+        return audit_connections(campaign_root)
     create_entity(campaign_root, args.kind, args.entity_id, args.name)
     return 0
 

@@ -20,6 +20,8 @@ python scripts/drydock.py validate
 python scripts/drydock.py context
 ```
 
+Campaign records remain readable Markdown. Typed `## Connections` bullets and generated indexes let an AI retrieve a small neighborhood rather than loading the repository. Use `find`, `show`, `related`, `backlinks`, `history`, or `context --focus ENTITY_ID --max-records 20` for progressive retrieval.
+
 Create new campaign records through the adapter-defined entity command:
 
 ```bash

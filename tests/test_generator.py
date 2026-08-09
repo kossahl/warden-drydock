@@ -431,6 +431,46 @@ class GeneratorTest(unittest.TestCase):
                 self.assertTrue(template.is_file())
                 lower=template.read_text(encoding='utf-8').lower()
                 self.assertFalse(any(field in lower for field in forbidden))
+                self.assertIn('## summary', lower)
+                self.assertIn('## current state', lower)
+                self.assertIn('## connections', lower)
+
+    def test_connections_generate_backlinks_and_budgeted_context(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            npc=create_entity(root,'npc','npc-ripley','Ripley')
+            faction=create_entity(root,'faction','faction-company','The Company')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                '<!-- - `relationship` → [[target-id|Readable Name]] (`current`) — One concise sentence of context. -->',
+                '- `works-for` → [[faction-company|The Company]] (`current`) — Handles salvage contracts.'
+            ),encoding='utf-8')
+            self.assertEqual(standalone.validate_campaign(root),0)
+            entity_index,connection_index=standalone.build_indexes(root)
+            self.assertIn('works-for [[faction-company]]',entity_index.read_text(encoding='utf-8'))
+            self.assertIn('backlink `works-for` ← [[npc-ripley]]',connection_index.read_text(encoding='utf-8'))
+            context=standalone.build_context(root,focus='npc-ripley',depth=1,max_records=1)
+            text=context.read_text(encoding='utf-8')
+            self.assertIn('Ripley (`npc-ripley`)',text)
+            self.assertIn('Omitted 1 record(s)',text)
+
+    def test_connection_validation_and_legacy_audit_are_non_destructive(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            npc=create_entity(root,'npc','npc-ripley','Ripley')
+            original=npc.read_text(encoding='utf-8').replace(
+                'current_status: unknown', 'current_status: unknown\nfactions: [faction-company]')
+            npc.write_text(original.replace(
+                '<!-- - `relationship` → [[target-id|Readable Name]] (`current`) — One concise sentence of context. -->',
+                '- `works-for` → [[missing-faction]] (`current`) — Explicit but unresolved.'
+            ),encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(standalone.validate_campaign(root),1)
+            self.assertIn('connection target missing-faction does not exist',output.getvalue())
+            before=npc.read_text(encoding='utf-8')
+            with redirect_stdout(StringIO()):
+                self.assertEqual(standalone.audit_connections(root),0)
+            self.assertEqual(npc.read_text(encoding='utf-8'),before)
 
     def test_validation_rejects_unsafe_adapter_entity_paths(self):
         with TemporaryDirectory() as tmp:
