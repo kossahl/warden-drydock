@@ -48,3 +48,14 @@ python -m warden_drydock --help
 ```
 
 When template behavior changes, regenerate the example campaign and inspect the diff.
+
+## Agent evolution
+
+The project `Stop` hook automatically queues completed-turn metadata for later analysis. A scheduled retrospective converts eligible episodes into concise evidence-backed candidates in `docs/agent-evolution.md` and prepares `docs/agent-evolution-proposal.md`. Do not turn one anecdote into a general rule, store raw transcripts in Git, or let an agent silently rewrite its own instructions. Use `agent_curator` and the `improve-drydock-agents` skill for audits; durable changes require review, validation, and user approval.
+
+## Agent communication and token discipline
+
+- Use English for internal agent instructions and handoffs. The parent agent answers the user in the user's language.
+- Report only decision-relevant results. Do not restate the task, narrate routine activity, repeat shared rules, or include generic praise.
+- Preserve evidence, exact identifiers, file references, failures, risks, and the next required action. Summarize tool output; quote exact commands or errors only when they aid diagnosis.
+- Prefer compact, role-specific handoffs and omit empty sections. Never trade correctness or necessary context for a fixed token target or cryptic shorthand.

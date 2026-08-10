@@ -1,0 +1,337 @@
+{
+  "schema_version": 1,
+  "kind": "routing_cases",
+  "dataset_id": "routing-v1",
+  "cases": [
+    {
+      "case_id": "routing-adapter-001",
+      "prompt": "Add a Mothership NPC template field and adapter-specific validation for it.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["adapter_specialist"],
+        "forbidden_agents": ["core_implementer"],
+        "sequence": null,
+        "rationale": "Mothership-owned templates and policy belong to the adapter specialist, not generic core."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["adapter", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-adapter-002",
+      "prompt": "Update only the Mothership session-log guidance and inspect a regenerated campaign diff.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["adapter_specialist"],
+        "forbidden_agents": ["docs_maintainer"],
+        "sequence": null,
+        "rationale": "System-specific generated guidance and its artifact inspection are adapter work."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["adapter", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-architect-001",
+      "prompt": "Analyze how a cross-cutting upgrade format change affects compatibility and rollback; do not implement it.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["architect"],
+        "forbidden_agents": ["core_implementer"],
+        "sequence": null,
+        "rationale": "The request is a read-only architecture and migration analysis before implementation."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["architecture", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-architect-002",
+      "prompt": "Trace whether moving context selection across core and adapters would violate framework boundaries.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["architect"],
+        "forbidden_agents": ["adapter_specialist"],
+        "sequence": null,
+        "rationale": "A cross-boundary impact analysis belongs to the architect rather than one implementation owner."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["architecture", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-core-001",
+      "prompt": "Implement an already-approved deterministic validation rule in the system-agnostic core.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["core_implementer"],
+        "forbidden_agents": ["adapter_specialist"],
+        "sequence": null,
+        "rationale": "Settled generic validator behavior is scoped core implementation work."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["core", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-core-002",
+      "prompt": "Apply the specified non-destructive fix to the generic upgrade engine and preserve user-owned files.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["core_implementer"],
+        "forbidden_agents": ["architect"],
+        "sequence": null,
+        "rationale": "Requirements are settled and the requested mutation is owned by core implementation."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["core", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-curator-001",
+      "prompt": "Audit repeated agent routing failures and propose the smallest evidence-backed prompt change without editing it.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["agent_curator"],
+        "forbidden_agents": ["product_strategist"],
+        "sequence": null,
+        "rationale": "Repeated agent-performance evidence and prompt refinement belong to the read-only curator."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["agent_evolution", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-curator-002",
+      "prompt": "Review candidate lessons for duplication and stale assumptions, then provide a before-and-after evaluation plan.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["agent_curator"],
+        "forbidden_agents": ["docs_maintainer"],
+        "sequence": null,
+        "rationale": "Consolidating evidence into proposed agent improvements is curator work, not routine documentation."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["agent_evolution", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-docs-001",
+      "prompt": "The verified CLI behavior has shipped; update the user guide and check every example command.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["docs_maintainer"],
+        "forbidden_agents": ["product_strategist"],
+        "sequence": null,
+        "rationale": "Documentation follows stable verified behavior and belongs to the docs maintainer."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["documentation", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-docs-002",
+      "prompt": "Correct contributor documentation so its validation commands match the implemented interface.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["docs_maintainer"],
+        "forbidden_agents": ["core_implementer"],
+        "sequence": null,
+        "rationale": "This is a documentation correction against existing behavior, not a production-code change."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["documentation", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-parent-001",
+      "prompt": "Summarize the current task status in two sentences without inspecting or changing files.",
+      "expected": {
+        "delegation": "forbidden",
+        "valid_agents": [],
+        "forbidden_agents": ["adapter_specialist", "agent_curator", "architect", "core_implementer", "docs_maintainer", "product_strategist", "reviewer", "test_engineer"],
+        "sequence": null,
+        "rationale": "A simple status response should be answered directly by the parent without delegation overhead."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["no_delegation", "parent"]
+      }
+    },
+    {
+      "case_id": "routing-parent-002",
+      "prompt": "Explain what the term deterministic means in the preceding answer; no repository inspection is needed.",
+      "expected": {
+        "delegation": "forbidden",
+        "valid_agents": [],
+        "forbidden_agents": ["adapter_specialist", "agent_curator", "architect", "core_implementer", "docs_maintainer", "product_strategist", "reviewer", "test_engineer"],
+        "sequence": null,
+        "rationale": "A clarification about the conversation needs no specialist agent."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["no_delegation", "parent"]
+      }
+    },
+    {
+      "case_id": "routing-parent-003",
+      "prompt": "List the eight configured development-agent names already provided in this conversation.",
+      "expected": {
+        "delegation": "forbidden",
+        "valid_agents": [],
+        "forbidden_agents": ["adapter_specialist", "agent_curator", "architect", "core_implementer", "docs_maintainer", "product_strategist", "reviewer", "test_engineer"],
+        "sequence": null,
+        "rationale": "Restating available conversation context is a direct parent responsibility."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["no_delegation", "parent"]
+      }
+    },
+    {
+      "case_id": "routing-reviewer-001",
+      "prompt": "Independently review the completed diff for destructive mutations, regressions, and missing tests; do not edit.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["reviewer"],
+        "forbidden_agents": ["core_implementer"],
+        "sequence": null,
+        "rationale": "Independent read-only review after implementation belongs to the reviewer."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["positive", "review"]
+      }
+    },
+    {
+      "case_id": "routing-reviewer-002",
+      "prompt": "Verify a release candidate against its acceptance criteria and report severity-ordered findings.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["reviewer"],
+        "forbidden_agents": ["test_engineer"],
+        "sequence": null,
+        "rationale": "A final independent readiness judgment is reviewer scope rather than test authoring."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["positive", "review"]
+      }
+    },
+    {
+      "case_id": "routing-sequence-001",
+      "prompt": "Shape a new upgrade feature, assess its cross-cutting architecture, implement it, and independently review it.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["architect", "core_implementer", "product_strategist", "reviewer"],
+        "forbidden_agents": ["adapter_specialist"],
+        "sequence": ["product_strategist", "architect", "core_implementer", "reviewer"],
+        "rationale": "The unresolved product idea must be shaped before architecture, implementation, and independent review."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["multi_stage", "sequence"]
+      }
+    },
+    {
+      "case_id": "routing-sequence-002",
+      "prompt": "Plan and implement a Mothership template enhancement, add regression coverage, then update verified documentation.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["adapter_specialist", "docs_maintainer", "product_strategist", "test_engineer"],
+        "forbidden_agents": ["core_implementer"],
+        "sequence": ["product_strategist", "adapter_specialist", "test_engineer", "docs_maintainer"],
+        "rationale": "Feature shaping precedes adapter implementation, tests, and documentation of verified behavior."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["multi_stage", "sequence"]
+      }
+    },
+    {
+      "case_id": "routing-sequence-003",
+      "prompt": "Evaluate recurring handoff failures, prepare an agent-instruction improvement, apply it only after approval, and review the result.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["agent_curator", "reviewer"],
+        "forbidden_agents": ["core_implementer"],
+        "sequence": ["agent_curator", "reviewer"],
+        "rationale": "The curator proposes but cannot approve or apply its own durable change; an independent review follows parent-controlled application."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["agent_evolution", "multi_stage", "sequence"]
+      }
+    },
+    {
+      "case_id": "routing-strategy-001",
+      "prompt": "Turn an early campaign-maintenance idea into options, non-goals, acceptance criteria, and a delegation-ready plan.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["product_strategist"],
+        "forbidden_agents": ["architect"],
+        "sequence": null,
+        "rationale": "Early feature shaping and option comparison precede architecture and implementation."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["positive", "strategy"]
+      }
+    },
+    {
+      "case_id": "routing-strategy-002",
+      "prompt": "Compare two roadmap approaches for reducing campaign setup friction without writing code.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["product_strategist"],
+        "forbidden_agents": ["core_implementer"],
+        "sequence": null,
+        "rationale": "Roadmap option evaluation and feature framing are product-strategy responsibilities."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["positive", "strategy"]
+      }
+    },
+    {
+      "case_id": "routing-test-001",
+      "prompt": "Add behavior-level regression tests for the already-defined standalone upgrade failure mode; do not edit production code.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["test_engineer"],
+        "forbidden_agents": ["core_implementer"],
+        "sequence": null,
+        "rationale": "The behavior is stable and the request is exclusively test design and implementation."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["positive", "testing"]
+      }
+    },
+    {
+      "case_id": "routing-test-002",
+      "prompt": "Create focused Windows-path and determinism coverage for a completed generator change.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["test_engineer"],
+        "forbidden_agents": ["reviewer"],
+        "sequence": null,
+        "rationale": "Writing focused regression coverage is test-engineer work, distinct from independent review."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["positive", "testing"]
+      }
+    }
+  ]
+}

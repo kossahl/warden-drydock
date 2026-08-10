@@ -1,0 +1,18 @@
+{
+  "description": "Automatically queue completed turns for evidence-based agent learning.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .codex/hooks/capture_agent_experience.py",
+            "commandWindows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .codex\\hooks\\capture_agent_experience.ps1",
+            "statusMessage": "Recording agent experience",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

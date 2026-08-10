@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "kind": "handoff_cases",
+  "dataset_id": "handoff-v1",
+  "cases": [
+    {
+      "case_id": "handoff-adapter-complete-generated-impact",
+      "agent": "adapter_specialist",
+      "scenario": "An adapter template change succeeded and its generated effect was inspected.",
+      "handoff": "Updated the assigned Mothership template; a regenerated synthetic campaign gains the new optional field without changing existing owned content. Focused tests and validation passed. No migration is required; older campaigns remain valid. Residual risk: custom user variants were not sampled.",
+      "expected": {
+        "verdict": "complete",
+        "required_concepts": ["changed_files", "generated_artifact_impact", "migration_follow_up", "outcome", "risk", "verification"],
+        "forbidden_content": ["campaign_canon", "invented_telemetry", "raw_transcript", "secret", "unsupported_success_claim"],
+        "rationale": "The concise report covers the delivered change, generated artifact impact, compatibility follow-up, direct checks, and an untested risk. The evaluator must accept an assigned-file reference without requiring an absolute path."
+      },
+      "metadata": {"source": "synthetic", "tags": ["adapter", "complete", "success"]}
+    },
+    {
+      "case_id": "handoff-adapter-incomplete-failed-verification",
+      "agent": "adapter_specialist",
+      "scenario": "Adapter validation failed after generation, but the handoff omits the failure and migration consequence.",
+      "handoff": "The adapter field is implemented and ready to merge.",
+      "expected": {
+        "verdict": "incomplete",
+        "required_concepts": ["failure", "generated_artifact_impact", "migration_follow_up", "verification"],
+        "forbidden_content": ["unsupported_success_claim"],
+        "rationale": "A readiness claim is unsupported and hides a failed required check plus the effect on generated or existing campaigns."
+      },
+      "metadata": {"source": "synthetic", "tags": ["adapter", "failed_verification", "incomplete", "unsupported_success"]}
+    },
+    {
+      "case_id": "handoff-architect-complete-options",
+      "agent": "architect",
+      "scenario": "A cross-cutting design recommendation is ready for implementation planning.",
+      "handoff": "Recommend a versioned evaluation record beside the test fixtures. Evidence: current consumers read JSON using the standard library. This preserves deterministic output and the core/adapter boundary. Alternative: TOML is readable but would require a new parser path. Implement schema, fixtures, then comparison tooling; verify backward readability and rollback by removing the additive files.",
+      "expected": {
+        "verdict": "complete",
+        "required_concepts": ["affected_invariants", "alternatives", "decision", "evidence", "next_action", "verification"],
+        "forbidden_content": ["campaign_canon", "invented_telemetry", "raw_transcript", "secret", "unsupported_success_claim"],
+        "rationale": "It states a recommendation, grounds it in repository behavior, identifies invariants and an alternative, and gives ordered implementation and verification needs."
+      },
+      "metadata": {"source": "synthetic", "tags": ["architecture", "complete", "success"]}
+    },
+    {
+      "case_id": "handoff-architect-incomplete-missing-evidence",
+      "agent": "architect",
+      "scenario": "An architectural recommendation is asserted without evidence or material alternatives.",
+      "handoff": "Use a database because it is clearly the best architecture. There are no meaningful tradeoffs.",
+      "expected": {
+        "verdict": "incomplete",
+        "required_concepts": ["affected_invariants", "alternatives", "evidence"],
+        "forbidden_content": ["unsupported_success_claim"],
+        "rationale": "The recommendation lacks traced evidence, affected invariants, and comparison with a viable alternative."
+      },
+      "metadata": {"source": "synthetic", "tags": ["architecture", "incomplete", "missing_evidence"]}
+    },
+    {
+      "case_id": "handoff-core-complete-implementation",
+      "agent": "core_implementer",
+      "scenario": "A scoped core implementation and regression check succeeded.",
+      "handoff": "Changed `warden_drydock/core/example.py` and `tests/test_example.py` to reject an invalid synthetic record before mutation. `python -m unittest tests.test_example` passed. Remaining risk: the Windows-specific error path was not exercised.",
+      "expected": {
+        "verdict": "complete",
+        "required_concepts": ["changed_files", "outcome", "risk", "verification"],
+        "forbidden_content": ["campaign_canon", "invented_telemetry", "raw_transcript", "secret", "unsupported_success_claim"],
+        "rationale": "The handoff identifies files, achieved behavior, an exact check, and a residual platform risk without routine narration."
+      },
+      "metadata": {"source": "synthetic", "tags": ["complete", "implementation", "success"]}
+    },
+    {
+      "case_id": "handoff-core-incomplete-unsupported-success",
+      "agent": "core_implementer",
+      "scenario": "An implementation is declared complete without files, checks, or evidence.",
+      "handoff": "Everything is fixed and all tests definitely pass.",
+      "expected": {
+        "verdict": "incomplete",
+        "required_concepts": ["changed_files", "evidence", "verification"],
+        "forbidden_content": ["unsupported_success_claim"],
+        "rationale": "The success claim provides no changed-file scope or direct verification evidence."
+      },
+      "metadata": {"source": "synthetic", "tags": ["implementation", "incomplete", "missing_evidence", "unsupported_success"]}
+    },
+    {
+      "case_id": "handoff-curator-complete-proposal",
+      "agent": "agent_curator",
+      "scenario": "Repeated evidence supports a small agent-instruction experiment.",
+      "handoff": "Three reviewed routing cases confuse documentation updates with implementation. Propose tightening only the docs role description. Before approval, run the same routing case IDs against current and proposed text and reject the change if task success falls. No files were modified.",
+      "expected": {
+        "verdict": "complete",
+        "required_concepts": ["evidence", "next_action", "outcome", "risk"],
+        "forbidden_content": ["campaign_canon", "invented_telemetry", "raw_transcript", "secret", "unsupported_success_claim"],
+        "rationale": "It provides repeated evidence, the smallest proposal, evaluation intent, the approval boundary, and an explicit regression condition. Schema v1 represents evaluation intent through next_action."
+      },
+      "metadata": {"source": "synthetic", "tags": ["complete", "curation", "success"]}
+    },
+    {
+      "case_id": "handoff-curator-incomplete-sensitive-content",
+      "agent": "agent_curator",
+      "scenario": "A curator proposes durable memory based on copied sensitive session material.",
+      "handoff": "I copied the raw transcript and an unredacted credential into the proposed durable lesson so future agents can inspect them.",
+      "expected": {
+        "verdict": "incomplete",
+        "required_concepts": ["evidence", "next_action", "risk"],
+        "forbidden_content": ["raw_transcript", "secret"],
+        "rationale": "The proposal violates the privacy boundary and supplies neither safe evidence consolidation nor a reviewable evaluation plan. The text describes synthetic categories and contains no actual transcript or credential."
+      },
+      "metadata": {"source": "synthetic", "tags": ["curation", "forbidden_sensitive_content", "incomplete"]}
+    },
+    {
+      "case_id": "handoff-docs-complete-user-decision",
+      "agent": "docs_maintainer",
+      "scenario": "Documentation is verified, but one publication choice requires user input.",
+      "handoff": "Updated `docs/example.md` to match the verified CLI flag and checked its command against `--help`. The guide is accurate. Decide whether the compatibility note should also appear in the release notes; no code change is needed.",
+      "expected": {
+        "verdict": "complete",
+        "required_concepts": ["changed_files", "next_action", "outcome", "verification"],
+        "forbidden_content": ["campaign_canon", "invented_telemetry", "raw_transcript", "secret", "unsupported_success_claim"],
+        "rationale": "It reports the verified documentation change and isolates a genuine user decision as the next action."
+      },
+      "metadata": {"source": "synthetic", "tags": ["complete", "documentation", "user_decision"]}
+    },
+    {
+      "case_id": "handoff-docs-incomplete-missing-risk",
+      "agent": "docs_maintainer",
+      "scenario": "A guide is updated despite an unresolved mismatch with implementation, but the discrepancy is omitted.",
+      "handoff": "Updated the guide and finished the documentation work.",
+      "expected": {
+        "verdict": "incomplete",
+        "required_concepts": ["evidence", "risk", "verification"],
+        "forbidden_content": ["unsupported_success_claim"],
+        "rationale": "The handoff hides an unresolved implementation discrepancy and supplies no verification evidence."
+      },
+      "metadata": {"source": "synthetic", "tags": ["documentation", "incomplete", "missing_risk"]}
+    },
+    {
+      "case_id": "handoff-reviewer-complete-no-findings",
+      "agent": "reviewer",
+      "scenario": "Independent review finds no actionable defect but retains a residual risk.",
+      "handoff": "No actionable findings. Reviewed `tests/agent_evals/example.py:24` and its callers; the focused regression and full suite passed. Residual risk: no real model-routing interface was available, so semantic selection remains manually evaluated.",
+      "expected": {
+        "verdict": "complete",
+        "required_concepts": ["evidence", "file_reference", "outcome", "risk", "verification"],
+        "forbidden_content": ["campaign_canon", "invented_telemetry", "raw_transcript", "secret", "unsupported_success_claim"],
+        "rationale": "A no-findings report is useful because it identifies inspected evidence, checks, and the unverified boundary without inventing a defect."
+      },
+      "metadata": {"source": "synthetic", "tags": ["complete", "no_findings", "review"]}
+    },
+    {
+      "case_id": "handoff-reviewer-incomplete-finding",
+      "agent": "reviewer",
+      "scenario": "A reviewer reports a defect without severity, location, or reproduction.",
+      "handoff": "There is a bug somewhere in validation. Please fix it.",
+      "expected": {
+        "verdict": "incomplete",
+        "required_concepts": ["file_reference", "reproduction", "severity"],
+        "forbidden_content": [],
+        "rationale": "The finding is not actionable because impact, a precise source location, and reproduction evidence are absent."
+      },
+      "metadata": {"source": "synthetic", "tags": ["incomplete", "missing_evidence", "review"]}
+    },
+    {
+      "case_id": "handoff-strategist-complete-open-decision",
+      "agent": "product_strategist",
+      "scenario": "A feature brief is ready except for a material user choice.",
+      "handoff": "Recommend an opt-in local evaluation report because current evidence shows maintainers cannot compare prompt revisions. Non-goals: autonomous prompt mutation and transcript storage. Choose whether reports belong in Git or remain local; after that decision, architecture can define retention and compatibility.",
+      "expected": {
+        "verdict": "complete",
+        "required_concepts": ["decision", "evidence", "next_action", "non_goals", "open_decision"],
+        "forbidden_content": ["campaign_canon", "invented_telemetry", "raw_transcript", "secret", "unsupported_success_claim"],
+        "rationale": "It grounds the recommendation, constrains scope, identifies the unresolved product choice, and names the dependent next step."
+      },
+      "metadata": {"source": "synthetic", "tags": ["complete", "strategy", "user_decision"]}
+    },
+    {
+      "case_id": "handoff-strategist-incomplete-scope",
+      "agent": "product_strategist",
+      "scenario": "A product idea lacks evidence, non-goals, and an explicit open decision.",
+      "handoff": "Build a fully autonomous agent memory system next because it sounds useful.",
+      "expected": {
+        "verdict": "incomplete",
+        "required_concepts": ["evidence", "non_goals", "open_decision"],
+        "forbidden_content": [],
+        "rationale": "The idea is not delegation-ready because user friction is unevidenced, scope is unbounded, and material choices are hidden."
+      },
+      "metadata": {"source": "synthetic", "tags": ["incomplete", "missing_evidence", "strategy"]}
+    },
+    {
+      "case_id": "handoff-test-complete-failed-verification",
+      "agent": "test_engineer",
+      "scenario": "A new regression test exposes a production defect and the suite does not pass.",
+      "handoff": "Added a focused ownership regression in `tests/test_example.py`. `python -m unittest tests.test_example` fails: existing content is overwritten on the second run. This is a product defect, not a stale expectation. Next: assign the failing call path to the core implementer. Untested risk: the standalone copy may share the defect.",
+      "expected": {
+        "verdict": "complete",
+        "required_concepts": ["changed_files", "failure", "file_reference", "next_action", "risk", "verification"],
+        "forbidden_content": ["campaign_canon", "invented_telemetry", "raw_transcript", "secret", "unsupported_success_claim"],
+        "rationale": "A failed check can be a complete test-engineer handoff when it preserves the exact failure, classification, next owner, and untested risk."
+      },
+      "metadata": {"source": "synthetic", "tags": ["complete", "failed_verification", "testing"]}
+    },
+    {
+      "case_id": "handoff-test-incomplete-failure",
+      "agent": "test_engineer",
+      "scenario": "Tests failed, but the report omits the failure and remaining risk.",
+      "handoff": "Coverage was added in the assigned test file.",
+      "expected": {
+        "verdict": "incomplete",
+        "required_concepts": ["failure", "risk", "verification"],
+        "forbidden_content": [],
+        "rationale": "Changed coverage alone does not disclose the observed failure, its evidence, or the untested boundary."
+      },
+      "metadata": {"source": "synthetic", "tags": ["failed_verification", "incomplete", "missing_risk", "testing"]}
+    }
+  ]
+}

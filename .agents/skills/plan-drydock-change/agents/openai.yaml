@@ -1,0 +1,4 @@
+interface:
+  display_name: "Drydock Change Planning"
+  short_description: "Turn ideas into scoped Drydock work plans"
+  default_prompt: "Use $plan-drydock-change to turn this idea into an evidence-backed, delegation-ready plan."
