@@ -210,6 +210,10 @@ def validate_experiment(manifest, reports, evidence, dataset_paths=benchmark.DEF
                 "telemetry",
             ), field)
             key = (observation["case_id"], observation["attempt"])
+            if key not in expected_keys:
+                raise benchmark.ValidationError(
+                    f"{field} case/attempt is not declared in manifest.run_keys"
+                )
             if key in observations:
                 raise benchmark.ValidationError(f"duplicate {effort} observation: {key}")
             observations[key] = observation

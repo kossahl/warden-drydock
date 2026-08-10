@@ -1,5 +1,8 @@
 import copy
+import contextlib
 import importlib.util
+import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -105,6 +108,28 @@ class ExperimentTests(unittest.TestCase):
         reports["high"]["runs"] = []
         with self.assertRaisesRegex(benchmark.ValidationError, "case/attempt set mismatch"):
             experiment.validate_experiment(manifest, reports, evidence)
+
+    def test_cli_rejects_unknown_observation_case_without_traceback(self):
+        manifest, reports, evidence = completed_pair()
+        evidence["medium"]["observations"][0]["case_id"] = "unknown-case"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifacts = {"manifest": manifest}
+            for effort in experiment.EFFORTS:
+                artifacts[f"{effort}-report"] = reports[effort]
+                artifacts[f"{effort}-evidence"] = evidence[effort]
+            arguments = ["validate"]
+            for name, data in artifacts.items():
+                path = root / f"{name}.json"
+                path.write_text(json.dumps(data), encoding="utf-8")
+                arguments.extend((f"--{name}", str(path)))
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status = experiment.main(arguments)
+
+        self.assertEqual(2, status)
+        self.assertIn("case/attempt is not declared", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
 
     def test_model_configuration_and_rubric_mismatches_fail(self):
         for mutation, fragment in (
