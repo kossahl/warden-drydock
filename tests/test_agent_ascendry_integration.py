@@ -44,8 +44,21 @@ def file_tree(root: Path) -> dict[str, bytes]:
 class AgentAscendryReleasePinTests(unittest.TestCase):
     def test_capture_wrapper_is_checked_out_with_release_compatible_line_endings(self):
         wrapper = ".codex/hooks/agent_ascendry_capture.py"
+        git_directory = ROOT / ".git"
+        if git_directory.is_file():
+            marker = git_directory.read_text(encoding="utf-8").strip()
+            self.assertTrue(marker.startswith("gitdir: "))
+            git_directory = (ROOT / marker.removeprefix("gitdir: ")).resolve()
         attributes = subprocess.run(
-            ["git", "check-attr", "eol", "--", wrapper],
+            [
+                "git",
+                f"--git-dir={git_directory}",
+                f"--work-tree={ROOT}",
+                "check-attr",
+                "eol",
+                "--",
+                wrapper,
+            ],
             cwd=ROOT,
             capture_output=True,
             text=True,
