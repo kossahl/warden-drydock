@@ -1,6 +1,6 @@
 # Agent Evolution
 
-This file is the reviewable memory for improving Warden Drydock's development agents. It stores distilled evidence and decisions, not chat transcripts or hidden model memory. A project-local `Stop` hook automatically queues a minimal envelope for every completed turn under the ignored `.agent-experience/pending/` directory.
+This file is the reviewable memory for improving Warden Drydock's development agents. It stores distilled evidence and decisions, not chat transcripts or hidden model memory. Agent Ascendry's project-local `Stop` hook automatically queues bounded metadata for completed turns under the ignored `.agent-ascendry/pending/` directory. Transcript content is neither captured nor required by this workflow.
 
 ## Governance
 
@@ -26,10 +26,10 @@ Status is `candidate`, `promote`, `reject`, or `retire`.
 | --- | --- | --- | --- | --- |
 | 2026-08-10 | Separated agent roles from reusable planning and verification skills. | Review of Codex guidance, Agent Skills, agent-scripts, and agency-agents patterns. | Skill structure checks, TOML parsing, unit suite, and CLI help. | Revisit if skills fail to trigger reliably or duplicate role instructions. |
 | 2026-08-10 | Centralized token discipline and shortened role prompts; internal handoffs use English. | Explicit user preference, current prompt audit, tokenizer research, and local German/English measurement. | TOML parsing, before/after token counts, unit suite, and CLI help. | Revisit if handoffs omit required evidence or language translation causes errors. |
-| 2026-08-10 | Added versioned routing, handoff, benchmark, experiment-provenance, and experience-queue evaluation tooling. | User-approved agent optimization plan; independent reviews found and drove fixes for hook privacy bounds, event identity, provenance validation, and benchmark auditability. | Routing/handoff/benchmark/experiment tests, Python/PowerShell hook parity, adversarial queue tests, independent read-only reviews, full unit suite, and CLI help. | Revisit when live platform telemetry or real routing automation becomes available. |
+| 2026-08-10 | Added versioned routing, handoff, benchmark, experiment-provenance, and portable Agent Ascendry capture/audit tooling. | User-approved agent optimization and extraction plans; independent reviews found and drove fixes for hook privacy bounds, event identity, provenance validation, benchmark auditability, and zero-touch integration. | Routing/handoff/benchmark/experiment tests, wheel-only Agent Ascendry parity tests, adversarial event tests, independent reviews, full unit suite, and CLI help. | Revisit when live platform telemetry or real routing automation becomes available. |
 
 ## Retrospective procedure
 
-The scheduled retrospective reads queued event envelopes and their referenced transcripts, extracts only eligible evidence, updates the candidate table, and prepares `docs/agent-evolution-proposal.md`. It records processed event IDs under `.agent-experience/processed.json` instead of deleting evidence automatically.
+Run `agent-ascendry audit .` before a retrospective. Use `agent_curator` with the `improve-drydock-agents` skill to review only eligible evidence, consolidate repeated observations, update the candidate table, and prepare the smallest change on the correct configuration surface. Do not open transcript contents or infer missing evidence from a transcript reference.
 
-Use `agent_curator` with the `improve-drydock-agents` skill. Review candidates, consolidate repeated observations, propose the smallest change on the correct configuration surface, and evaluate it before adoption. The curator proposes; the parent agent or user approves and applies. Automation must never modify `AGENTS.md`, `.codex/agents/`, or `.agents/skills/` directly.
+The curator prepares a schema-v1 proposal input and records it with `agent-ascendry propose . --input FILE`. A human must review the exact proposal and explicitly bind approval to its SHA-256 hash with `agent-ascendry approve`; only then may the parent run `agent-ascendry apply`. Validation failure rolls back local changes, and the result remains reviewable in Git. Neither the curator nor unattended automation may approve a proposal or modify `AGENTS.md`, `.codex/agents/`, or `.agents/skills/` directly.

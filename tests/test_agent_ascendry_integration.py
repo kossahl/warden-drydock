@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,20 +15,6 @@ ROOT = Path(__file__).parents[1]
 WHEEL_ENV = "AGENT_ASCENDRY_WHEEL"
 
 
-LEGACY_HOOK = {
-    "hooks": [
-        {
-            "type": "command",
-            "command": "python .codex/hooks/capture_agent_experience.py",
-            "commandWindows": (
-                "powershell.exe -NoProfile -ExecutionPolicy Bypass "
-                "-File .codex\\hooks\\capture_agent_experience.ps1"
-            ),
-            "statusMessage": "Recording agent experience",
-            "timeout": 3,
-        }
-    ]
-}
 ASCENDRY_HOOK = {
     "hooks": [
         {
@@ -122,19 +107,10 @@ class AgentAscendryWheelIntegrationTests(unittest.TestCase):
                 ".codex/agents/agent_curator.toml": b'name = "agent_curator"\n',
                 ".codex/agents/reviewer.toml": b'name = "reviewer"\n',
                 ".agents/skills/improve-drydock-agents/SKILL.md": b"# Existing Drydock skill\n",
-                ".codex/hooks/capture_agent_experience.py": b"# legacy Python hook\n",
-                ".codex/hooks/capture_agent_experience.ps1": b"# legacy PowerShell hook\n",
-                ".codex/hooks/agent_experience_maintenance.py": b"# legacy audit\n",
-                ".codex/hooks.json": (
-                    json.dumps(
-                        {
-                            "description": "Existing Drydock registry",
-                            "hooks": {"Stop": [LEGACY_HOOK]},
-                        },
-                        indent=2,
-                    )
-                    + "\n"
-                ).encode(),
+                ".codex/hooks/agent_ascendry_capture.py": (
+                    ROOT / ".codex/hooks/agent_ascendry_capture.py"
+                ).read_bytes(),
+                ".codex/hooks.json": (ROOT / ".codex/hooks.json").read_bytes(),
             }
             for relative, content in existing.items():
                 destination = root / relative
@@ -161,20 +137,18 @@ class AgentAscendryWheelIntegrationTests(unittest.TestCase):
 
             first, first_result = self.run_ascendry(root, "init", ".", "--platform", "codex")
             self.assertEqual(first.returncode, 0, first.stderr)
-            self.assertEqual(first_result["created"], [
-                ".agent-ascendry/installation.json",
-                ".codex/hooks/agent_ascendry_capture.py",
-            ])
-            self.assertEqual(first_result["owned"], [".codex/hooks/agent_ascendry_capture.py"])
+            self.assertEqual(first_result["created"], [".agent-ascendry/installation.json"])
+            self.assertEqual(first_result["owned"], [])
             self.assertIn(".codex/agents/agent_curator.toml", first_result["reused"])
+            self.assertIn(".codex/hooks.json", first_result["reused"])
+            self.assertIn(".codex/hooks/agent_ascendry_capture.py", first_result["reused"])
             for relative, content in existing.items():
-                if relative != ".codex/hooks.json":
-                    self.assertEqual((root / relative).read_bytes(), content, relative)
+                self.assertEqual((root / relative).read_bytes(), content, relative)
             self.assertFalse((root / ".codex/agents/agent_ascendry_curator.toml").exists())
             self.assertFalse((root / ".agents/skills/curate-agent-evolution").exists())
 
             registry = json.loads((root / ".codex/hooks.json").read_text(encoding="utf-8"))
-            self.assertEqual(registry["hooks"]["Stop"], [LEGACY_HOOK, ASCENDRY_HOOK])
+            self.assertEqual(registry["hooks"]["Stop"], [ASCENDRY_HOOK])
             exclude = subprocess.run(
                 ["git", "check-ignore", "-v", ".agent-ascendry/installation.json"],
                 cwd=root,

@@ -1,9 +1,11 @@
 # Agent Ascendry pilot integration
 
 Warden Drydock opts into Agent Ascendry through `.agent-ascendry.yaml` and a
-Codex `Stop` hook. The pilot deliberately keeps the existing experience hook,
-maintenance script, curator, skills, and evaluation datasets unchanged until
-the extraction parity gate has passed.
+Codex `Stop` hook. The G2 parity review passed against the candidate wheel below:
+shared event, audit, proposal, and approval fixtures produced identical results,
+and all existing agents remained byte-identical. The superseded generic local
+capture and audit implementation was therefore removed. Drydock's curator,
+skills, durable evolution memory, and evaluation datasets remain local.
 
 ## Candidate artifact
 
@@ -51,12 +53,12 @@ For an isolated smoke check, submit bounded metadata without transcript content:
 agent-ascendry audit .
 ```
 
-The review sequence remains `capture -> audit -> propose -> approve -> apply`.
+The review sequence is `capture -> audit -> propose -> approve -> apply`.
 No proposal can be applied without an explicit approval bound to its exact
 SHA-256 hash. Drydock's agent evaluation cases, rubrics, and durable evolution
-evidence remain in this repository. The existing `.agent-experience/` pipeline
-also remains in place during the pilot; removing it is a separate post-parity
-change.
+evidence remain in this repository. Only the Drydock-specific controlled
+experiment output under `.agent-experience/experiments/` remains; the removed
+legacy queue and processed-state pipeline are not used.
 
 ## Verification
 
@@ -68,8 +70,10 @@ $env:AGENT_ASCENDRY_WHEEL = (Resolve-Path path\to\agent_ascendry-0.1.0-py3-none-
 python -m unittest tests.test_agent_ascendry_integration
 ```
 
-The test verifies the wheel digest and import location, install/reinstall
-idempotence, curator reuse, structural hook preservation, byte preservation for
-pre-existing agents and skills, ignored local state, capture idempotence, and
-audit output. Release pinning replaces the local wheel instruction only after
-the public-release review passes.
+The test models a fresh clone containing the tracked Ascendry wrapper and exact
+single Stop hook. It verifies the wheel digest and import location,
+install/reinstall idempotence, curator reuse, byte preservation for pre-existing
+agents, skills, hook registry, and wrapper, ignored local state, fail-open hook
+capture, capture idempotence, privacy filtering, and audit output. Release
+pinning replaces the local wheel instruction only after the public-release
+review passes.

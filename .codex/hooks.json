@@ -6,17 +6,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python .codex/hooks/capture_agent_experience.py",
-            "commandWindows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .codex\\hooks\\capture_agent_experience.ps1",
-            "statusMessage": "Recording agent experience",
-            "timeout": 3
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
             "command": "python .codex/hooks/agent_ascendry_capture.py",
             "commandWindows": "python .codex\\hooks\\agent_ascendry_capture.py",
             "statusMessage": "Recording Agent Ascendry experience",
