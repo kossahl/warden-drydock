@@ -1,30 +1,36 @@
-# Agent Ascendry pilot integration
+# Agent Ascendry integration
 
 Warden Drydock opts into Agent Ascendry through `.agent-ascendry.yaml` and a
 Codex `Stop` hook. The original G2 parity review established that shared event,
 audit, proposal, and approval fixtures produced identical results and that all
-existing agents remained byte-identical. The final local candidate below has
-passed the same wheel-only Drydock integration checks; its final parity and
-release reviews remain gated. The superseded generic local capture and audit
-implementation was therefore removed. Drydock's curator, skills, durable
-evolution memory, and evaluation datasets remain local.
+existing agents remained byte-identical. The published v0.1.0 release has
+passed the same wheel-only Drydock integration checks. The superseded generic
+local capture and audit implementation was therefore removed. Drydock's
+curator, skills, durable evolution memory, and evaluation datasets remain
+local.
 
-## Candidate artifact
+## Published artifact
 
-The accepted v0.1 candidate is installed from the wheel, never imported from an
-Agent Ascendry source checkout:
+Install the immutable [Agent Ascendry v0.1.0 release](https://github.com/kossahl/agent-ascendry/releases/tag/v0.1.0)
+from its wheel, never from an Agent Ascendry source checkout:
 
 ```text
 agent_ascendry-0.1.0-py3-none-any.whl
-SHA-256 f7736c5a9767f12221a98d2e9342c7b99134f642442befefa0dc5dc45c3cb8bc
-source commit 3df0f96f468105d18bdbb04bf8d5bceb009547d3
+https://github.com/kossahl/agent-ascendry/releases/download/v0.1.0/agent_ascendry-0.1.0-py3-none-any.whl
+SHA-256 3b4efdc3416d48a7dc5892d35fe8d55dfd3d27afdc2da4aaef161ce121726a73
+source commit ed383bae871e15d28ab69bb60b0cfcc7e3a5296b (annotated tag v0.1.0)
 ```
 
-Verify the digest before installing the local release candidate:
+Download the release wheel, verify its digest, and only then install it:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 path\to\agent_ascendry-0.1.0-py3-none-any.whl
-python -m pip install --no-deps path\to\agent_ascendry-0.1.0-py3-none-any.whl
+$wheel = Join-Path $PWD "agent_ascendry-0.1.0-py3-none-any.whl"
+$url = "https://github.com/kossahl/agent-ascendry/releases/download/v0.1.0/agent_ascendry-0.1.0-py3-none-any.whl"
+$expected = "3b4efdc3416d48a7dc5892d35fe8d55dfd3d27afdc2da4aaef161ce121726a73"
+Invoke-WebRequest -Uri $url -OutFile $wheel
+$actual = (Get-FileHash -LiteralPath $wheel -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actual -ne $expected) { throw "Agent Ascendry wheel SHA-256 mismatch: $actual" }
+python -m pip install --no-deps $wheel
 agent-ascendry init . --platform codex
 agent-ascendry validate .
 ```
@@ -65,7 +71,8 @@ Ascendry is the sole capture and audit implementation.
 ## Verification
 
 The wheel-backed integration test is opt-in so the normal Drydock test suite
-does not depend on an unpublished local path:
+does not download from the network. Point it at a local copy of the published
+wheel; the test enforces the public digest before installation:
 
 ```powershell
 $env:AGENT_ASCENDRY_WHEEL = (Resolve-Path path\to\agent_ascendry-0.1.0-py3-none-any.whl)
@@ -77,5 +84,4 @@ single Stop hook. It verifies the wheel digest and import location,
 install/reinstall idempotence, curator reuse, byte preservation for pre-existing
 agents, skills, hook registry, and wrapper, ignored local state, fail-open hook
 capture, capture idempotence, privacy filtering, and audit output. Release
-pinning replaces the local wheel instruction only after the public-release
-review passes.
+metadata is also checked against this document without accessing the network.

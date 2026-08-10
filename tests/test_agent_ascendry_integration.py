@@ -10,7 +10,12 @@ import tempfile
 import unittest
 
 
-EXPECTED_WHEEL_SHA256 = "f7736c5a9767f12221a98d2e9342c7b99134f642442befefa0dc5dc45c3cb8bc"
+RELEASE_WHEEL_URL = (
+    "https://github.com/kossahl/agent-ascendry/releases/download/v0.1.0/"
+    "agent_ascendry-0.1.0-py3-none-any.whl"
+)
+EXPECTED_WHEEL_SHA256 = "3b4efdc3416d48a7dc5892d35fe8d55dfd3d27afdc2da4aaef161ce121726a73"
+RELEASE_SOURCE_COMMIT = "ed383bae871e15d28ab69bb60b0cfcc7e3a5296b"
 ROOT = Path(__file__).parents[1]
 WHEEL_ENV = "AGENT_ASCENDRY_WHEEL"
 
@@ -36,12 +41,23 @@ def file_tree(root: Path) -> dict[str, bytes]:
     }
 
 
+class AgentAscendryReleasePinTests(unittest.TestCase):
+    def test_integration_document_matches_the_immutable_release_pin(self):
+        documentation = (ROOT / "docs/agent-ascendry-integration.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(RELEASE_WHEEL_URL, documentation)
+        self.assertIn(EXPECTED_WHEEL_SHA256, documentation)
+        self.assertIn(RELEASE_SOURCE_COMMIT, documentation)
+        self.assertIn("v0.1.0", documentation)
+
+
 class AgentAscendryWheelIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         configured = os.environ.get(WHEEL_ENV)
         if not configured:
-            raise unittest.SkipTest(f"set {WHEEL_ENV} to the accepted candidate wheel")
+            raise unittest.SkipTest(f"set {WHEEL_ENV} to the published v0.1.0 wheel")
         cls.wheel = Path(configured).resolve()
         if not cls.wheel.is_file():
             raise AssertionError(f"{WHEEL_ENV} does not name a file")
