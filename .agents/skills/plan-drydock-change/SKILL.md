@@ -53,4 +53,3 @@ Parallelize read-heavy discovery and independent file ownership. Sequence writer
 7. Ordered work packages with agent and file ownership
 8. Risks, migration, rollback, and validation
 9. Decision gate: build, explore further, defer, or reject
-

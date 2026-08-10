@@ -59,4 +59,3 @@ During a periodic retrospective, review candidate lessons, merge repetitions int
 5. Proposed minimal diff
 6. Before/after evaluation plan and results
 7. Risks, contradictions, and required approval
-

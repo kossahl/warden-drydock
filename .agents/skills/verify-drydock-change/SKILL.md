@@ -48,4 +48,3 @@ Do not use scores or confidence percentages. A clean test suite does not prove b
 5. Generated and standalone artifact observations
 6. Unverified claims and residual risks
 7. Smallest next action needed for `PASS`
-
