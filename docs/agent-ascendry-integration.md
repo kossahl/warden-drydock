@@ -24,15 +24,20 @@ source commit ed383bae871e15d28ab69bb60b0cfcc7e3a5296b (annotated tag v0.1.0)
 Download the release wheel, verify its digest, and only then install it:
 
 ```powershell
-$wheel = Join-Path $PWD "agent_ascendry-0.1.0-py3-none-any.whl"
 $url = "https://github.com/kossahl/agent-ascendry/releases/download/v0.1.0/agent_ascendry-0.1.0-py3-none-any.whl"
 $expected = "3b4efdc3416d48a7dc5892d35fe8d55dfd3d27afdc2da4aaef161ce121726a73"
-Invoke-WebRequest -Uri $url -OutFile $wheel
-$actual = (Get-FileHash -LiteralPath $wheel -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($actual -ne $expected) { throw "Agent Ascendry wheel SHA-256 mismatch: $actual" }
-python -m pip install --no-deps $wheel
-agent-ascendry init . --platform codex
-agent-ascendry validate .
+$temporary = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ("agent-ascendry-" + [guid]::NewGuid()))
+$wheel = Join-Path $temporary "agent_ascendry-0.1.0-py3-none-any.whl"
+try {
+    Invoke-WebRequest -Uri $url -OutFile $wheel
+    $actual = (Get-FileHash -LiteralPath $wheel -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $expected) { throw "Agent Ascendry wheel SHA-256 mismatch: $actual" }
+    python -m pip install --no-deps $wheel
+    agent-ascendry init . --platform codex
+    agent-ascendry validate .
+} finally {
+    Remove-Item -LiteralPath $temporary -Recurse -Force
+}
 ```
 
 `init` is the only supported bootstrap mechanism. It reuses

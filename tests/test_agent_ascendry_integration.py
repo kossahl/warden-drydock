@@ -76,6 +76,18 @@ class AgentAscendryReleasePinTests(unittest.TestCase):
         self.assertIn(RELEASE_SOURCE_COMMIT, documentation)
         self.assertIn("v0.1.0", documentation)
 
+    def test_documented_download_uses_a_cleaned_temporary_directory(self):
+        documentation = (ROOT / "docs/agent-ascendry-integration.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn('Join-Path $PWD "agent_ascendry-', documentation)
+        self.assertIn("[IO.Path]::GetTempPath()", documentation)
+        self.assertIn("try {", documentation)
+        self.assertIn("} finally {", documentation)
+        self.assertIn(
+            "Remove-Item -LiteralPath $temporary -Recurse -Force", documentation
+        )
+
 
 class AgentAscendryWheelIntegrationTests(unittest.TestCase):
     @classmethod
