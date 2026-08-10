@@ -130,6 +130,13 @@ def _graph(root: Path) -> tuple[dict[str, Entity], list[Connection], list[str]]:
     return entities, connections, errors
 
 
+def _graph_or_exit(root: Path) -> tuple[dict[str, Entity], list[Connection]]:
+    entities, connections, errors = _graph(root)
+    if errors:
+        raise SystemExit("Cannot build relationship data:\n" + "\n".join(errors))
+    return entities, connections
+
+
 def frontmatter(text: str) -> dict[str, str]:
     if not text.startswith("---\n"):
         return {}
@@ -233,6 +240,41 @@ def validate_campaign(root: Path) -> int:
             errors.append(".drydock.json: adapter_version does not match adapter.json")
         if lock and adapter_version != lock.get("adapter_version"):
             errors.append(".drydock-lock.json: adapter_version does not match adapter.json")
+        connection_config = adapter_config.get("connections", {})
+        if not isinstance(connection_config, dict):
+            errors.append("00-drydock/adapter.json: connections must be an object")
+            connection_config = {}
+        configured_states = connection_config.get(
+            "states", sorted(VALID_CONNECTION_STATES)
+        )
+        if (
+            not isinstance(configured_states, list)
+            or not configured_states
+            or any(not isinstance(value, str) or not value for value in configured_states)
+        ):
+            errors.append(
+                "00-drydock/adapter.json: connections.states must be a "
+                "non-empty string list"
+            )
+            configured_states = sorted(VALID_CONNECTION_STATES)
+        states = set(configured_states)
+        vocabulary = connection_config.get("relationships", {})
+        if (
+            not isinstance(vocabulary, dict)
+            or any(
+                not isinstance(name, str)
+                or not ID_PATTERN.fullmatch(name)
+                or not isinstance(rule, dict)
+                for name, rule in (
+                    vocabulary.items() if isinstance(vocabulary, dict) else []
+                )
+            )
+        ):
+            errors.append(
+                "00-drydock/adapter.json: connections.relationships must map "
+                "kebab-case names to objects"
+            )
+            vocabulary = {}
         validation_rules = adapter_config.get("validation", {})
         if not isinstance(validation_rules, dict):
             errors.append("00-drydock/adapter.json: validation must be an object")
@@ -354,6 +396,8 @@ def validate_campaign(root: Path) -> int:
         field_values = {}
         forbidden_combinations = []
         legacy_paths = []
+        states = VALID_CONNECTION_STATES
+        vocabulary = {}
 
     files = list(root.rglob("*.md"))
     for rule in legacy_paths:
@@ -430,10 +474,6 @@ def validate_campaign(root: Path) -> int:
 
     entities, connections, connection_errors = _graph(root)
     errors.extend(connection_errors)
-    connection_config = adapter_config.get("connections", {}) if isinstance(adapter_config, dict) else {}
-    configured_states = connection_config.get("states", sorted(VALID_CONNECTION_STATES))
-    states = set(configured_states) if isinstance(configured_states, list) else VALID_CONNECTION_STATES
-    vocabulary = connection_config.get("relationships", {})
     seen_edges: set[tuple[str, str, str, str]] = set()
     for connection in connections:
         target = entities.get(connection.target_id)
@@ -521,7 +561,7 @@ def _summary(entity: Entity) -> str:
 
 def build_indexes(root: Path) -> tuple[Path, Path]:
     root = root.resolve()
-    entities, connections, _ = _graph(root)
+    entities, connections = _graph_or_exit(root)
     outgoing: dict[str, list[Connection]] = {key: [] for key in entities}
     incoming: dict[str, list[Connection]] = {key: [] for key in entities}
     for connection in connections:
@@ -556,7 +596,9 @@ def build_indexes(root: Path) -> tuple[Path, Path]:
 
 
 def related_entities(root: Path, focus: str, depth: int = 1) -> list[Entity]:
-    entities, connections, _ = _graph(root)
+    if depth < 0:
+        raise SystemExit("Depth must be zero or greater")
+    entities, connections = _graph_or_exit(root)
     if focus not in entities:
         raise SystemExit(f"Unknown entity ID {focus!r}")
     selected = {focus}
@@ -572,7 +614,11 @@ def related_entities(root: Path, focus: str, depth: int = 1) -> list[Entity]:
 
 
 def build_context(root: Path, *, focus: str | None = None, depth: int = 1,
-                  max_records: int = 20, include_history: int = 1) -> Path:
+                  max_records: int = 20) -> Path:
+    if depth < 0:
+        raise SystemExit("Depth must be zero or greater")
+    if max_records <= 0:
+        raise SystemExit("Maximum records must be greater than zero")
     root = root.resolve()
     output = root / "00-drydock" / "ai-context.md"
     sources = [
@@ -635,8 +681,24 @@ def print_related(root: Path, focus: str, depth: int) -> None:
         print(f"{entity.entity_id}\t{entity.entity_type}\t{entity.name}\t{entity.path.as_posix()}")
 
 
+def print_entity(root: Path, entity_id: str) -> None:
+    entities = _entities(root.resolve())
+    if entity_id not in entities:
+        raise SystemExit(f"Unknown entity ID {entity_id!r}")
+    print(entities[entity_id].text, end="")
+
+
+def print_backlinks(root: Path, focus: str) -> None:
+    entities, edges = _graph_or_exit(root.resolve())
+    if focus not in entities:
+        raise SystemExit(f"Unknown entity ID {focus!r}")
+    for edge in edges:
+        if edge.target_id == focus:
+            print(f"{edge.source_id}\t{edge.relationship}\t{edge.state}\t{edge.context}")
+
+
 def print_history(root: Path, focus: str) -> None:
-    entities, connections, _ = _graph(root.resolve())
+    entities, connections = _graph_or_exit(root.resolve())
     if focus not in entities:
         raise SystemExit(f"Unknown entity ID {focus!r}")
     historical = {"session", "debrief", "faction-turn", "consequence"}
@@ -659,15 +721,28 @@ def audit_connections(root: Path) -> int:
     return 0
 
 
+def _nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be zero or greater")
+    return parsed
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
+
+
 def main(argv: list[str] | None = None, *, root: Path | None = None) -> int:
     parser = argparse.ArgumentParser(description="Warden Drydock campaign maintenance")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("validate")
     context = subparsers.add_parser("context")
     context.add_argument("--focus")
-    context.add_argument("--depth", type=int, default=1)
-    context.add_argument("--max-records", type=int, default=20)
-    context.add_argument("--include-history", type=int, default=1)
+    context.add_argument("--depth", type=_nonnegative_int, default=1)
+    context.add_argument("--max-records", type=_positive_int, default=20)
     subparsers.add_parser("index", help="Rebuild generated entity and connection indexes")
     find = subparsers.add_parser("find", help="Find entities by ID, name, or summary")
     find.add_argument("query")
@@ -675,7 +750,7 @@ def main(argv: list[str] | None = None, *, root: Path | None = None) -> int:
     show.add_argument("entity_id")
     related = subparsers.add_parser("related", help="List a connected entity neighborhood")
     related.add_argument("entity_id")
-    related.add_argument("--depth", type=int, default=1)
+    related.add_argument("--depth", type=_nonnegative_int, default=1)
     backlinks = subparsers.add_parser("backlinks", help="List records that connect to an entity")
     backlinks.add_argument("entity_id")
     history = subparsers.add_parser("history", help="List historical records connected to an entity")
@@ -693,7 +768,7 @@ def main(argv: list[str] | None = None, *, root: Path | None = None) -> int:
     if args.command == "context":
         build_indexes(campaign_root)
         build_context(campaign_root, focus=args.focus, depth=args.depth,
-                      max_records=args.max_records, include_history=args.include_history)
+                      max_records=args.max_records)
         return 0
     if args.command == "index":
         build_indexes(campaign_root)
@@ -702,21 +777,13 @@ def main(argv: list[str] | None = None, *, root: Path | None = None) -> int:
         print_entities(campaign_root, args.query)
         return 0
     if args.command == "show":
-        entities = _entities(campaign_root.resolve())
-        if args.entity_id not in entities:
-            raise SystemExit(f"Unknown entity ID {args.entity_id!r}")
-        print(entities[args.entity_id].text, end="")
+        print_entity(campaign_root, args.entity_id)
         return 0
     if args.command == "related":
         print_related(campaign_root, args.entity_id, args.depth)
         return 0
     if args.command == "backlinks":
-        entities, edges, _ = _graph(campaign_root.resolve())
-        if args.entity_id not in entities:
-            raise SystemExit(f"Unknown entity ID {args.entity_id!r}")
-        for edge in edges:
-            if edge.target_id == args.entity_id:
-                print(f"{edge.source_id}\t{edge.relationship}\t{edge.state}\t{edge.context}")
+        print_backlinks(campaign_root, args.entity_id)
         return 0
     if args.command == "history":
         print_history(campaign_root, args.entity_id)

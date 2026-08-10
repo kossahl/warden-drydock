@@ -10,8 +10,22 @@ from .core.validation import validate_campaign
 from .core.context import build_context
 from .standalone import (
     audit_connections, build_indexes, create_entity, print_entities,
-    print_history, print_related,
+    print_backlinks, print_entity, print_history, print_related,
 )
+
+
+def _nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be zero or greater")
+    return parsed
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
 
 
 def parser() -> argparse.ArgumentParser:
@@ -39,8 +53,8 @@ def parser() -> argparse.ArgumentParser:
     ctx = sub.add_parser("context", help="Build generated AI context")
     ctx.add_argument("path", type=Path, nargs="?", default=Path.cwd())
     ctx.add_argument("--focus")
-    ctx.add_argument("--depth", type=int, default=1)
-    ctx.add_argument("--max-records", type=int, default=20)
+    ctx.add_argument("--depth", type=_nonnegative_int, default=1)
+    ctx.add_argument("--max-records", type=_positive_int, default=20)
 
     index = sub.add_parser("index", help="Rebuild generated relationship indexes")
     index.add_argument("path", type=Path, nargs="?", default=Path.cwd())
@@ -49,10 +63,18 @@ def parser() -> argparse.ArgumentParser:
     find.add_argument("query")
     find.add_argument("--path", type=Path, default=Path.cwd())
 
+    show = sub.add_parser("show", help="Print one entity record")
+    show.add_argument("entity_id")
+    show.add_argument("--path", type=Path, default=Path.cwd())
+
     related = sub.add_parser("related", help="List a connected entity neighborhood")
     related.add_argument("entity_id")
-    related.add_argument("--depth", type=int, default=1)
+    related.add_argument("--depth", type=_nonnegative_int, default=1)
     related.add_argument("--path", type=Path, default=Path.cwd())
+
+    backlinks = sub.add_parser("backlinks", help="List records that connect to an entity")
+    backlinks.add_argument("entity_id")
+    backlinks.add_argument("--path", type=Path, default=Path.cwd())
 
     history = sub.add_parser("history", help="List event records connected to an entity")
     history.add_argument("entity_id")
@@ -108,8 +130,14 @@ def main(argv=None) -> int:
     if args.command == "find":
         print_entities(args.path, args.query)
         return 0
+    if args.command == "show":
+        print_entity(args.path, args.entity_id)
+        return 0
     if args.command == "related":
         print_related(args.path, args.entity_id, args.depth)
+        return 0
+    if args.command == "backlinks":
+        print_backlinks(args.path, args.entity_id)
         return 0
     if args.command == "history":
         print_history(args.path, args.entity_id)

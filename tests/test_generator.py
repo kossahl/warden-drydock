@@ -453,6 +453,54 @@ class GeneratorTest(unittest.TestCase):
             self.assertIn('Ripley (`npc-ripley`)',text)
             self.assertIn('Omitted 1 record(s)',text)
 
+            shown=StringIO()
+            with redirect_stdout(shown):
+                self.assertEqual(main(['show','npc-ripley','--path',str(root)]),0)
+            self.assertIn('# Ripley',shown.getvalue())
+            backlinks=StringIO()
+            with redirect_stdout(backlinks):
+                self.assertEqual(main(['backlinks','faction-company','--path',str(root)]),0)
+            self.assertIn('npc-ripley\tworks-for\tcurrent',backlinks.getvalue())
+
+    def test_relationship_generation_rejects_parse_errors_without_mutation(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            npc=create_entity(root,'npc','npc-ripley','Ripley')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                '## Connections\n', '## Connections\n\n- malformed relationship\n', 1
+            ),encoding='utf-8')
+            entity_index=root/'00-drydock'/'entity-index.md'
+            connection_index=root/'00-drydock'/'connection-index.md'
+            entity_index.write_text('existing entity index\n',encoding='utf-8')
+            connection_index.write_text('existing connection index\n',encoding='utf-8')
+            with self.assertRaisesRegex(SystemExit,'malformed connection'):
+                standalone.build_indexes(root)
+            self.assertEqual(entity_index.read_text(encoding='utf-8'),'existing entity index\n')
+            self.assertEqual(connection_index.read_text(encoding='utf-8'),'existing connection index\n')
+
+    def test_context_rejects_invalid_retrieval_limits(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            for value in ('0','-1'):
+                with self.assertRaises(SystemExit):
+                    standalone.main(['context','--max-records',value],root=root)
+            with self.assertRaises(SystemExit):
+                standalone.main(['context','--depth','-1'],root=root)
+
+    def test_validation_rejects_malformed_connection_configuration(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            adapter_path=root/'00-drydock'/'adapter.json'
+            adapter=json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['connections']['states']='current'
+            adapter['connections']['relationships']=['works-for']
+            adapter_path.write_text(json.dumps(adapter),encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(standalone.validate_campaign(root),1)
+            self.assertIn('connections.states must be a non-empty string list',output.getvalue())
+            self.assertIn('connections.relationships must map',output.getvalue())
+
     def test_connection_validation_and_legacy_audit_are_non_destructive(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
