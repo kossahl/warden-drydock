@@ -1,11 +1,13 @@
 # Agent Ascendry pilot integration
 
 Warden Drydock opts into Agent Ascendry through `.agent-ascendry.yaml` and a
-Codex `Stop` hook. The G2 parity review passed against the candidate wheel below:
-shared event, audit, proposal, and approval fixtures produced identical results,
-and all existing agents remained byte-identical. The superseded generic local
-capture and audit implementation was therefore removed. Drydock's curator,
-skills, durable evolution memory, and evaluation datasets remain local.
+Codex `Stop` hook. The original G2 parity review established that shared event,
+audit, proposal, and approval fixtures produced identical results and that all
+existing agents remained byte-identical. The final local candidate below has
+passed the same wheel-only Drydock integration checks; its final parity and
+release reviews remain gated. The superseded generic local capture and audit
+implementation was therefore removed. Drydock's curator, skills, durable
+evolution memory, and evaluation datasets remain local.
 
 ## Candidate artifact
 
@@ -14,8 +16,8 @@ Agent Ascendry source checkout:
 
 ```text
 agent_ascendry-0.1.0-py3-none-any.whl
-SHA-256 ec25e08253c4cd263027805a5794ea8a379475e8ac755c51faa487aa69a8e38f
-source commit d236ee20c9f4a306acf76457ee186586d965d2f4
+SHA-256 f7736c5a9767f12221a98d2e9342c7b99134f642442befefa0dc5dc45c3cb8bc
+source commit 3df0f96f468105d18bdbb04bf8d5bceb009547d3
 ```
 
 Verify the digest before installing the local release candidate:
