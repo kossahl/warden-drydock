@@ -51,7 +51,7 @@ When template behavior changes, regenerate the example campaign and inspect the 
 
 ## Agent evolution
 
-The project `Stop` hook automatically queues completed-turn metadata for later analysis. A scheduled retrospective converts eligible episodes into concise evidence-backed candidates in `docs/agent-evolution.md` and prepares `docs/agent-evolution-proposal.md`. Do not turn one anecdote into a general rule, store raw transcripts in Git, or let an agent silently rewrite its own instructions. Use `agent_curator` and the `improve-drydock-agents` skill for audits; durable changes require review, validation, and user approval.
+The project `Stop` hook automatically queues completed-turn metadata for later analysis. A periodic, explicitly initiated retrospective converts eligible episodes into concise evidence-backed candidates in `docs/agent-evolution.md` and prepares `docs/agent-evolution-proposal.md`. Do not turn one anecdote into a general rule, store raw transcripts in Git, or let an agent silently rewrite its own instructions. Use `agent_curator` and the `improve-drydock-agents` skill for audits; durable changes require review, validation, and user approval.
 
 ## Agent communication and token discipline
 
