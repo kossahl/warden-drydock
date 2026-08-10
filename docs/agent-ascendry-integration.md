@@ -57,8 +57,8 @@ The review sequence is `capture -> audit -> propose -> approve -> apply`.
 No proposal can be applied without an explicit approval bound to its exact
 SHA-256 hash. Drydock's agent evaluation cases, rubrics, and durable evolution
 evidence remain in this repository. Only the Drydock-specific controlled
-experiment output under `.agent-experience/experiments/` remains; the removed
-legacy queue and processed-state pipeline are not used.
+experiment output under `.agent-experience/experiments/` remains. Agent
+Ascendry is the sole capture and audit implementation.
 
 ## Verification
 

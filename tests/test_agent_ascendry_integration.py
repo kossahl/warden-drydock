@@ -117,6 +117,47 @@ class AgentAscendryWheelIntegrationTests(unittest.TestCase):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(content)
 
+            subprocess.run(
+                ["git", "config", "user.name", "Agent Ascendry Test"],
+                cwd=root,
+                capture_output=True,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "agent-ascendry@example.invalid"],
+                cwd=root,
+                capture_output=True,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "add", "--", *sorted(existing)],
+                cwd=root,
+                capture_output=True,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "Create tracked Drydock fixture"],
+                cwd=root,
+                capture_output=True,
+                check=True,
+            )
+            tracked = subprocess.run(
+                ["git", "ls-files"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(set(tracked.stdout.splitlines()), set(existing))
+            before_init_status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(before_init_status.stdout, "")
+
             import_probe = subprocess.run(
                 [
                     sys.executable,
@@ -144,6 +185,11 @@ class AgentAscendryWheelIntegrationTests(unittest.TestCase):
             self.assertIn(".codex/hooks/agent_ascendry_capture.py", first_result["reused"])
             for relative, content in existing.items():
                 self.assertEqual((root / relative).read_bytes(), content, relative)
+            ownership = json.loads(
+                (root / ".agent-ascendry/installation.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(ownership["assets"], {})
+            self.assertIsNone(ownership["hook_block"])
             self.assertFalse((root / ".codex/agents/agent_ascendry_curator.toml").exists())
             self.assertFalse((root / ".agents/skills/curate-agent-evolution").exists())
 
@@ -157,12 +203,28 @@ class AgentAscendryWheelIntegrationTests(unittest.TestCase):
                 check=True,
             )
             self.assertIn("/.agent-ascendry/", exclude.stdout)
+            after_init_status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(after_init_status.stdout, "")
 
             after_first_init = file_tree(root)
             second, second_result = self.run_ascendry(root, "init", ".", "--platform", "codex")
             self.assertEqual(second.returncode, 0, second.stderr)
             self.assertEqual(second_result["created"], [])
             self.assertEqual(file_tree(root), after_first_init)
+            after_second_status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(after_second_status.stdout, "")
 
             validate, validation = self.run_ascendry(root, "validate", ".")
             self.assertEqual(validate.returncode, 0, validate.stderr)
