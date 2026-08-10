@@ -10,6 +10,31 @@
       {"visibility": "players", "warden_only": "true"}
     ]
   },
+  "connections": {
+    "syntax": "- `relationship` → [[target-id|Readable Name]] (`state`) — One concise sentence of context.",
+    "states": ["current", "former", "planned", "possible", "disputed", "believed", "hidden", "confirmed", "inactive", "unknown", "active"],
+    "relationships": {
+      "affected-by": {}, "affects": {}, "advances": {}, "allied-with": {},
+      "anticipates": {}, "applies-to": {}, "believes": {}, "caused-by": {},
+      "carries": {}, "changed": {}, "changes": {}, "claims-about": {},
+      "connected-to": {}, "concerns": {}, "contains": {}, "contradicted-by": {},
+      "contradicts": {}, "controlled-by": {}, "controls": {}, "created-by": {},
+      "creates": {}, "depicts": {}, "derived-from": {}, "driven-by": {},
+      "employs": {}, "established": {}, "features": {}, "followed": {},
+      "follows": {}, "found-at": {}, "held-by": {}, "identified": {},
+      "intended-for": {}, "introduces": {}, "involves": {}, "knows-about": {},
+      "leads-to": {}, "located-at": {}, "located-in": {}, "may-reveal": {},
+      "may-trigger": {}, "mentions": {}, "occupied-by": {}, "opposed-by": {},
+      "opposed-to": {}, "operated-by": {}, "originated-from": {}, "owned-by": {},
+      "owns": {}, "part-of": {}, "performed-by": {}, "points-to": {},
+      "prepares": {}, "preys-on": {}, "protects-secret": {}, "proposes-change-to": {},
+      "responds-to": {}, "revealed": {}, "reveals": {}, "reviews": {},
+      "seeks": {}, "site-of": {}, "source-of": {}, "starts-at": {},
+      "supports": {}, "targets": {}, "threatened-by": {}, "threatens": {},
+      "travelling-to": {}, "triggered": {}, "triggered-by": {}, "uses": {},
+      "vulnerable-to": {}, "works-for": {}, "requires-update-to": {}
+    }
+  },
   "legacy_paths": [
     {"path": "06-factions", "canonical": "04-factions"},
     {"path": "05-characters/npcs", "canonical": "05-npcs"},

@@ -431,6 +431,176 @@ class GeneratorTest(unittest.TestCase):
                 self.assertTrue(template.is_file())
                 lower=template.read_text(encoding='utf-8').lower()
                 self.assertFalse(any(field in lower for field in forbidden))
+                self.assertIn('## summary', lower)
+                self.assertIn('## current state', lower)
+                self.assertIn('## connections', lower)
+
+    def test_connections_generate_backlinks_and_budgeted_context(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            npc=create_entity(root,'npc','npc-ripley','Ripley')
+            faction=create_entity(root,'faction','faction-company','The Company')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                '<!-- - `relationship` → [[target-id|Readable Name]] (`current`) — One concise sentence of context. -->',
+                '- `works-for` → [[faction-company|The Company]] (`current`) — Handles salvage contracts.'
+            ),encoding='utf-8')
+            self.assertEqual(standalone.validate_campaign(root),0)
+            entity_index,connection_index=standalone.build_indexes(root)
+            self.assertIn('works-for [[faction-company]]',entity_index.read_text(encoding='utf-8'))
+            self.assertIn('backlink `works-for` ← [[npc-ripley]]',connection_index.read_text(encoding='utf-8'))
+            context=standalone.build_context(root,focus='npc-ripley',depth=1,max_records=1)
+            text=context.read_text(encoding='utf-8')
+            self.assertIn('Ripley (`npc-ripley`)',text)
+            self.assertIn('Omitted 1 record(s)',text)
+
+            shown=StringIO()
+            with redirect_stdout(shown):
+                self.assertEqual(main(['show','npc-ripley','--path',str(root)]),0)
+            self.assertIn('# Ripley',shown.getvalue())
+            backlinks=StringIO()
+            with redirect_stdout(backlinks):
+                self.assertEqual(main(['backlinks','faction-company','--path',str(root)]),0)
+            self.assertIn('npc-ripley\tworks-for\tcurrent',backlinks.getvalue())
+
+    def test_relationship_generation_rejects_parse_errors_without_mutation(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            npc=create_entity(root,'npc','npc-ripley','Ripley')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                '## Connections\n', '## Connections\n\n- malformed relationship\n', 1
+            ),encoding='utf-8')
+            entity_index=root/'00-drydock'/'entity-index.md'
+            connection_index=root/'00-drydock'/'connection-index.md'
+            entity_index.write_text('existing entity index\n',encoding='utf-8')
+            connection_index.write_text('existing connection index\n',encoding='utf-8')
+            with self.assertRaisesRegex(SystemExit,'malformed connection'):
+                standalone.build_indexes(root)
+            self.assertEqual(entity_index.read_text(encoding='utf-8'),'existing entity index\n')
+            self.assertEqual(connection_index.read_text(encoding='utf-8'),'existing connection index\n')
+
+    def test_relationship_generation_rejects_dangling_targets_without_mutation(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            npc=create_entity(root,'npc','npc-ripley','Ripley')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                '## Connections\n',
+                '## Connections\n\n- `works-for` -> [[missing-faction]] (`current`) — Missing target.\n',
+                1,
+            ),encoding='utf-8')
+            entity_index=root/'00-drydock'/'entity-index.md'
+            connection_index=root/'00-drydock'/'connection-index.md'
+            context=root/'00-drydock'/'ai-context.md'
+            entity_index.write_text('existing entity index\n',encoding='utf-8')
+            connection_index.write_text('existing connection index\n',encoding='utf-8')
+            context.write_text('existing context\n',encoding='utf-8')
+            with self.assertRaisesRegex(SystemExit,'target missing-faction does not exist'):
+                standalone.build_indexes(root)
+            self.assertEqual(entity_index.read_text(encoding='utf-8'),'existing entity index\n')
+            self.assertEqual(connection_index.read_text(encoding='utf-8'),'existing connection index\n')
+            with self.assertRaisesRegex(SystemExit,'target missing-faction does not exist'):
+                main(['context',str(root)])
+            self.assertEqual(entity_index.read_text(encoding='utf-8'),'existing entity index\n')
+            self.assertEqual(connection_index.read_text(encoding='utf-8'),'existing connection index\n')
+            self.assertEqual(context.read_text(encoding='utf-8'),'existing context\n')
+
+    def test_context_unknown_focus_does_not_mutate_generated_files(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            create_entity(root,'npc','npc-ripley','Ripley')
+            standalone.build_indexes(root)
+            entity_index=root/'00-drydock'/'entity-index.md'
+            connection_index=root/'00-drydock'/'connection-index.md'
+            context=root/'00-drydock'/'ai-context.md'
+            before=(entity_index.read_bytes(),connection_index.read_bytes(),context.read_bytes())
+            with self.assertRaisesRegex(SystemExit,'Unknown entity ID'):
+                main(['context',str(root),'--focus','missing-id'])
+            after=(entity_index.read_bytes(),connection_index.read_bytes(),context.read_bytes())
+            self.assertEqual(after,before)
+
+    def test_duplicate_entity_ids_block_all_graph_retrieval_without_mutation(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            npc=create_entity(root,'npc','npc-ripley','Ripley')
+            duplicate=root/'05-npcs'/'npc-ripley-copy.md'
+            duplicate.write_text(npc.read_text(encoding='utf-8'),encoding='utf-8')
+            entity_index=root/'00-drydock'/'entity-index.md'
+            connection_index=root/'00-drydock'/'connection-index.md'
+            context=root/'00-drydock'/'ai-context.md'
+            before=(entity_index.read_bytes(),connection_index.read_bytes(),context.read_bytes())
+            operations=(
+                lambda: standalone.build_indexes(root),
+                lambda: main(['context',str(root),'--focus','npc-ripley']),
+                lambda: standalone.related_entities(root,'npc-ripley'),
+                lambda: standalone.print_backlinks(root,'npc-ripley'),
+                lambda: standalone.print_history(root,'npc-ripley'),
+            )
+            for operation in operations:
+                with self.subTest(operation=operation), self.assertRaisesRegex(
+                    SystemExit,
+                    r'duplicate entity ID npc-ripley: .*npc-ripley-copy\.md and .*npc-ripley\.md',
+                ):
+                    operation()
+            after=(entity_index.read_bytes(),connection_index.read_bytes(),context.read_bytes())
+            self.assertEqual(after,before)
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(standalone.validate_campaign(root),1)
+            self.assertIn('duplicate entity ID npc-ripley',output.getvalue())
+
+    def test_context_rejects_invalid_retrieval_limits(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            for value in ('0','-1'):
+                with self.assertRaises(SystemExit):
+                    standalone.main(['context','--max-records',value],root=root)
+            with self.assertRaises(SystemExit):
+                standalone.main(['context','--depth','-1'],root=root)
+
+    def test_validation_rejects_malformed_connection_configuration(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            adapter_path=root/'00-drydock'/'adapter.json'
+            adapter=json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['connections']['states']='current'
+            adapter['connections']['relationships']=['works-for']
+            adapter_path.write_text(json.dumps(adapter),encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(standalone.validate_campaign(root),1)
+            self.assertIn('connections.states must be a non-empty list of unique kebab-case strings',output.getvalue())
+            self.assertIn('connections.relationships must map',output.getvalue())
+
+    def test_validation_rejects_unusable_or_duplicate_connection_states(self):
+        for states in (["not usable"],["current","current"]):
+            with self.subTest(states=states), TemporaryDirectory() as tmp:
+                root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+                adapter_path=root/'00-drydock'/'adapter.json'
+                adapter=json.loads(adapter_path.read_text(encoding='utf-8'))
+                adapter['connections']['states']=states
+                adapter_path.write_text(json.dumps(adapter),encoding='utf-8')
+                output=StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(standalone.validate_campaign(root),1)
+                self.assertIn('unique kebab-case strings',output.getvalue())
+
+    def test_connection_validation_and_legacy_audit_are_non_destructive(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            npc=create_entity(root,'npc','npc-ripley','Ripley')
+            original=npc.read_text(encoding='utf-8').replace(
+                'current_status: unknown', 'current_status: unknown\nfactions: [faction-company]')
+            npc.write_text(original.replace(
+                '<!-- - `relationship` → [[target-id|Readable Name]] (`current`) — One concise sentence of context. -->',
+                '- `works-for` → [[missing-faction]] (`current`) — Explicit but unresolved.'
+            ),encoding='utf-8')
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(standalone.validate_campaign(root),1)
+            self.assertIn('connection target missing-faction does not exist',output.getvalue())
+            before=npc.read_text(encoding='utf-8')
+            with redirect_stdout(StringIO()):
+                self.assertEqual(standalone.audit_connections(root),0)
+            self.assertEqual(npc.read_text(encoding='utf-8'),before)
 
     def test_validation_rejects_unsafe_adapter_entity_paths(self):
         with TemporaryDirectory() as tmp:

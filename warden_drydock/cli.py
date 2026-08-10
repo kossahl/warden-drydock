@@ -8,7 +8,25 @@ from .core.generator import init_campaign
 from .core.upgrade import upgrade_campaign
 from .core.validation import validate_campaign
 from .core.context import build_context
-from .standalone import create_entity
+from .standalone import (
+    audit_connections, build_indexes, create_entity, print_entities,
+    print_backlinks, print_entity, print_history, print_related, related_entities,
+    validate_graph,
+)
+
+
+def _nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be zero or greater")
+    return parsed
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
 
 
 def parser() -> argparse.ArgumentParser:
@@ -35,6 +53,37 @@ def parser() -> argparse.ArgumentParser:
 
     ctx = sub.add_parser("context", help="Build generated AI context")
     ctx.add_argument("path", type=Path, nargs="?", default=Path.cwd())
+    ctx.add_argument("--focus")
+    ctx.add_argument("--depth", type=_nonnegative_int, default=1)
+    ctx.add_argument("--max-records", type=_positive_int, default=20)
+
+    index = sub.add_parser("index", help="Rebuild generated relationship indexes")
+    index.add_argument("path", type=Path, nargs="?", default=Path.cwd())
+
+    find = sub.add_parser("find", help="Find campaign entities")
+    find.add_argument("query")
+    find.add_argument("--path", type=Path, default=Path.cwd())
+
+    show = sub.add_parser("show", help="Print one entity record")
+    show.add_argument("entity_id")
+    show.add_argument("--path", type=Path, default=Path.cwd())
+
+    related = sub.add_parser("related", help="List a connected entity neighborhood")
+    related.add_argument("entity_id")
+    related.add_argument("--depth", type=_nonnegative_int, default=1)
+    related.add_argument("--path", type=Path, default=Path.cwd())
+
+    backlinks = sub.add_parser("backlinks", help="List records that connect to an entity")
+    backlinks.add_argument("entity_id")
+    backlinks.add_argument("--path", type=Path, default=Path.cwd())
+
+    history = sub.add_parser("history", help="List event records connected to an entity")
+    history.add_argument("entity_id")
+    history.add_argument("--path", type=Path, default=Path.cwd())
+
+    connections = sub.add_parser("connections", help="Audit legacy relationship fields")
+    connections.add_argument("action", choices=["audit"])
+    connections.add_argument("--path", type=Path, default=Path.cwd())
 
     upgrade = sub.add_parser("upgrade", help="Preview or apply managed framework updates")
     upgrade.add_argument("path", type=Path, nargs="?", default=Path.cwd())
@@ -72,8 +121,34 @@ def main(argv=None) -> int:
     if args.command == "validate":
         return validate_campaign(args.path)
     if args.command == "context":
-        build_context(args.path)
+        if args.focus:
+            related_entities(args.path, args.focus, args.depth)
+        else:
+            validate_graph(args.path)
+        build_indexes(args.path)
+        build_context(args.path, focus=args.focus, depth=args.depth,
+                      max_records=args.max_records)
         return 0
+    if args.command == "index":
+        build_indexes(args.path)
+        return 0
+    if args.command == "find":
+        print_entities(args.path, args.query)
+        return 0
+    if args.command == "show":
+        print_entity(args.path, args.entity_id)
+        return 0
+    if args.command == "related":
+        print_related(args.path, args.entity_id, args.depth)
+        return 0
+    if args.command == "backlinks":
+        print_backlinks(args.path, args.entity_id)
+        return 0
+    if args.command == "history":
+        print_history(args.path, args.entity_id)
+        return 0
+    if args.command == "connections":
+        return audit_connections(args.path)
     if args.command == "upgrade":
         return upgrade_campaign(args.path, apply=args.apply)
     if args.command == "new":
