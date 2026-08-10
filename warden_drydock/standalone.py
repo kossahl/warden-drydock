@@ -103,8 +103,9 @@ def parse_connections(text: str, *, source_id: str, path: Path) -> tuple[list[Co
     return connections, errors
 
 
-def _entities(root: Path) -> dict[str, Entity]:
+def _collect_entities(root: Path) -> tuple[dict[str, Entity], list[str]]:
     result: dict[str, Entity] = {}
+    errors: list[str] = []
     for path in sorted(root.rglob("*.md")):
         relative = path.relative_to(root)
         if relative.parts[0] in {"templates", "docs"} or relative.as_posix().startswith("00-drydock/"):
@@ -113,16 +114,28 @@ def _entities(root: Path) -> dict[str, Entity]:
         metadata = frontmatter(text)
         entity_id = metadata.get("id")
         if entity_id:
+            if entity_id in result:
+                errors.append(
+                    f"duplicate entity ID {entity_id}: "
+                    f"{result[entity_id].path.as_posix()} and {relative.as_posix()}"
+                )
+                continue
             result[entity_id] = Entity(entity_id, metadata.get("type", "unknown"),
                 metadata.get("name") or entity_id, metadata.get("status", "unknown"),
                 metadata.get("visibility", "warden"), relative, text)
-    return result
+    return result, errors
+
+
+def _entities(root: Path) -> dict[str, Entity]:
+    entities, errors = _collect_entities(root)
+    if errors:
+        raise SystemExit("Cannot collect campaign entities:\n" + "\n".join(errors))
+    return entities
 
 
 def _graph(root: Path) -> tuple[dict[str, Entity], list[Connection], list[str]]:
-    entities = _entities(root)
+    entities, errors = _collect_entities(root)
     connections: list[Connection] = []
-    errors: list[str] = []
     for entity in entities.values():
         parsed, failures = parse_connections(entity.text, source_id=entity.entity_id, path=entity.path)
         connections.extend(parsed)
@@ -254,7 +267,6 @@ def validate_campaign(root: Path) -> int:
     root = root.resolve()
     errors: list[str] = []
     warnings: list[str] = []
-    ids: dict[str, Path] = {}
     manifest = root / ".drydock.json"
     manifest_data: dict = {}
     if not manifest.exists():
@@ -507,11 +519,6 @@ def validate_campaign(root: Path) -> int:
             for heading in entity_rule.get("forbidden_headings", []):
                 if heading.casefold() in headings:
                     errors.append(f"{relative}: forbidden heading {heading}")
-        entity_id = metadata.get("id")
-        if entity_id:
-            if entity_id in ids:
-                errors.append(f"{relative}: duplicate ID {entity_id}")
-            ids[entity_id] = relative
         for raw in re.findall(r"\[\[([^\]]+)\]\]", text):
             target = raw.split("|", 1)[0].split("#", 1)[0].strip().lower()
             if target and target != "target-id" and target not in known:

@@ -517,6 +517,36 @@ class GeneratorTest(unittest.TestCase):
             after=(entity_index.read_bytes(),connection_index.read_bytes(),context.read_bytes())
             self.assertEqual(after,before)
 
+    def test_duplicate_entity_ids_block_all_graph_retrieval_without_mutation(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            npc=create_entity(root,'npc','npc-ripley','Ripley')
+            duplicate=root/'05-npcs'/'npc-ripley-copy.md'
+            duplicate.write_text(npc.read_text(encoding='utf-8'),encoding='utf-8')
+            entity_index=root/'00-drydock'/'entity-index.md'
+            connection_index=root/'00-drydock'/'connection-index.md'
+            context=root/'00-drydock'/'ai-context.md'
+            before=(entity_index.read_bytes(),connection_index.read_bytes(),context.read_bytes())
+            operations=(
+                lambda: standalone.build_indexes(root),
+                lambda: main(['context',str(root),'--focus','npc-ripley']),
+                lambda: standalone.related_entities(root,'npc-ripley'),
+                lambda: standalone.print_backlinks(root,'npc-ripley'),
+                lambda: standalone.print_history(root,'npc-ripley'),
+            )
+            for operation in operations:
+                with self.subTest(operation=operation), self.assertRaisesRegex(
+                    SystemExit,
+                    r'duplicate entity ID npc-ripley: .*npc-ripley-copy\.md and .*npc-ripley\.md',
+                ):
+                    operation()
+            after=(entity_index.read_bytes(),connection_index.read_bytes(),context.read_bytes())
+            self.assertEqual(after,before)
+            output=StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(standalone.validate_campaign(root),1)
+            self.assertIn('duplicate entity ID npc-ripley',output.getvalue())
+
     def test_context_rejects_invalid_retrieval_limits(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
