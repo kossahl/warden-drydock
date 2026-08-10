@@ -478,6 +478,45 @@ class GeneratorTest(unittest.TestCase):
             self.assertEqual(entity_index.read_text(encoding='utf-8'),'existing entity index\n')
             self.assertEqual(connection_index.read_text(encoding='utf-8'),'existing connection index\n')
 
+    def test_relationship_generation_rejects_dangling_targets_without_mutation(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            npc=create_entity(root,'npc','npc-ripley','Ripley')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                '## Connections\n',
+                '## Connections\n\n- `works-for` -> [[missing-faction]] (`current`) — Missing target.\n',
+                1,
+            ),encoding='utf-8')
+            entity_index=root/'00-drydock'/'entity-index.md'
+            connection_index=root/'00-drydock'/'connection-index.md'
+            context=root/'00-drydock'/'ai-context.md'
+            entity_index.write_text('existing entity index\n',encoding='utf-8')
+            connection_index.write_text('existing connection index\n',encoding='utf-8')
+            context.write_text('existing context\n',encoding='utf-8')
+            with self.assertRaisesRegex(SystemExit,'target missing-faction does not exist'):
+                standalone.build_indexes(root)
+            self.assertEqual(entity_index.read_text(encoding='utf-8'),'existing entity index\n')
+            self.assertEqual(connection_index.read_text(encoding='utf-8'),'existing connection index\n')
+            with self.assertRaisesRegex(SystemExit,'target missing-faction does not exist'):
+                main(['context',str(root)])
+            self.assertEqual(entity_index.read_text(encoding='utf-8'),'existing entity index\n')
+            self.assertEqual(connection_index.read_text(encoding='utf-8'),'existing connection index\n')
+            self.assertEqual(context.read_text(encoding='utf-8'),'existing context\n')
+
+    def test_context_unknown_focus_does_not_mutate_generated_files(self):
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+            create_entity(root,'npc','npc-ripley','Ripley')
+            standalone.build_indexes(root)
+            entity_index=root/'00-drydock'/'entity-index.md'
+            connection_index=root/'00-drydock'/'connection-index.md'
+            context=root/'00-drydock'/'ai-context.md'
+            before=(entity_index.read_bytes(),connection_index.read_bytes(),context.read_bytes())
+            with self.assertRaisesRegex(SystemExit,'Unknown entity ID'):
+                main(['context',str(root),'--focus','missing-id'])
+            after=(entity_index.read_bytes(),connection_index.read_bytes(),context.read_bytes())
+            self.assertEqual(after,before)
+
     def test_context_rejects_invalid_retrieval_limits(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
@@ -498,8 +537,21 @@ class GeneratorTest(unittest.TestCase):
             output=StringIO()
             with redirect_stdout(output):
                 self.assertEqual(standalone.validate_campaign(root),1)
-            self.assertIn('connections.states must be a non-empty string list',output.getvalue())
+            self.assertIn('connections.states must be a non-empty list of unique kebab-case strings',output.getvalue())
             self.assertIn('connections.relationships must map',output.getvalue())
+
+    def test_validation_rejects_unusable_or_duplicate_connection_states(self):
+        for states in (["not usable"],["current","current"]):
+            with self.subTest(states=states), TemporaryDirectory() as tmp:
+                root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
+                adapter_path=root/'00-drydock'/'adapter.json'
+                adapter=json.loads(adapter_path.read_text(encoding='utf-8'))
+                adapter['connections']['states']=states
+                adapter_path.write_text(json.dumps(adapter),encoding='utf-8')
+                output=StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(standalone.validate_campaign(root),1)
+                self.assertIn('unique kebab-case strings',output.getvalue())
 
     def test_connection_validation_and_legacy_audit_are_non_destructive(self):
         with TemporaryDirectory() as tmp:

@@ -10,7 +10,8 @@ from .core.validation import validate_campaign
 from .core.context import build_context
 from .standalone import (
     audit_connections, build_indexes, create_entity, print_entities,
-    print_backlinks, print_entity, print_history, print_related,
+    print_backlinks, print_entity, print_history, print_related, related_entities,
+    validate_graph,
 )
 
 
@@ -120,6 +121,10 @@ def main(argv=None) -> int:
     if args.command == "validate":
         return validate_campaign(args.path)
     if args.command == "context":
+        if args.focus:
+            related_entities(args.path, args.focus, args.depth)
+        else:
+            validate_graph(args.path)
         build_indexes(args.path)
         build_context(args.path, focus=args.focus, depth=args.depth,
                       max_records=args.max_records)

@@ -130,11 +130,91 @@ def _graph(root: Path) -> tuple[dict[str, Entity], list[Connection], list[str]]:
     return entities, connections, errors
 
 
+def _connection_rules(adapter_config: dict) -> tuple[set[str], dict, list[str]]:
+    errors: list[str] = []
+    connection_config = adapter_config.get("connections", {})
+    if not isinstance(connection_config, dict):
+        errors.append("00-drydock/adapter.json: connections must be an object")
+        connection_config = {}
+    configured_states = connection_config.get(
+        "states", sorted(VALID_CONNECTION_STATES)
+    )
+    if (
+        not isinstance(configured_states, list)
+        or not configured_states
+        or any(
+            not isinstance(value, str) or not ID_PATTERN.fullmatch(value)
+            for value in configured_states
+        )
+        or len(set(configured_states)) != len(configured_states)
+    ):
+        errors.append(
+            "00-drydock/adapter.json: connections.states must be a non-empty "
+            "list of unique kebab-case strings"
+        )
+        configured_states = sorted(VALID_CONNECTION_STATES)
+    vocabulary = connection_config.get("relationships", {})
+    if (
+        not isinstance(vocabulary, dict)
+        or any(
+            not isinstance(name, str)
+            or not ID_PATTERN.fullmatch(name)
+            or not isinstance(rule, dict)
+            for name, rule in (
+                vocabulary.items() if isinstance(vocabulary, dict) else []
+            )
+        )
+    ):
+        errors.append(
+            "00-drydock/adapter.json: connections.relationships must map "
+            "kebab-case names to objects"
+        )
+        vocabulary = {}
+    return set(configured_states), vocabulary, errors
+
+
+def _fatal_connection_errors(
+    entities: dict[str, Entity], connections: list[Connection], states: set[str]
+) -> list[str]:
+    errors: list[str] = []
+    for connection in connections:
+        target = entities.get(connection.target_id)
+        source = entities.get(connection.source_id)
+        location = f"{connection.path}:{connection.line}"
+        if target is None:
+            errors.append(
+                f"{location}: connection target {connection.target_id} does not exist"
+            )
+            continue
+        if connection.state not in states:
+            errors.append(f"{location}: invalid connection state {connection.state}")
+        if source and source.visibility == "players" and target.visibility == "warden":
+            errors.append(
+                f"{location}: player-visible connection exposes Warden-only target "
+                f"{target.entity_id}"
+            )
+    return errors
+
+
 def _graph_or_exit(root: Path) -> tuple[dict[str, Entity], list[Connection]]:
     entities, connections, errors = _graph(root)
+    try:
+        adapter_config = _adapter_config(root)
+        if not isinstance(adapter_config, dict):
+            errors.append("00-drydock/adapter.json: root must be an object")
+            adapter_config = {}
+        states, _, rule_errors = _connection_rules(adapter_config)
+        errors.extend(rule_errors)
+        errors.extend(_fatal_connection_errors(entities, connections, states))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"Invalid 00-drydock/adapter.json: {exc}")
     if errors:
         raise SystemExit("Cannot build relationship data:\n" + "\n".join(errors))
     return entities, connections
+
+
+def validate_graph(root: Path) -> None:
+    _graph_or_exit(root.resolve())
 
 
 def frontmatter(text: str) -> dict[str, str]:
@@ -240,41 +320,8 @@ def validate_campaign(root: Path) -> int:
             errors.append(".drydock.json: adapter_version does not match adapter.json")
         if lock and adapter_version != lock.get("adapter_version"):
             errors.append(".drydock-lock.json: adapter_version does not match adapter.json")
-        connection_config = adapter_config.get("connections", {})
-        if not isinstance(connection_config, dict):
-            errors.append("00-drydock/adapter.json: connections must be an object")
-            connection_config = {}
-        configured_states = connection_config.get(
-            "states", sorted(VALID_CONNECTION_STATES)
-        )
-        if (
-            not isinstance(configured_states, list)
-            or not configured_states
-            or any(not isinstance(value, str) or not value for value in configured_states)
-        ):
-            errors.append(
-                "00-drydock/adapter.json: connections.states must be a "
-                "non-empty string list"
-            )
-            configured_states = sorted(VALID_CONNECTION_STATES)
-        states = set(configured_states)
-        vocabulary = connection_config.get("relationships", {})
-        if (
-            not isinstance(vocabulary, dict)
-            or any(
-                not isinstance(name, str)
-                or not ID_PATTERN.fullmatch(name)
-                or not isinstance(rule, dict)
-                for name, rule in (
-                    vocabulary.items() if isinstance(vocabulary, dict) else []
-                )
-            )
-        ):
-            errors.append(
-                "00-drydock/adapter.json: connections.relationships must map "
-                "kebab-case names to objects"
-            )
-            vocabulary = {}
+        states, vocabulary, connection_rule_errors = _connection_rules(adapter_config)
+        errors.extend(connection_rule_errors)
         validation_rules = adapter_config.get("validation", {})
         if not isinstance(validation_rules, dict):
             errors.append("00-drydock/adapter.json: validation must be an object")
@@ -474,16 +521,13 @@ def validate_campaign(root: Path) -> int:
 
     entities, connections, connection_errors = _graph(root)
     errors.extend(connection_errors)
+    errors.extend(_fatal_connection_errors(entities, connections, states))
     seen_edges: set[tuple[str, str, str, str]] = set()
     for connection in connections:
         target = entities.get(connection.target_id)
-        source = entities.get(connection.source_id)
         location = f"{connection.path}:{connection.line}"
         if target is None:
-            errors.append(f"{location}: connection target {connection.target_id} does not exist")
             continue
-        if connection.state not in states:
-            errors.append(f"{location}: invalid connection state {connection.state}")
         if connection.source_id == connection.target_id:
             warnings.append(f"{location}: self-connection")
         edge = (connection.source_id, connection.target_id, connection.relationship, connection.state)
@@ -492,8 +536,6 @@ def validate_campaign(root: Path) -> int:
         seen_edges.add(edge)
         if isinstance(vocabulary, dict) and connection.relationship not in vocabulary:
             warnings.append(f"{location}: unknown relationship {connection.relationship}")
-        if source and source.visibility == "players" and target.visibility == "warden":
-            errors.append(f"{location}: player-visible connection exposes Warden-only target {target.entity_id}")
         if len(connection.context) > 200:
             warnings.append(f"{location}: connection context exceeds 200 characters")
 
@@ -620,6 +662,9 @@ def build_context(root: Path, *, focus: str | None = None, depth: int = 1,
     if max_records <= 0:
         raise SystemExit("Maximum records must be greater than zero")
     root = root.resolve()
+    entities = related_entities(root, focus, depth) if focus else []
+    if not focus:
+        _graph_or_exit(root)
     output = root / "00-drydock" / "ai-context.md"
     sources = [
         root / "00-drydock" / "current-state.md",
@@ -649,7 +694,6 @@ def build_context(root: Path, *, focus: str | None = None, depth: int = 1,
         else "No approved session log recorded.",
         "",
     ]
-    entities = related_entities(root, focus, depth) if focus else []
     included = entities[:max_records]
     if included:
         parts += ["## Focused Records", ""]
@@ -766,6 +810,10 @@ def main(argv: list[str] | None = None, *, root: Path | None = None) -> int:
     if args.command == "validate":
         return validate_campaign(campaign_root)
     if args.command == "context":
+        if args.focus:
+            related_entities(campaign_root, args.focus, args.depth)
+        else:
+            _graph_or_exit(campaign_root.resolve())
         build_indexes(campaign_root)
         build_context(campaign_root, focus=args.focus, depth=args.depth,
                       max_records=args.max_records)
