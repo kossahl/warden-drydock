@@ -42,6 +42,18 @@ def file_tree(root: Path) -> dict[str, bytes]:
 
 
 class AgentAscendryReleasePinTests(unittest.TestCase):
+    def test_capture_wrapper_is_checked_out_with_release_compatible_line_endings(self):
+        wrapper = ".codex/hooks/agent_ascendry_capture.py"
+        attributes = subprocess.run(
+            ["git", "check-attr", "eol", "--", wrapper],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(attributes.stdout.strip(), f"{wrapper}: eol: lf")
+        self.assertNotIn(b"\r\n", (ROOT / wrapper).read_bytes())
+
     def test_integration_document_matches_the_immutable_release_pin(self):
         documentation = (ROOT / "docs/agent-ascendry-integration.md").read_text(
             encoding="utf-8"
