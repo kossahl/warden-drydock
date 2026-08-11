@@ -58,6 +58,19 @@ failure, risk, blocker, or user decision exists.
   alternatives, evidence, and ordered implementation or verification needs.
 - `product_strategist`: provide evidenced user value, explicit non-goals, and any
   open product decision before handing work to architecture.
+- `product_designer`: identify the design artifacts or decisions, evidence the
+  information architecture, flows, UI states, responsive behavior, and
+  accessibility acceptance, and disclose any unresolved product or architecture
+  decision instead of expanding scope.
+- `hosted_backend_implementer`: identify changed files and achieved service
+  behavior, API, schema, and migration impact, actual verification, deviations,
+  risks, and the next owner. Escalate unresolved authority, tenancy, security,
+  persistence, or provider choices rather than inventing a contract.
+- `web_frontend_implementer`: identify changed UI files and achieved behavior,
+  verification against the approved UX and API contracts, responsive and
+  accessibility results, deviations, risks, and the next owner. Treat missing
+  backend, authentication, canon, or adapter contracts as decisions, not fields
+  to invent in the frontend.
 - `docs_maintainer`: identify changed documents, verify claims against shipped
   behavior, and disclose discrepancies or required publication decisions.
 - `agent_curator`: cite repeated or otherwise sufficient evidence, propose the

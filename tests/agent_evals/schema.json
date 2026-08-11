@@ -24,9 +24,12 @@
         "architect",
         "core_implementer",
         "docs_maintainer",
+        "hosted_backend_implementer",
+        "product_designer",
         "product_strategist",
         "reviewer",
-        "test_engineer"
+        "test_engineer",
+        "web_frontend_implementer"
       ]
     },
     "caseMetadata": {

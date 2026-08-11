@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a reproducible problem using public-safe technical details.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is public. Do not include campaign content, personal data, credentials, private logs, or vulnerability details. Report security issues through the private process in SECURITY.md.
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Smallest public-safe reproduction
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Validation or diagnostic output
+      description: Remove local private paths, campaign text, tokens, and credentials.
+    validations:
+      required: false
+  - type: checkboxes
+    id: public_safety
+    attributes:
+      label: Public-safety confirmation
+      options:
+        - label: This report contains no secrets, personal data, campaign content, or unremediated vulnerability details.
+          required: true

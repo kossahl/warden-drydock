@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose a user problem and bounded outcome without publishing private campaign data.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the general product need using synthetic or sanitized examples only.
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Suggested non-goals
+    validations:
+      required: false
+  - type: checkboxes
+    id: public_safety
+    attributes:
+      label: Public-safety confirmation
+      options:
+        - label: This request uses only public-safe, sanitized examples.
+          required: true

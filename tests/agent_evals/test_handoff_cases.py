@@ -15,9 +15,12 @@ REQUIRED_AGENTS = {
     "architect",
     "core_implementer",
     "docs_maintainer",
+    "hosted_backend_implementer",
+    "product_designer",
     "product_strategist",
     "reviewer",
     "test_engineer",
+    "web_frontend_implementer",
 }
 REQUIRED_SCENARIO_TAGS = {
     "failed_verification",
@@ -30,6 +33,11 @@ REQUIRED_SCENARIO_TAGS = {
     "user_decision",
 }
 PRIVACY_FORBIDDEN_CONTENT = {"campaign_canon", "raw_transcript", "secret"}
+HOSTED_AGENTS = {
+    "hosted_backend_implementer",
+    "product_designer",
+    "web_frontend_implementer",
+}
 
 
 def load_json(path):
@@ -119,9 +127,26 @@ class HandoffFixtureTests(unittest.TestCase):
             "architect": {"affected_invariants", "alternatives"},
             "core_implementer": {"changed_files", "verification"},
             "docs_maintainer": {"changed_files", "verification"},
+            "hosted_backend_implementer": {
+                "affected_invariants",
+                "changed_files",
+                "migration_follow_up",
+                "verification",
+            },
+            "product_designer": {
+                "affected_invariants",
+                "evidence",
+                "open_decision",
+                "verification",
+            },
             "product_strategist": {"non_goals", "open_decision"},
             "reviewer": {"file_reference", "reproduction", "severity"},
             "test_engineer": {"failure", "verification"},
+            "web_frontend_implementer": {
+                "changed_files",
+                "open_decision",
+                "verification",
+            },
         }
         for agent, required in required_by_agent.items():
             represented = {
@@ -131,6 +156,41 @@ class HandoffFixtureTests(unittest.TestCase):
                 for concept in case["expected"]["required_concepts"]
             }
             self.assertLessEqual(required, represented, agent)
+
+    def test_hosted_roles_cover_complete_and_incomplete_handoffs(self):
+        for agent in HOSTED_AGENTS:
+            cases = [case for case in self.cases if case["agent"] == agent]
+            with self.subTest(agent=agent):
+                self.assertEqual(2, len(cases))
+                self.assertEqual(
+                    {"complete", "incomplete"},
+                    {case["expected"]["verdict"] for case in cases},
+                )
+
+    def test_ambiguous_hosted_packets_model_decision_required(self):
+        cases = {
+            case["case_id"]: case
+            for case in self.cases
+            if case["agent"] in HOSTED_AGENTS
+        }
+        complete = cases["handoff-product-designer-complete-open-decision"]
+        self.assertEqual(
+            "DECISION REQUIRED", complete["handoff"].splitlines()[0].strip()
+        )
+
+        incomplete_ids = {
+            "handoff-hosted-backend-incomplete-assumed-tenancy",
+            "handoff-product-designer-incomplete-scope-assumption",
+            "handoff-web-frontend-incomplete-invented-api",
+        }
+        for case_id in incomplete_ids:
+            case = cases[case_id]
+            with self.subTest(case_id=case_id):
+                self.assertEqual("incomplete", case["expected"]["verdict"])
+                self.assertNotEqual(
+                    "DECISION REQUIRED", case["handoff"].splitlines()[0].strip()
+                )
+                self.assertIn("DECISION REQUIRED", case["expected"]["rationale"])
 
 
 if __name__ == "__main__":

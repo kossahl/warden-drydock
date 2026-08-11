@@ -1,0 +1,57 @@
+name: Decision required
+description: Request a material product, architecture, security, or ownership decision.
+title: "[Decision]: "
+labels:
+  - type:decision
+  - status:needs-decision
+  - public-safe
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Stop affected implementation until this decision is recorded. Keep all content safe for the public repository.
+  - type: input
+    id: source
+    attributes:
+      label: Work package and pinned commit
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Material question
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Affected behavior, interfaces, data, or ownership
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Viable options and tradeoffs
+      description: Give two or three real options.
+    validations:
+      required: true
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Recommendation and consequences
+    validations:
+      required: true
+  - type: textarea
+    id: safe_progress
+    attributes:
+      label: Work that can safely continue
+      description: Write "None" if all work must pause.
+    validations:
+      required: true
+  - type: textarea
+    id: durable_record
+    attributes:
+      label: Durable record required after decision
+      description: Name the ADR, product decision, contract, or work-package update that must be changed before resuming.
+    validations:
+      required: true

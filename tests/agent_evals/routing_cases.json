@@ -64,6 +64,66 @@
       }
     },
     {
+      "case_id": "routing-architect-003",
+      "prompt": "Define the hosted tenancy, authorization, revision, and rollback boundaries before any API implementation begins.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["architect"],
+        "forbidden_agents": ["hosted_backend_implementer"],
+        "sequence": null,
+        "rationale": "Unsettled cross-cutting authority and compatibility boundaries require architecture before hosted backend implementation."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["architecture", "boundary", "hosted"]
+      }
+    },
+    {
+      "case_id": "routing-architect-004",
+      "prompt": "Compare two cross-cutting browser and service architectures for offline conflicts; do not design screens or write the service.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["architect"],
+        "forbidden_agents": ["hosted_backend_implementer", "product_designer"],
+        "sequence": null,
+        "rationale": "An unresolved cross-boundary architecture choice precedes both product design detail and backend implementation."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["architecture", "boundary", "hosted"]
+      }
+    },
+    {
+      "case_id": "routing-backend-001",
+      "prompt": "Implement the approved hosted API operation, persistence transaction, revision check, and audit event without exposing generic filesystem access.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["hosted_backend_implementer"],
+        "forbidden_agents": ["architect", "core_implementer"],
+        "sequence": null,
+        "rationale": "The service contract and architecture are settled, so scoped hosted API and persistence implementation belongs to the backend implementer."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["backend", "hosted", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-backend-002",
+      "prompt": "Add the specified server-side retrieval and provider orchestration path using the approved authorization and snapshot contracts.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["hosted_backend_implementer"],
+        "forbidden_agents": ["product_designer", "web_frontend_implementer"],
+        "sequence": null,
+        "rationale": "Approved server-side retrieval, authorization, and provider integration are hosted backend implementation rather than UX or frontend work."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["backend", "hosted", "positive"]
+      }
+    },
+    {
       "case_id": "routing-core-001",
       "prompt": "Implement an already-approved deterministic validation rule in the system-agnostic core.",
       "expected": {
@@ -91,6 +151,21 @@
       "metadata": {
         "source": "synthetic",
         "tags": ["core", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-core-003",
+      "prompt": "Implement a settled system-agnostic validator used by the CLI and standalone runtime; do not add hosted service or browser behavior.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["core_implementer"],
+        "forbidden_agents": ["hosted_backend_implementer", "web_frontend_implementer"],
+        "sequence": null,
+        "rationale": "Generic deterministic engine behavior stays with core rather than either hosted delivery surface."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["boundary", "core", "hosted"]
       }
     },
     {
@@ -124,6 +199,51 @@
       }
     },
     {
+      "case_id": "routing-design-001",
+      "prompt": "Turn the approved campaign-workspace brief into information architecture, responsive flows, wireframes, UI states, and accessibility acceptance criteria without writing production code.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["product_designer"],
+        "forbidden_agents": ["product_strategist", "web_frontend_implementer"],
+        "sequence": null,
+        "rationale": "Settled product scope now needs implementation-ready browser UX design, not roadmap shaping or production frontend code."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["design", "hosted", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-design-002",
+      "prompt": "Specify empty, loading, error, conflict, and success states for the approved revision workflow and verify keyboard and small-screen behavior.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["product_designer"],
+        "forbidden_agents": ["architect", "web_frontend_implementer"],
+        "sequence": null,
+        "rationale": "Detailed interaction states and accessibility acceptance are product design work before frontend implementation."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["accessibility", "design", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-design-003",
+      "prompt": "Produce implementation-ready wireframes for an approved API and product brief; stop before changing the production web application.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["product_designer"],
+        "forbidden_agents": ["web_frontend_implementer"],
+        "sequence": null,
+        "rationale": "The requested artifact is UX design, while production UI code is explicitly out of scope."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["boundary", "design", "hosted"]
+      }
+    },
+    {
       "case_id": "routing-docs-001",
       "prompt": "The verified CLI behavior has shipped; update the user guide and check every example command.",
       "expected": {
@@ -154,12 +274,42 @@
       }
     },
     {
+      "case_id": "routing-frontend-001",
+      "prompt": "Implement the approved responsive campaign dashboard against the existing UX specification and typed API contract, including loading and error states.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["web_frontend_implementer"],
+        "forbidden_agents": ["hosted_backend_implementer", "product_designer"],
+        "sequence": null,
+        "rationale": "Approved UX and API contracts make this scoped production browser implementation rather than design or service work."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["frontend", "hosted", "positive"]
+      }
+    },
+    {
+      "case_id": "routing-frontend-002",
+      "prompt": "Build the specified accessible revision-conflict UI and client state transitions without inventing backend fields or authorization rules.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["web_frontend_implementer"],
+        "forbidden_agents": ["architect", "core_implementer"],
+        "sequence": null,
+        "rationale": "The browser behavior is settled and belongs to frontend implementation; backend and architectural contracts remain unchanged."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["accessibility", "frontend", "positive"]
+      }
+    },
+    {
       "case_id": "routing-parent-001",
       "prompt": "Summarize the current task status in two sentences without inspecting or changing files.",
       "expected": {
         "delegation": "forbidden",
         "valid_agents": [],
-        "forbidden_agents": ["adapter_specialist", "agent_curator", "architect", "core_implementer", "docs_maintainer", "product_strategist", "reviewer", "test_engineer"],
+        "forbidden_agents": ["adapter_specialist", "agent_curator", "architect", "core_implementer", "docs_maintainer", "hosted_backend_implementer", "product_designer", "product_strategist", "reviewer", "test_engineer", "web_frontend_implementer"],
         "sequence": null,
         "rationale": "A simple status response should be answered directly by the parent without delegation overhead."
       },
@@ -174,7 +324,7 @@
       "expected": {
         "delegation": "forbidden",
         "valid_agents": [],
-        "forbidden_agents": ["adapter_specialist", "agent_curator", "architect", "core_implementer", "docs_maintainer", "product_strategist", "reviewer", "test_engineer"],
+        "forbidden_agents": ["adapter_specialist", "agent_curator", "architect", "core_implementer", "docs_maintainer", "hosted_backend_implementer", "product_designer", "product_strategist", "reviewer", "test_engineer", "web_frontend_implementer"],
         "sequence": null,
         "rationale": "A clarification about the conversation needs no specialist agent."
       },
@@ -185,11 +335,11 @@
     },
     {
       "case_id": "routing-parent-003",
-      "prompt": "List the eight configured development-agent names already provided in this conversation.",
+      "prompt": "List the eleven configured development-agent names already provided in this conversation.",
       "expected": {
         "delegation": "forbidden",
         "valid_agents": [],
-        "forbidden_agents": ["adapter_specialist", "agent_curator", "architect", "core_implementer", "docs_maintainer", "product_strategist", "reviewer", "test_engineer"],
+        "forbidden_agents": ["adapter_specialist", "agent_curator", "architect", "core_implementer", "docs_maintainer", "hosted_backend_implementer", "product_designer", "product_strategist", "reviewer", "test_engineer", "web_frontend_implementer"],
         "sequence": null,
         "rationale": "Restating available conversation context is a direct parent responsibility."
       },
@@ -271,6 +421,21 @@
       "metadata": {
         "source": "synthetic",
         "tags": ["agent_evolution", "multi_stage", "sequence"]
+      }
+    },
+    {
+      "case_id": "routing-sequence-004",
+      "prompt": "Shape a hosted campaign workspace, design its browser experience, settle cross-cutting architecture, implement the service and web UI, then independently review the integrated result.",
+      "expected": {
+        "delegation": "required",
+        "valid_agents": ["architect", "hosted_backend_implementer", "product_designer", "product_strategist", "reviewer", "web_frontend_implementer"],
+        "forbidden_agents": ["core_implementer"],
+        "sequence": ["product_strategist", "product_designer", "architect", "hosted_backend_implementer", "web_frontend_implementer", "reviewer"],
+        "rationale": "Product scope precedes UX and architecture; the v1 flat sequence serializes the two implementation slices before independent integrated review."
+      },
+      "metadata": {
+        "source": "synthetic",
+        "tags": ["hosted", "multi_stage", "sequence"]
       }
     },
     {

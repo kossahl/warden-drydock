@@ -12,9 +12,17 @@ KNOWN_AGENTS = {
     "architect",
     "core_implementer",
     "docs_maintainer",
+    "hosted_backend_implementer",
+    "product_designer",
     "product_strategist",
     "reviewer",
     "test_engineer",
+    "web_frontend_implementer",
+}
+HOSTED_AGENTS = {
+    "hosted_backend_implementer",
+    "product_designer",
+    "web_frontend_implementer",
 }
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 TAG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -131,6 +139,42 @@ class RoutingCasesTest(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(parent_only), 3)
         self.assertGreaterEqual(len(multistage), 3)
+
+    def test_hosted_roles_have_positive_and_boundary_cases(self):
+        for agent in HOSTED_AGENTS:
+            positive = [
+                case
+                for case in self.cases
+                if agent in case["expected"]["valid_agents"]
+                and "positive" in case["metadata"].get("tags", [])
+            ]
+            boundary = [
+                case
+                for case in self.cases
+                if agent in case["expected"]["forbidden_agents"]
+                and "boundary" in case["metadata"].get("tags", [])
+            ]
+            with self.subTest(agent=agent):
+                self.assertTrue(positive)
+                self.assertTrue(boundary)
+
+    def test_hosted_multistage_sequence_preserves_role_order(self):
+        case = next(
+            case
+            for case in self.cases
+            if case["case_id"] == "routing-sequence-004"
+        )
+        self.assertEqual(
+            [
+                "product_strategist",
+                "product_designer",
+                "architect",
+                "hosted_backend_implementer",
+                "web_frontend_implementer",
+                "reviewer",
+            ],
+            case["expected"]["sequence"],
+        )
 
     def test_fixture_does_not_claim_live_routing_results(self):
         serialized = json.dumps(self.dataset).lower()
