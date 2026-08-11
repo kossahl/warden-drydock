@@ -3,7 +3,7 @@
 Warden Drydock opts into Agent Ascendry through `.agent-ascendry.yaml` and a
 Codex `Stop` hook. The original G2 parity review established that shared event,
 audit, proposal, and approval fixtures produced identical results and that all
-existing agents remained byte-identical. The published v0.1.0 release has
+existing agents remained byte-identical. The published v0.1.1 release has
 passed the same wheel-only Drydock integration checks. The superseded generic
 local capture and audit implementation was therefore removed. Drydock's
 curator, skills, durable evolution memory, and evaluation datasets remain
@@ -11,23 +11,23 @@ local.
 
 ## Published artifact
 
-Install the immutable [Agent Ascendry v0.1.0 release](https://github.com/kossahl/agent-ascendry/releases/tag/v0.1.0)
+Install the immutable [Agent Ascendry v0.1.1 release](https://github.com/kossahl/agent-ascendry/releases/tag/v0.1.1)
 from its wheel, never from an Agent Ascendry source checkout:
 
 ```text
-agent_ascendry-0.1.0-py3-none-any.whl
-https://github.com/kossahl/agent-ascendry/releases/download/v0.1.0/agent_ascendry-0.1.0-py3-none-any.whl
-SHA-256 3b4efdc3416d48a7dc5892d35fe8d55dfd3d27afdc2da4aaef161ce121726a73
-source commit ed383bae871e15d28ab69bb60b0cfcc7e3a5296b (annotated tag v0.1.0)
+agent_ascendry-0.1.1-py3-none-any.whl
+https://github.com/kossahl/agent-ascendry/releases/download/v0.1.1/agent_ascendry-0.1.1-py3-none-any.whl
+SHA-256 f1aa85454a8cf115457c217511c354dfdd18dc0fb82b101266bba31c68103050
+source commit c18f85654bee64e1683564710783e2f01f27e5a3 (annotated tag v0.1.1)
 ```
 
 Download the release wheel, verify its digest, and only then install it:
 
 ```powershell
-$url = "https://github.com/kossahl/agent-ascendry/releases/download/v0.1.0/agent_ascendry-0.1.0-py3-none-any.whl"
-$expected = "3b4efdc3416d48a7dc5892d35fe8d55dfd3d27afdc2da4aaef161ce121726a73"
+$url = "https://github.com/kossahl/agent-ascendry/releases/download/v0.1.1/agent_ascendry-0.1.1-py3-none-any.whl"
+$expected = "f1aa85454a8cf115457c217511c354dfdd18dc0fb82b101266bba31c68103050"
 $temporary = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ("agent-ascendry-" + [guid]::NewGuid()))
-$wheel = Join-Path $temporary "agent_ascendry-0.1.0-py3-none-any.whl"
+$wheel = Join-Path $temporary "agent_ascendry-0.1.1-py3-none-any.whl"
 try {
     Invoke-WebRequest -Uri $url -OutFile $wheel
     $actual = (Get-FileHash -LiteralPath $wheel -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -80,7 +80,7 @@ does not download from the network. Point it at a local copy of the published
 wheel; the test enforces the public digest before installation:
 
 ```powershell
-$env:AGENT_ASCENDRY_WHEEL = (Resolve-Path path\to\agent_ascendry-0.1.0-py3-none-any.whl)
+$env:AGENT_ASCENDRY_WHEEL = (Resolve-Path path\to\agent_ascendry-0.1.1-py3-none-any.whl)
 python -m unittest tests.test_agent_ascendry_integration
 ```
 

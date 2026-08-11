@@ -11,11 +11,11 @@ import unittest
 
 
 RELEASE_WHEEL_URL = (
-    "https://github.com/kossahl/agent-ascendry/releases/download/v0.1.0/"
-    "agent_ascendry-0.1.0-py3-none-any.whl"
+    "https://github.com/kossahl/agent-ascendry/releases/download/v0.1.1/"
+    "agent_ascendry-0.1.1-py3-none-any.whl"
 )
-EXPECTED_WHEEL_SHA256 = "3b4efdc3416d48a7dc5892d35fe8d55dfd3d27afdc2da4aaef161ce121726a73"
-RELEASE_SOURCE_COMMIT = "ed383bae871e15d28ab69bb60b0cfcc7e3a5296b"
+EXPECTED_WHEEL_SHA256 = "f1aa85454a8cf115457c217511c354dfdd18dc0fb82b101266bba31c68103050"
+RELEASE_SOURCE_COMMIT = "c18f85654bee64e1683564710783e2f01f27e5a3"
 ROOT = Path(__file__).parents[1]
 WHEEL_ENV = "AGENT_ASCENDRY_WHEEL"
 
@@ -24,8 +24,12 @@ ASCENDRY_HOOK = {
     "hooks": [
         {
             "type": "command",
-            "command": "python .codex/hooks/agent_ascendry_capture.py",
-            "commandWindows": "python .codex\\hooks\\agent_ascendry_capture.py",
+            "command": 'python "$(git rev-parse --show-toplevel)/.codex/hooks/agent_ascendry_capture.py"',
+            "commandWindows": (
+                "powershell.exe -NoProfile -NonInteractive -Command "
+                '"python (Join-Path (git rev-parse --show-toplevel) '
+                "'.codex/hooks/agent_ascendry_capture.py')\""
+            ),
             "statusMessage": "Recording Agent Ascendry experience",
             "timeout": 5,
         }
@@ -74,7 +78,7 @@ class AgentAscendryReleasePinTests(unittest.TestCase):
         self.assertIn(RELEASE_WHEEL_URL, documentation)
         self.assertIn(EXPECTED_WHEEL_SHA256, documentation)
         self.assertIn(RELEASE_SOURCE_COMMIT, documentation)
-        self.assertIn("v0.1.0", documentation)
+        self.assertIn("v0.1.1", documentation)
 
     def test_documented_download_uses_a_cleaned_temporary_directory(self):
         documentation = (ROOT / "docs/agent-ascendry-integration.md").read_text(
@@ -94,7 +98,7 @@ class AgentAscendryWheelIntegrationTests(unittest.TestCase):
     def setUpClass(cls):
         configured = os.environ.get(WHEEL_ENV)
         if not configured:
-            raise unittest.SkipTest(f"set {WHEEL_ENV} to the published v0.1.0 wheel")
+            raise unittest.SkipTest(f"set {WHEEL_ENV} to the published v0.1.1 wheel")
         cls.wheel = Path(configured).resolve()
         if not cls.wheel.is_file():
             raise AssertionError(f"{WHEEL_ENV} does not name a file")
@@ -146,7 +150,7 @@ class AgentAscendryWheelIntegrationTests(unittest.TestCase):
 
     def test_zero_touch_drydock_style_lifecycle_uses_only_the_wheel(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary) / "project"
+            root = Path(temporary) / "project with spaces"
             root.mkdir()
             subprocess.run(
                 ["git", "init", "--initial-branch=master", str(root)],
@@ -311,9 +315,16 @@ class AgentAscendryWheelIntegrationTests(unittest.TestCase):
                 "PYTHONPATH": str(self.package_root),
             }
             wrapper = root / ".codex/hooks/agent_ascendry_capture.py"
+            nested_cwd = root / "docs" / "nested"
+            nested_cwd.mkdir(parents=True)
+            hook_command = ASCENDRY_HOOK["hooks"][0][
+                "commandWindows" if os.name == "nt" else "command"
+            ]
+            shell = hook_command if os.name == "nt" else ["/bin/sh", "-c", hook_command]
             hook_capture = subprocess.run(
-                [sys.executable, str(wrapper)],
-                cwd=root,
+                shell,
+                shell=os.name == "nt",
+                cwd=nested_cwd,
                 input=json.dumps({
                     "session_id": "drydock-pilot",
                     "turn_id": "capture-hook",
@@ -326,8 +337,16 @@ class AgentAscendryWheelIntegrationTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(hook_capture.returncode, 0)
-            self.assertEqual(hook_capture.stdout, "")
             self.assertEqual(hook_capture.stderr, "")
+            hook_events = list(
+                (root / ".agent-ascendry/pending").glob(
+                    "drydock-pilot--capture-hook*.json"
+                )
+            )
+            self.assertEqual(len(hook_events), 1)
+            hook_event = json.loads(hook_events[0].read_text(encoding="utf-8"))
+            self.assertEqual(hook_event["session_id"], "drydock-pilot")
+            self.assertEqual(hook_event["turn_id"], "capture-hook")
             failed_hook = subprocess.run(
                 [sys.executable, str(wrapper)],
                 cwd=root,

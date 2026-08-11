@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python .codex/hooks/agent_ascendry_capture.py",
-            "commandWindows": "python .codex\\hooks\\agent_ascendry_capture.py",
+            "command": "python \"$(git rev-parse --show-toplevel)/.codex/hooks/agent_ascendry_capture.py\"",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -Command \"python (Join-Path (git rev-parse --show-toplevel) '.codex/hooks/agent_ascendry_capture.py')\"",
             "statusMessage": "Recording Agent Ascendry experience",
             "timeout": 5
           }
