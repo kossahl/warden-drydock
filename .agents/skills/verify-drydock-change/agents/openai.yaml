@@ -1,0 +1,4 @@
+interface:
+  display_name: "Drydock Change Verification"
+  short_description: "Verify Drydock changes with concrete evidence"
+  default_prompt: "Use $verify-drydock-change to verify this change against its acceptance criteria and repository invariants."
