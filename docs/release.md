@@ -38,6 +38,8 @@ After the final PR merges, create the annotated release tag and install the
 exact pinned GitHub ref in a fresh environment. Verify the raw tagged
 `BOOTSTRAP.md`, reported version, bootstrap, standalone validation/context, and
 explicit separation of Git initialization before advertising the release.
+The tag workflow compares the tag name to the installed wheel metadata and
+checks the CLI version from outside the source checkout.
 
 ## Publish
 
