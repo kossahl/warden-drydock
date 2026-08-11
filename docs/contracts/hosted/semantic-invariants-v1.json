@@ -1,0 +1,19 @@
+{
+  "contract_name": "hosted_semantic_invariants",
+  "contract_version": 1,
+  "mandatory_with_json_schema": true,
+  "rules": [
+    {"id":"api_approval_binding","category":"proposal_approval_conflict","schema":"schemas/v1/api.schema.json"},
+    {"id":"api_idempotency_binding","category":"idempotency_digest_conflict","schema":"schemas/v1/api.schema.json"},
+    {"id":"proposal_exact_binding","category":"proposal_approval_conflict","schema":"schemas/v1/proposal.schema.json"},
+    {"id":"proposal_validation_gate","category":"proposal_validation_failure","schema":"schemas/v1/proposal.schema.json"},
+    {"id":"live_revision_pinning","category":"stale_revision","schema":"schemas/v1/live.schema.json"},
+    {"id":"live_device_replay","category":"device_replay_conflict","schema":"schemas/v1/live.schema.json"},
+    {"id":"live_end_barrier","category":"live_barrier_conflict","schema":"schemas/v1/live.schema.json"},
+    {"id":"snapshot_lineage_quarantine","category":"publication_intent_failure","schema":"schemas/v1/snapshot.schema.json"},
+    {"id":"provider_stream_order","category":"stream_sequence_conflict","schema":"schemas/v1/provider.schema.json"},
+    {"id":"provider_tool_binding","category":"capability_rejected","schema":"schemas/v1/provider.schema.json"},
+    {"id":"retrieval_determinism","category":"retrieval_consistency_failure","schema":"schemas/v1/retrieval.schema.json"},
+    {"id":"operations_reconciliation","category":"publication_intent_failure","schema":"schemas/v1/operations.schema.json"}
+  ]
+}

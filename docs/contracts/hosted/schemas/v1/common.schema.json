@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://warden-drydock.invalid/contracts/hosted/v1/common.schema.json",
+  "title": "Hosted contract common definitions v1",
+  "$defs": {
+    "public_id": {"type":"string","minLength":3,"maxLength":80,"pattern":"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
+    "digest": {"type":"string","pattern":"^[a-f0-9]{64}$"},
+    "safe_text": {"type":"string","maxLength":240,"pattern":"^[^\\r\\n\\\\/]*$"},
+    "authority": {"enum":["preparation","table_fact","canon","revealed"]},
+    "finding": {
+      "type":"object","required":["code","severity","stage","subject_id"],"additionalProperties":false,
+      "properties":{"code":{"type":"string","pattern":"^[a-z][a-z0-9_]+$","maxLength":80},"severity":{"enum":["info","warning","error"]},"stage":{"type":"string","pattern":"^[a-z][a-z0-9_]+$","maxLength":40},"subject_id":{"$ref":"#/$defs/public_id"},"message":{"$ref":"#/$defs/safe_text"}}
+    }
+  }
+}
