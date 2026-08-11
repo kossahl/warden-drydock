@@ -1,0 +1,1 @@
+"""Hosted pilot contract tests."""

@@ -20,7 +20,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["build>=1", "PyYAML>=6"]
+dev = ["build>=1", "PyYAML>=6", "jsonschema>=4.23"]
 
 [project.scripts]
 drydock = "warden_drydock.cli:main"

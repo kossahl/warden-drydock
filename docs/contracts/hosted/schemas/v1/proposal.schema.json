@@ -1,0 +1,22 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://warden-drydock.invalid/contracts/hosted/v1/proposal.schema.json",
+  "title":"Generated Draft and immutable Canon Proposal contracts v1",
+  "x-invariants":["proposal_exact_binding","proposal_validation_gate"],
+  "$defs":{
+    "id":{"type":"string","minLength":3,"maxLength":80,"pattern":"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
+    "digest":{"type":"string","pattern":"^[a-f0-9]{64}$"},
+    "change":{"type":"object","required":["change_id","subject_id","change_type","from_authority","to_authority","content_digest"],"additionalProperties":false,"properties":{"change_id":{"$ref":"#/$defs/id"},"subject_id":{"$ref":"#/$defs/id"},"change_type":{"enum":["add","remove","update","authority_transition"]},"from_authority":{"enum":["absent","preparation","table_fact","canon","revealed"]},"to_authority":{"enum":["absent","preparation","canon","revealed"]},"content_digest":{"$ref":"#/$defs/digest"}}},
+    "approval":{"type":"object","required":["proposal_id","proposal_version","diff_digest","base_revision","source_revision","expected_campaign_head","warden_confirmed"],"additionalProperties":false,"properties":{"proposal_id":{"$ref":"#/$defs/id"},"proposal_version":{"type":"integer","minimum":1},"diff_digest":{"$ref":"#/$defs/digest"},"base_revision":{"$ref":"#/$defs/id"},"source_revision":{"$ref":"#/$defs/id"},"expected_campaign_head":{"$ref":"#/$defs/id"},"warden_confirmed":{"const":true}}}
+  },
+  "type":"object",
+  "required":["contract_name","contract_version","draft","proposal","validation","approval_binding"],
+  "additionalProperties":false,
+  "properties":{
+    "contract_name":{"const":"canon_proposal"},"contract_version":{"const":1},
+    "draft":{"type":"object","required":["draft_id","authority","source_set_digest","content_digest"],"additionalProperties":false,"properties":{"draft_id":{"$ref":"#/$defs/id"},"authority":{"const":"draft"},"source_set_digest":{"$ref":"#/$defs/digest"},"content_digest":{"$ref":"#/$defs/digest"}}},
+    "proposal":{"type":"object","required":["proposal_id","proposal_version","status","campaign_id","base_revision","source_revision","diff_digest","changes"],"additionalProperties":false,"properties":{"proposal_id":{"$ref":"#/$defs/id"},"proposal_version":{"type":"integer","minimum":1},"status":{"enum":["draft","needs_review","rejected","conflict","approving","approved"]},"campaign_id":{"$ref":"#/$defs/id"},"base_revision":{"$ref":"#/$defs/id"},"source_revision":{"$ref":"#/$defs/id"},"diff_digest":{"$ref":"#/$defs/digest"},"changes":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/change"}},"correction_of_version":{"type":"integer","minimum":1},"rejection_code":{"type":"string","pattern":"^[a-z][a-z0-9_]+$"},"conflict_code":{"enum":["stale_head","validation_failed","diff_mismatch"]}}},
+    "validation":{"type":"object","required":["status","validation_digest","error_count"],"additionalProperties":false,"properties":{"status":{"enum":["pending","passed","failed"]},"validation_digest":{"$ref":"#/$defs/digest"},"error_count":{"type":"integer","minimum":0}}},
+    "approval_binding":{"oneOf":[{"type":"null"},{"$ref":"#/$defs/approval"}]}
+  }
+}
