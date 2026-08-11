@@ -117,3 +117,42 @@ Important information may have separate layers:
 ## Obsidian
 
 Obsidian is an optional viewer. The repository must remain usable in plain text editors, VS Code, Codex, Claude Code, and future tools. No essential information may live only in Obsidian configuration.
+
+## Local browser personal pilot
+
+The browser workspace is an additional primary interface over deterministic
+Drydock operations. It does not replace the standalone CLI or make a hosted
+runtime a dependency of campaign repositories.
+
+- The pilot serves one Warden and runs through Docker Compose bound only to
+  `localhost`.
+- The framework, API, and web frontend remain in one monorepo.
+- Immutable Markdown/frontmatter campaign snapshots are authoritative.
+  PostgreSQL stores workflow state, audit history, and rebuildable indexes.
+- Campaign creation uses the deterministic initializer. Supported ZIP import,
+  export, Git-history transfer, and directory synchronization are deferred.
+- Every live session is pinned to a `base_revision`. Retrieval uses that
+  revision plus explicitly captured table facts, never a moving head.
+- A table fact overrides contradictory preparation during its live session but
+  becomes durable canon only through an explicit reviewed proposal.
+- AI output always begins as a draft. Proposal approval authorizes the displayed
+  mutation; any promotion to canon must be visible in that mutation.
+- Retrieval is deterministic before provider generation. Embeddings are
+  deferred until measured misses establish a need.
+- The useful campaign workspace requires AI. Initial onboarding therefore gates
+  workspace access on provider configuration and explicit consent to transmit
+  the minimal retrieved campaign excerpts. Provider changes or material
+  data-handling changes require renewed consent.
+- The selected provider is chosen through a documented bake-off. Provider
+  secrets and workflow-only data never become campaign content.
+- The Campaign Atlas consists of the record library, a focused neighborhood
+  graph with an accessible text representation, and an approved-history
+  timeline with clearly separated non-canon overlays.
+- Offline table capture must distinguish local persistence from server sync and
+  synchronize idempotently without loss or duplication.
+
+Public registration, player access, remote hosting, collaboration, VTT, audio,
+billing, multiple game systems, autonomous game mastering, and automatic canon
+promotion are outside this milestone. Import and export are revisited after the
+personal pilot establishes the required package, authority, migration, and
+recovery behavior.
