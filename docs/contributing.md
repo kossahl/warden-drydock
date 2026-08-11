@@ -92,5 +92,4 @@ Before you mark a PR ready for review:
 
 Open an issue describing the observed behavior, the expected behavior, and
 the smallest reproduction you can provide. For security disclosures, follow
-the release-process guidance in `docs/release.md` rather than opening a public
-issue.
+[`SECURITY.md`](../SECURITY.md) and never open a public issue.

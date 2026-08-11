@@ -1,0 +1,105 @@
+name: Agent work package
+description: Define one public-safe, versioned unit of work before delegating it.
+title: "[Work package]: "
+labels:
+  - public-safe
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is public. Do not include campaign content, personal data, secrets, private logs, credentials, or exploitable security details.
+  - type: input
+    id: phase
+    attributes:
+      label: Phase and work-package ID
+      placeholder: "Phase 0 / GOV-AGENTS-001"
+    validations:
+      required: true
+  - type: input
+    id: package_version
+    attributes:
+      label: Work-package version
+      description: Positive integer. Increment it whenever scope, ownership, dependencies, acceptance, or verification changes.
+      placeholder: "1"
+    validations:
+      required: true
+  - type: input
+    id: owner
+    attributes:
+      label: Responsible agent and file ownership
+      description: Name the agent and the exact files or subsystems it may change.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem and desired outcome
+    validations:
+      required: true
+  - type: textarea
+    id: deliverables
+    attributes:
+      label: Concrete deliverables
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: In scope and non-goals
+    validations:
+      required: true
+  - type: textarea
+    id: authority
+    attributes:
+      label: Accepted decisions and authoritative references
+      description: Link accepted ADRs and repository documents. Comments do not override them.
+    validations:
+      required: true
+  - type: textarea
+    id: baseline
+    attributes:
+      label: Pinned baseline and dependencies
+      description: Include the base commit SHA, completed prerequisites, and dependent work packages.
+    validations:
+      required: true
+  - type: textarea
+    id: interfaces
+    attributes:
+      label: Public API, schema, and migration impact
+      description: State the approved contract or explicitly state that there is no public impact.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria and verification
+      description: Include observable criteria and exact required checks.
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks and recovery
+    validations:
+      required: true
+  - type: textarea
+    id: questions
+    attributes:
+      label: Open questions and documented defaults
+      description: Write "None" when no question remains. Defaults must be explicit before delegation.
+    validations:
+      required: true
+  - type: input
+    id: delivery
+    attributes:
+      label: Branch and pull-request target
+      placeholder: "codex/example -> master; draft PR"
+    validations:
+      required: true
+  - type: checkboxes
+    id: public_safety
+    attributes:
+      label: Public-safety confirmation
+      options:
+        - label: This work package contains only sanitized technical information suitable for a public repository.
+          required: true

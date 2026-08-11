@@ -40,7 +40,7 @@ invariants below, while a rubric or reviewer owns semantic judgments.
 - Forbidden delegation has no valid agents and no sequence.
 - Every agent in `sequence` also occurs in `valid_agents`.
 - Case IDs are unique within a dataset.
-- Agent names match the eight files under `.codex/agents/`.
+- Agent names match the eleven files under `.codex/agents/`.
 
 Example:
 
