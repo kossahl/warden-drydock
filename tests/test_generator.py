@@ -421,7 +421,7 @@ class GeneratorTest(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
             config=json.loads((root/'00-drydock/adapter.json').read_text(encoding='utf-8'))
-            self.assertEqual(config['adapter_version'],'0.2.0')
+            self.assertEqual(config['adapter_version'],'0.3.0')
             self.assertEqual(set(config['entity_types']),set(expected))
             forbidden=('strength:','speed:','intellect:','combat:','sanity:','fear:','body:','armor:','wounds:')
             for kind,destination in expected.items():

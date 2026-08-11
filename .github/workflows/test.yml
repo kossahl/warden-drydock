@@ -25,10 +25,17 @@ jobs:
           ONBOARDING_ROOT="$(mktemp -d)"
           CAMPAIGN="$ONBOARDING_ROOT/campaign"
           ENVIRONMENT="$ONBOARDING_ROOT/environment"
+          WHEEL="$(find "$PWD/dist" -maxdepth 1 -name '*.whl' -print -quit)"
+          test -n "$WHEEL"
           mkdir "$CAMPAIGN"
           python -m venv "$ENVIRONMENT"
-          "$ENVIRONMENT/bin/python" -m pip install .
-          test "$("$ENVIRONMENT/bin/python" -m warden_drydock --version)" = "Warden Drydock 0.2.0"
+          "$ENVIRONMENT/bin/python" -m pip install "$WHEEL"
+          cd "$ONBOARDING_ROOT"
+          INSTALLED_VERSION="$("$ENVIRONMENT/bin/python" -c 'from importlib.metadata import version; print(version("warden-drydock"))')"
+          test "$("$ENVIRONMENT/bin/python" -m warden_drydock --version)" = "Warden Drydock $INSTALLED_VERSION"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            test "${GITHUB_REF_NAME#v}" = "$INSTALLED_VERSION"
+          fi
           "$ENVIRONMENT/bin/python" -m warden_drydock bootstrap "$CAMPAIGN" --adapter mothership --name "CI Onboarding"
           "$ENVIRONMENT/bin/python" "$CAMPAIGN/scripts/drydock.py" validate
           test ! -d "$CAMPAIGN/.git"

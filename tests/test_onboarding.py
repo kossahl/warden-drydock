@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -10,12 +11,12 @@ class OnboardingContractTest(unittest.TestCase):
         contract = (ROOT / "BOOTSTRAP.md").read_text(encoding="utf-8")
         required = [
             "https://github.com/kossahl/warden-drydock",
-            "v0.2.0",
+            "v0.3.0",
             "Python 3.11",
             "temporary virtual environment",
-            "git+https://github.com/kossahl/warden-drydock.git@v0.2.0",
+            "git+https://github.com/kossahl/warden-drydock.git@v0.3.0",
             "python -m warden_drydock --version",
-            "Warden Drydock 0.2.0",
+            "Warden Drydock 0.3.0",
             "python -m warden_drydock bootstrap",
             "Confirm that it is empty",
             "do not initialize or commit Git",
@@ -31,6 +32,14 @@ class OnboardingContractTest(unittest.TestCase):
             with self.subTest(path=relative):
                 text = (ROOT / relative).read_text(encoding="utf-8")
                 self.assertIn("BOOTSTRAP.md", text)
+
+    def test_ci_verifies_built_distribution_version_without_release_literal(self):
+        workflow = (ROOT / ".github/workflows/test.yml").read_text(encoding="utf-8")
+        self.assertIn("importlib.metadata", workflow)
+        self.assertIn("$PWD/dist", workflow)
+        self.assertIn('cd "$ONBOARDING_ROOT"', workflow)
+        self.assertIn("GITHUB_REF_NAME#v", workflow)
+        self.assertIsNone(re.search(r"Warden Drydock \d+\.\d+\.\d+", workflow))
 
 
 if __name__ == "__main__":
