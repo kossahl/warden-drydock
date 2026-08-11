@@ -1,26 +1,67 @@
 name: test
 
-on:
-  push:
+"on":
   pull_request:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: >-
+    ${{ github.event_name == 'pull_request'
+        && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number)
+        || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
+    name: test (3.11)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check committed whitespace
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            git diff --check "$BASE_SHA...$HEAD_SHA"
+          elif [[ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+            git diff --check "$BEFORE_SHA" "$GITHUB_SHA"
+          elif git rev-parse --verify "$GITHUB_SHA^" >/dev/null 2>&1; then
+            git diff --check "$GITHUB_SHA^" "$GITHUB_SHA"
+          else
+            git diff-tree --check --root "$GITHUB_SHA"
+          fi
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-      - run: python -m pip install --upgrade pip build
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip ".[dev]"
       - run: python -m unittest discover -s tests -v
+      - name: Report optional Agent Ascendry integration coverage
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo "### Optional Agent Ascendry wheel integration"
+            echo
+            echo "The public wheel fixture is not supplied in CI, so the wheel-only Agent Ascendry integration tests are reported as skipped by unittest."
+            echo "No private artifact was downloaded and this workflow does not claim that integration coverage."
+          } >> "$GITHUB_STEP_SUMMARY"
       - run: python -m warden_drydock --help
       - run: python -m build
       - name: Smoke-test clean AI onboarding boundary
-        if: ${{ matrix.python-version == '3.11' }}
         run: |
           ONBOARDING_ROOT="$(mktemp -d)"
           CAMPAIGN="$ONBOARDING_ROOT/campaign"
@@ -39,3 +80,17 @@ jobs:
           "$ENVIRONMENT/bin/python" -m warden_drydock bootstrap "$CAMPAIGN" --adapter mothership --name "CI Onboarding"
           "$ENVIRONMENT/bin/python" "$CAMPAIGN/scripts/drydock.py" validate
           test ! -d "$CAMPAIGN/.git"
+
+  compatibility:
+    name: compatibility (3.13)
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade pip ".[dev]"
+      - run: python -m unittest discover -s tests -v
+      - run: python -m build

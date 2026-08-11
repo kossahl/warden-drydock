@@ -76,6 +76,23 @@ python -m unittest discover -s tests -v
 python -m warden_drydock --help
 ```
 
+## Continuous integration scope
+
+Every pull request runs one canonical Python 3.11 lane. That lane checks the
+committed change range for whitespace errors, runs the full unit suite and CLI
+help, builds the package, and installs the built wheel in a clean environment
+for the standalone onboarding smoke test. Pushes to `master` and version tags
+(`v*`) run the same canonical lane plus a Python 3.13 compatibility lane that
+exercises the unit and package-build boundaries. Feature-branch pushes do not
+start a second run alongside the pull-request run.
+
+CI establishes executable behavior and machine-checkable structure, schema,
+and references. Governance tests preserve those deterministic contracts, such
+as required fields and valid cross-references; they do not judge whether an ADR,
+product or UX decision is substantively correct, and they do not prove that an
+agent handoff is semantically complete. Maintainer approval and the applicable
+human or independent role review remain required for those judgments.
+
 ## Pull request checklist
 
 Before you mark a PR ready for review:
