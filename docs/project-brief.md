@@ -72,3 +72,32 @@ detected and require an explicit `--apply` flag.
 - Multiple fully implemented RPG adapters.
 - Automatic canon creation without Warden approval.
 - Cloud services operated by the project.
+
+## Next milestone: local browser personal pilot
+
+The next milestone adds a browser-based Warden workspace without replacing the
+released standalone campaign workflow. A single Warden runs the application
+through Docker Compose on `localhost`; ordinary campaign work after startup
+does not require Python, Git, Node, package managers, or terminal commands.
+
+The pilot covers deterministic campaign creation, a complete Campaign Atlas,
+AI-assisted preparation and canon-grounded live play, offline-safe table-fact
+capture, explicit proposal review, and immutable campaign revisions. The Atlas
+provides a filterable record library, focused relationship graph with a text
+fallback, and an approved-history timeline.
+
+AI is required for the useful product experience. Before entering a campaign
+workspace, the Warden must configure the supported provider and explicitly opt
+in to sending the minimal campaign excerpts selected by deterministic
+retrieval. Changing provider or materially changing data handling requires new
+consent. Removing the configuration returns the application to its setup gate.
+
+Campaign ZIP import and revision export are not part of this pilot. Existing
+campaign data may be transferred manually during development; a supported
+portable import/export workflow is deferred until pilot evidence justifies its
+authority, migration, and recovery requirements.
+
+The milestone protects the existing invariants: Markdown and frontmatter remain
+durable campaign data, deterministic Drydock operations perform mutations,
+the Warden gates canon, campaigns remain portable standalone artifacts, and
+the CLI workflow continues to work independently of the browser application.
