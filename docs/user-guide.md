@@ -24,7 +24,7 @@ Create a new Warden Drydock campaign in this directory.
 Use the Mothership adapter.
 Ask only for campaign-specific facts that cannot be inferred.
 Follow the complete bootstrap contract at
-https://github.com/kossahl/warden-drydock/blob/v0.2.0/BOOTSTRAP.md. Do not
+https://github.com/kossahl/warden-drydock/blob/v0.3.0/BOOTSTRAP.md. Do not
 invent campaign canon.
 ```
 

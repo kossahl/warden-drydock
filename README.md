@@ -31,7 +31,7 @@ In abbreviated form, the user asks:
 Create a new Warden Drydock campaign in this directory.
 Use the Mothership adapter.
 Ask me only for campaign-specific information that cannot be inferred.
-Follow https://github.com/kossahl/warden-drydock/blob/v0.2.0/BOOTSTRAP.md,
+Follow https://github.com/kossahl/warden-drydock/blob/v0.3.0/BOOTSTRAP.md,
 run the deterministic bootstrap command, initialize Git only after validation,
 and explain what was created.
 Do not invent campaign canon.
@@ -128,7 +128,9 @@ The continuation guide contains a ready-to-paste Codex prompt.
 
 ## MVP status
 
-Version `0.2.0` is the narrative-adapter MVP. It supports complete Mothership
+Version `0.3.0` adds relationship-aware retrieval to the narrative-adapter MVP.
+It supports typed connections, deterministic indexes, bounded focused context,
+legacy relationship audits, complete Mothership
 campaign inception, situation and mystery design, world-state maintenance,
 session preparation/debrief, safe player handouts, semantic validation,
 canon-safe context generation, and preview-first ownership-aware upgrades.
