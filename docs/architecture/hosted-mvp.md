@@ -139,7 +139,7 @@ provider work begins:
 
 ## Phase 3 work packages
 
-### P3-CONTRACTS v1 — Hosted backend contracts
+### P3-CONTRACTS v2 — Hosted backend contracts
 
 - **Responsible role:** backend contract implementer.
 - **Owned subsystem/files:** `docs/contracts/hosted/**` and
@@ -162,7 +162,7 @@ provider work begins:
 - **Responsible role:** core implementer.
 - **Owned subsystem/files:** `warden_drydock/hosted/engine/**` and
   `tests/hosted/engine/**`.
-- **Dependencies:** accepted P3-CONTRACTS v1.
+- **Dependencies:** accepted P3-CONTRACTS v2.
 - **Deliverables:** typed in-process facade for initialize, index, context,
   validate, retrieve, stage exact diff, and return findings; server-controlled
   workspace handles; CLI/standalone parity harness.
@@ -179,7 +179,7 @@ provider work begins:
 - **Responsible role:** backend storage implementer.
 - **Owned subsystem/files:** `warden_drydock/hosted/revisions/**`,
   `warden_drydock/hosted/projections/**`, and `tests/hosted/revisions/**`.
-- **Dependencies:** accepted P3-CONTRACTS v1 and completed P3-ENGINE v1.
+- **Dependencies:** accepted P3-CONTRACTS v2 and completed P3-ENGINE v1.
 - **Deliverables:** canonicalization and manifest implementation,
   content-addressed `SnapshotStore`, lineage/head CAS, creation and approval
   publication intents, orphan quarantine, PostgreSQL repositories, and rebuild.
@@ -197,7 +197,7 @@ provider work begins:
 - **Responsible role:** backend operations implementer.
 - **Owned subsystem/files:** `compose.yaml`, `docker/**`,
   `warden_drydock/hosted/ops/**`, and `tests/hosted/ops/**`.
-- **Dependencies:** accepted P3-CONTRACTS v1 and database/volume contracts from
+- **Dependencies:** accepted P3-CONTRACTS v2 and database/volume contracts from
   P3-REVISION v1.
 - **Deliverables:** two-service Compose topology, loopback-only publication,
   internal database, project-scoped unexposed `backend` and `egress` networks,
@@ -217,7 +217,7 @@ provider work begins:
   `web/.nvmrc`, `web/tsconfig*.json`, `web/vite.config.*`,
   `web/vitest.config.*`, `web/src/**` except later package-owned feature
   folders, `web/Dockerfile.build`, and `tests/browser/frontend/**`.
-- **Dependencies:** accepted P3-CONTRACTS v1.
+- **Dependencies:** accepted P3-CONTRACTS v2.
 - **Deliverables:** React/TypeScript/Vite SPA; exact Node LTS/npm pins; committed
   npm lockfile and `npm ci` workflow; separate `tsc --noEmit`; Vitest and
   real-browser suites; static serving/fallback; typed client; accessible Atlas
@@ -239,7 +239,7 @@ provider work begins:
 - **Responsible role:** backend implementer with test-engineer verification.
 - **Owned subsystem/files:** `warden_drydock/hosted/providers/**`,
   `tests/provider_eval/**`, and `docs/provider-eval/**`.
-- **Dependencies:** accepted P3-CONTRACTS v1 retrieval, provider, consent, and
+- **Dependencies:** accepted P3-CONTRACTS v2 retrieval, provider, consent, and
   stream contracts; authorization naming the exact model pair and spend cap.
 - **Deliverables:** provider-neutral adapter harness, fixed synthetic fixture,
   sanitized event capture, cost/latency/grounding measurements, completed result
@@ -257,7 +257,7 @@ provider work begins:
 - **Responsible role:** frontend implementer with test-engineer verification.
 - **Owned subsystem/files:** `web/src/device/**` and
   `tests/browser/device/**`.
-- **Dependencies:** accepted P3-CONTRACTS v1 device/live contracts and completed
+- **Dependencies:** accepted P3-CONTRACTS v2 device/live contracts and completed
   P3-FRONTEND-FOUNDATION v1.
 - **Deliverables:** measured comparison of candidate browser persistence
   mechanisms behind the neutral queue port; multi-tab/device prototype; chosen
