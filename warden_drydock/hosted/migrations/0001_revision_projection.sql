@@ -29,6 +29,8 @@ CREATE TABLE hosted_projection_checkpoint (
     projection_digest char(64) NOT NULL
 );
 
+CREATE TABLE hosted_projection_shadow_checkpoint (LIKE hosted_projection_checkpoint INCLUDING ALL);
+
 CREATE TABLE hosted_projection_record (
     campaign_id text NOT NULL,
     revision_id text NOT NULL,

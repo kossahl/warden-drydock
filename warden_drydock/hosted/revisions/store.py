@@ -35,6 +35,11 @@ class FileSnapshotStore:
         try:
             tree = temporary / "tree"
             shutil.copytree(source, tree)
+            copied_files, copied_digest = canonicalize_tree(tree)
+            if copied_files != manifest.files or copied_digest != manifest.tree_digest:
+                raise SnapshotIntegrityError(
+                    "copied snapshot tree does not match publication manifest"
+                )
             (temporary / MANIFEST_NAME).write_bytes(encode_manifest(manifest))
             temporary.replace(target)
         except Exception:

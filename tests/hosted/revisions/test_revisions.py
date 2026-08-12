@@ -66,6 +66,21 @@ class CanonicalizationTests(RevisionFixture):
             self.publish(self.intent(tree_digest="0" * 64))
         self.assertEqual((), tuple(self.store.snapshots.iterdir()))
 
+    def test_source_mutation_during_copy_never_finalizes_a_head(self) -> None:
+        import warden_drydock.hosted.revisions.store as store_module
+
+        real_copytree = store_module.shutil.copytree
+
+        def mutate_after_copy(source, target):
+            result = real_copytree(source, target)
+            (Path(target) / "record.md").write_bytes(b"changed after hash\n")
+            return result
+
+        with mock.patch.object(store_module.shutil, "copytree", mutate_after_copy):
+            with self.assertRaises(SnapshotIntegrityError):
+                self.publish()
+        self.assertIsNone(self.repository.head("campaign_one"))
+
     def test_unsafe_manifest_identifiers_and_paths_fail_before_store_access(self) -> None:
         with self.assertRaises(ValueError):
             self.intent(revision="../private")
@@ -145,6 +160,25 @@ class PublicationTests(RevisionFixture):
 
 
 class LineageAndProjectionTests(RevisionFixture):
+    def test_orphan_snapshot_is_quarantined_before_lineage_or_projection(self) -> None:
+        intent = self.intent()
+        files, digest = canonicalize_tree(self.source)
+        from warden_drydock.hosted.revisions.models import SnapshotManifest
+
+        manifest = SnapshotManifest(
+            "campaign_one", "revision_orphan", None, 1, digest, files,
+            "0.2.0", "1.0.0", "b" * 64, DIGEST, intent.intent_token,
+        )
+        self.store.put_if_absent(self.source, manifest)
+        projections = InMemoryProjectionRepository()
+        with self.assertRaises(ValueError):
+            ProjectionRebuilder(
+                self.store, projections, self.repository
+            ).rebuild(manifest)
+        self.assertEqual({}, projections.active)
+        with self.assertRaises(PublicationIntentError):
+            self.service.verify_linear_inventory()
+
     def test_fork_or_ordinal_conflict_fails_closed(self) -> None:
         first = self.publish()
         (self.source / "record.md").write_text("---\nid: record-one\n---\n# Two\n", encoding="utf-8")
@@ -155,18 +189,20 @@ class LineageAndProjectionTests(RevisionFixture):
         from warden_drydock.hosted.revisions.models import SnapshotManifest
         fork = SnapshotManifest("campaign_one", "revision_fork", first.revision_id, 2, digest, files, "0.2.0", "1.0.0", "b" * 64, DIGEST, "token_fork")
         self.store.put_if_absent(self.source, fork)
-        with self.assertRaises(SnapshotLineageError):
+        with self.assertRaises((PublicationIntentError, SnapshotLineageError)):
             self.service.verify_linear_inventory()
 
     def test_rebuild_is_deterministic_and_preserves_operational_state(self) -> None:
         manifest = self.publish()
         projections = InMemoryProjectionRepository()
         projections.operational["workflow"] = {"status": "needs_review"}
-        rebuilder = ProjectionRebuilder(self.store, projections)
+        rebuilder = ProjectionRebuilder(self.store, projections, self.repository)
         first = rebuilder.rebuild(manifest)
         second = rebuilder.rebuild(manifest)
         self.assertEqual(first, second)
         self.assertEqual(first, projections.active["campaign_one"])
+        self.assertEqual(first, projections.active_checkpoint["campaign_one"])
+        self.assertEqual({}, projections.shadow_checkpoint)
         self.assertEqual({"status": "needs_review"}, projections.operational["workflow"])
         self.assertEqual(1, first.record_count)
 
@@ -184,7 +220,9 @@ class LineageAndProjectionTests(RevisionFixture):
         projections = InMemoryProjectionRepository()
         projections.operational["audit"] = ("safe",)
         with self.assertRaises(SnapshotIntegrityError):
-            ProjectionRebuilder(self.store, projections).rebuild(manifest)
+            ProjectionRebuilder(
+                self.store, projections, self.repository
+            ).rebuild(manifest)
         self.assertEqual({}, projections.shadow)
         self.assertEqual({}, projections.active)
         self.assertEqual(("safe",), projections.operational["audit"])
@@ -202,6 +240,7 @@ class MigrationContractTests(unittest.TestCase):
         for table in (
             "hosted_publication_intent", "hosted_campaign_head",
             "hosted_projection_checkpoint", "hosted_projection_record",
+            "hosted_projection_shadow_checkpoint",
             "hosted_projection_shadow_record",
         ):
             self.assertIn(f"CREATE TABLE {table}", migration)

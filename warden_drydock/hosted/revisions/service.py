@@ -54,12 +54,17 @@ class RevisionService:
             raise PublicationIntentError("snapshot publication intent is not uniquely matched")
         try:
             return self.repository.finalize_head(exact[0])
-        except StaleHeadError:
+        except (PublicationIntentError, StaleHeadError) as exc:
+            reason = (
+                "stale campaign head"
+                if isinstance(exc, StaleHeadError)
+                else "publication intent changed during finalization"
+            )
             self.store.quarantine_snapshot(
                 manifest.tree_digest,
                 manifest.campaign_id,
                 manifest.revision_id,
-                "stale campaign head",
+                reason,
             )
             self.repository.quarantine_intent(exact[0].intent_id)
             raise
@@ -79,6 +84,16 @@ class RevisionService:
         manifests = self.store.inventory()
         by_campaign: dict[str, list[SnapshotManifest]] = {}
         for manifest in manifests:
+            if not self.repository.publication_eligible(manifest):
+                self.store.quarantine_snapshot(
+                    manifest.tree_digest,
+                    manifest.campaign_id,
+                    manifest.revision_id,
+                    "snapshot is not backed by one finalized publication intent",
+                )
+                raise PublicationIntentError(
+                    "snapshot is not eligible for lineage or projection use"
+                )
             by_campaign.setdefault(manifest.campaign_id, []).append(manifest)
         verified: list[SnapshotManifest] = []
         for campaign in sorted(by_campaign):

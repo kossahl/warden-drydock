@@ -3,7 +3,13 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Iterator, Protocol
 
-from .models import IntentStatus, PublicationIntent, PublicationKind, StaleHeadError
+from .models import (
+    IntentStatus,
+    PublicationIntent,
+    PublicationIntentError,
+    PublicationKind,
+    StaleHeadError,
+)
 
 
 class WorkflowRepository(Protocol):
@@ -12,6 +18,7 @@ class WorkflowRepository(Protocol):
     def finalize_head(self, intent: PublicationIntent) -> bool: ...
     def quarantine_intent(self, intent_id: str) -> None: ...
     def head(self, campaign_id: str) -> str | None: ...
+    def publication_eligible(self, manifest) -> bool: ...
 
 
 class InMemoryWorkflowRepository:
@@ -54,6 +61,19 @@ class InMemoryWorkflowRepository:
         value = self.heads.get(campaign_id)
         return value[0] if value else None
 
+    def publication_eligible(self, manifest) -> bool:
+        matches = self.matching_intents(manifest.publication_intent_token)
+        return (
+            len(matches) == 1
+            and matches[0].status is IntentStatus.FINALIZED
+            and matches[0].campaign_id == manifest.campaign_id
+            and matches[0].revision_id == manifest.revision_id
+            and matches[0].parent_revision == manifest.parent_revision
+            and matches[0].ordinal == manifest.ordinal
+            and matches[0].tree_digest == manifest.tree_digest
+            and matches[0].change_digest == manifest.change_digest
+        )
+
 
 class PostgresWorkflowRepository:
     """DB-API repository; caller supplies a PostgreSQL connection factory."""
@@ -73,6 +93,10 @@ class PostgresWorkflowRepository:
     def add_intent(self, intent: PublicationIntent) -> None:
         with self._transaction() as connection, connection.cursor() as cursor:
             cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 1))",
+                (intent.intent_token,),
+            )
+            cursor.execute(
                 "INSERT INTO hosted_publication_intent (intent_id,intent_token,kind,campaign_id,revision_id,parent_revision,ordinal,tree_digest,change_digest,status) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (intent_id) DO NOTHING",
                 (intent.intent_id, intent.intent_token, intent.kind.value, intent.campaign_id, intent.revision_id, intent.parent_revision, intent.ordinal, intent.tree_digest, intent.change_digest, intent.status.value),
             )
@@ -90,14 +114,42 @@ class PostgresWorkflowRepository:
 
     def finalize_head(self, intent: PublicationIntent) -> bool:
         with self._transaction() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT status FROM hosted_publication_intent WHERE intent_id=%s FOR UPDATE", (intent.intent_id,))
-            intent_row = cursor.fetchone()
-            if intent_row is None:
-                raise ValueError("publication intent is missing")
-            if intent_row[0] == IntentStatus.FINALIZED.value:
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 1))",
+                (intent.intent_token,),
+            )
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (intent.campaign_id,),
+            )
+            cursor.execute(
+                "SELECT intent_id,kind,campaign_id,revision_id,parent_revision,ordinal,tree_digest,change_digest,status FROM hosted_publication_intent WHERE intent_token=%s ORDER BY intent_id FOR UPDATE",
+                (intent.intent_token,),
+            )
+            matches = cursor.fetchall()
+            if len(matches) != 1:
+                raise PublicationIntentError(
+                    "publication intent token is ambiguous"
+                )
+            exact = matches[0]
+            expected = (
+                intent.intent_id,
+                intent.kind.value,
+                intent.campaign_id,
+                intent.revision_id,
+                intent.parent_revision,
+                intent.ordinal,
+                intent.tree_digest,
+                intent.change_digest,
+            )
+            if tuple(exact[:8]) != expected:
+                raise PublicationIntentError(
+                    "publication intent binding mismatch"
+                )
+            if exact[8] == IntentStatus.FINALIZED.value:
                 return False
-            if intent_row[0] != IntentStatus.PENDING.value:
-                raise ValueError("publication intent is not pending")
+            if exact[8] != IntentStatus.PENDING.value:
+                raise PublicationIntentError("publication intent is not pending")
             cursor.execute("SELECT revision_id, ordinal FROM hosted_campaign_head WHERE campaign_id=%s FOR UPDATE", (intent.campaign_id,))
             current = cursor.fetchone()
             expected = None if current is None else current[0]
@@ -119,3 +171,21 @@ class PostgresWorkflowRepository:
             cursor.execute("SELECT revision_id FROM hosted_campaign_head WHERE campaign_id=%s", (campaign_id,))
             row = cursor.fetchone()
             return row[0] if row else None
+
+    def publication_eligible(self, manifest) -> bool:
+        with self._transaction() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT intent_id,kind,campaign_id,revision_id,parent_revision,ordinal,tree_digest,change_digest,status FROM hosted_publication_intent WHERE intent_token=%s ORDER BY intent_id",
+                (manifest.publication_intent_token,),
+            )
+            rows = cursor.fetchall()
+            return (
+                len(rows) == 1
+                and rows[0][2] == manifest.campaign_id
+                and rows[0][3] == manifest.revision_id
+                and rows[0][4] == manifest.parent_revision
+                and rows[0][5] == manifest.ordinal
+                and rows[0][6] == manifest.tree_digest
+                and rows[0][7] == manifest.change_digest
+                and rows[0][8] == IntentStatus.FINALIZED.value
+            )
