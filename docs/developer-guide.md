@@ -3,9 +3,10 @@
 ## Required architecture context
 
 Before product or architectural changes, read `AGENTS.md`, the project brief,
-product decisions, conversation handoff, and every accepted ADR. The governing
-split is: the AI interprets intent; deterministic Drydock code mutates the
-repository.
+product decisions, and every accepted ADR. The governing split is: the AI
+interprets intent; deterministic Drydock code mutates the repository. Future
+Hosted MVP delivery context comes from the private GitHub Project and its
+versioned Work Package rather than repository planning documents.
 
 ## Architecture
 

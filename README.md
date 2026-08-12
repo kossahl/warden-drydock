@@ -97,8 +97,10 @@ Warden-only headings.
 
 - `warden_drydock/core/`: system-agnostic project generation and validation
 - `warden_drydock/standalone.py`: portable campaign maintenance implementation
+- `warden_drydock/hosted/engine/`: typed, non-publishing facade over deterministic operations
 - `warden_drydock/data/adapters/`: RPG-system adapter assets
 - `warden_drydock/data/project_template/`: generic generated campaign files
+- `docs/contracts/hosted/`: versioned hosted data and authority contracts
 - `tests/`: deterministic behavior tests
 - `docs/adr/`: architecture decisions
 
@@ -115,16 +117,18 @@ copied into generated campaigns as `scripts/drydock.py`. Context generation is
 stable across unchanged runs and includes only approved session logs (`canon`,
 `revealed`, or the legacy `accepted` status).
 
-## Continue development in Codex
+## Continue development
 
-For a curated handoff from the original architecture conversation, read:
+Repository documentation describes implemented behavior and accepted technical
+boundaries:
 
 - `docs/project-brief.md`
 - `docs/product-decisions.md`
-- `docs/conversation-handoff.md`
-- `docs/continue-in-codex.md`
+- `docs/adr/`
+- `docs/contracts/hosted/`
 
-The continuation guide contains a ready-to-paste Codex prompt.
+Future Hosted MVP planning, Work Packages, status, and private design references
+live in the [Warden Drydock Hosted MVP Project](https://github.com/users/kossahl/projects/1).
 
 ## MVP status
 
@@ -134,3 +138,8 @@ session preparation/debrief, safe player handouts, semantic validation,
 canon-safe context generation, and preview-first ownership-aware upgrades.
 The package remains distributed from its pinned GitHub tag rather than a
 package registry.
+
+The repository also contains the implemented Hosted MVP foundation: accepted
+hosted ADRs, versioned executable contracts, and a typed deterministic engine
+facade. It does not yet contain the browser application, API service,
+PostgreSQL persistence, Compose runtime, or provider integration.
