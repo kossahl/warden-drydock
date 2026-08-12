@@ -15,8 +15,10 @@ test("shell remains usable at 320 CSS pixels", async ({ page }) => {
 });
 
 test("API paths never receive the SPA fallback", async ({ request }) => {
-  const response = await request.get("/api/v1/campaigns", { headers: { Accept: "text/html" } });
-  expect(response.status()).toBe(404);
+  for (const path of ["/api", "/api?probe=fallback", "/api/v1/campaigns"]) {
+    const response = await request.get(path, { headers: { Accept: "text/html" } });
+    expect(response.status()).toBe(404);
+  }
 });
 
 test("production static artifact exposes no frontend dependency tree", async ({ request }) => {

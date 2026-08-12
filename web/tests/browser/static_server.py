@@ -1,6 +1,7 @@
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
+from urllib.parse import urlsplit
 
 DIST = Path(__file__).resolve().parents[2] / "dist"
 
@@ -10,14 +11,15 @@ class StaticFallbackHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(DIST), **kwargs)
 
     def do_GET(self):
-        if self.path == "/healthz":
+        request_path = urlsplit(self.path).path
+        if request_path == "/healthz":
             self.send_response(204)
             self.end_headers()
             return
-        if self.path.startswith("/api/"):
+        if request_path == "/api" or request_path.startswith("/api/"):
             self.send_error(404)
             return
-        requested = DIST / self.path.lstrip("/").split("?", 1)[0]
+        requested = DIST / request_path.lstrip("/")
         if "text/html" in self.headers.get("Accept", "") and not requested.is_file():
             self.path = "/index.html"
         super().do_GET()

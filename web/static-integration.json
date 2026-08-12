@@ -8,6 +8,7 @@
     "accept": "text/html",
     "serve": "index.html"
   },
+  "excluded_paths": ["/api"],
   "excluded_prefixes": ["/api/"],
   "runtime_tools_forbidden": ["node", "npm", "bun", "vite"]
 }

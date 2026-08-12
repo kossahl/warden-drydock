@@ -69,6 +69,25 @@ export interface CampaignAtlas extends ContractEnvelope<"campaign_atlas"> {
     label: string;
     direction: "directed" | "undirected";
   }>;
+  backlinks: ReadonlyArray<{
+    source_entity_id: PublicId;
+    target_entity_id: PublicId;
+    connection_id: PublicId;
+  }>;
+  history: ReadonlyArray<{
+    event_id: PublicId;
+    revision_id: PublicId;
+    authority: Exclude<Authority, "table_fact">;
+    title: string;
+  }>;
+  comparison: {
+    from_revision: PublicId;
+    to_revision: PublicId;
+    changes: ReadonlyArray<{
+      subject_id: PublicId;
+      change_type: "added" | "removed" | "changed" | "authority_changed";
+    }>;
+  };
 }
 
 export interface DraftProvenance {
