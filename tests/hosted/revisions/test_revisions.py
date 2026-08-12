@@ -122,11 +122,17 @@ class PublicationTests(RevisionFixture):
             self.service.reconcile_manifest(manifest)
         self.assertFalse((self.store.snapshots / digest / manifest.campaign_id / manifest.revision_id).exists())
         self.assertTrue((self.store.quarantine / digest / manifest.campaign_id / manifest.revision_id).exists())
+        with self.assertRaises(SnapshotIntegrityError):
+            self.store.put_if_absent(self.source, manifest)
+        self.assertFalse(
+            (self.store.snapshots / digest / manifest.campaign_id / manifest.revision_id).exists()
+        )
 
     def test_conflicting_and_ambiguous_intents_quarantine(self) -> None:
         intent = self.intent()
         self.repository.add_intent(intent)
-        self.repository.add_intent(self.intent(intent_id="intent_two", revision="revision_two"))
+        second = self.intent(intent_id="intent_two", revision="revision_two")
+        self.repository.intents[second.intent_id] = second
         files, digest = canonicalize_tree(self.source)
         from warden_drydock.hosted.revisions.models import SnapshotManifest
         manifest = SnapshotManifest("campaign_one", "revision_one", None, 1, digest, files, "0.2.0", "1.0.0", "b" * 64, DIGEST, intent.intent_token)
@@ -134,6 +140,16 @@ class PublicationTests(RevisionFixture):
         with self.assertRaises(PublicationIntentError):
             self.service.reconcile_manifest(manifest)
         self.assertEqual(2, len([row for row in self.repository.audit if row[1] == "quarantined"]))
+
+    def test_duplicate_token_is_rejected_without_poisoning_finalized_head(self) -> None:
+        first = self.publish()
+        duplicate = self.intent(
+            intent_id="intent_duplicate", revision="revision_duplicate"
+        )
+        with self.assertRaises(PublicationIntentError):
+            self.repository.add_intent(duplicate)
+        self.assertEqual((first,), self.service.verify_linear_inventory())
+        self.assertEqual("revision_one", self.repository.head("campaign_one"))
 
     def test_stale_head_never_merges_and_is_quarantined(self) -> None:
         self.publish()
@@ -160,6 +176,28 @@ class PublicationTests(RevisionFixture):
 
 
 class LineageAndProjectionTests(RevisionFixture):
+    def test_rebuild_rejects_child_when_parent_snapshot_is_missing(self) -> None:
+        first = self.publish()
+        (self.source / "record.md").write_text(
+            "---\nid: record-one\n---\n# Two\n", encoding="utf-8"
+        )
+        second = self.publish(
+            self.intent(
+                intent_id="intent_two", token="token_two",
+                revision="revision_two", parent=first.revision_id, ordinal=2,
+            )
+        )
+        parent_path = (
+            self.store.snapshots / first.tree_digest / first.campaign_id
+            / first.revision_id
+        )
+        import shutil
+        shutil.rmtree(parent_path)
+        with self.assertRaises(SnapshotLineageError):
+            ProjectionRebuilder(
+                self.store, InMemoryProjectionRepository(), self.repository
+            ).rebuild(second)
+
     def test_orphan_snapshot_is_quarantined_before_lineage_or_projection(self) -> None:
         intent = self.intent()
         files, digest = canonicalize_tree(self.source)
@@ -171,7 +209,7 @@ class LineageAndProjectionTests(RevisionFixture):
         )
         self.store.put_if_absent(self.source, manifest)
         projections = InMemoryProjectionRepository()
-        with self.assertRaises(ValueError):
+        with self.assertRaises(SnapshotLineageError):
             ProjectionRebuilder(
                 self.store, projections, self.repository
             ).rebuild(manifest)

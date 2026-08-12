@@ -85,12 +85,6 @@ class RevisionService:
         by_campaign: dict[str, list[SnapshotManifest]] = {}
         for manifest in manifests:
             if not self.repository.publication_eligible(manifest):
-                self.store.quarantine_snapshot(
-                    manifest.tree_digest,
-                    manifest.campaign_id,
-                    manifest.revision_id,
-                    "snapshot is not backed by one finalized publication intent",
-                )
                 raise PublicationIntentError(
                     "snapshot is not eligible for lineage or projection use"
                 )

@@ -26,6 +26,16 @@ class FileSnapshotStore:
         digest_root.mkdir(exist_ok=True)
         target = digest_root / manifest.campaign_id / manifest.revision_id
         target.parent.mkdir(exist_ok=True)
+        quarantined = (
+            self.quarantine
+            / digest
+            / manifest.campaign_id
+            / manifest.revision_id
+        )
+        if quarantined.exists():
+            raise SnapshotIntegrityError(
+                "snapshot identity has an existing quarantine tombstone"
+            )
         if target.exists():
             existing = self.verify(digest, manifest.campaign_id, manifest.revision_id)
             if existing != manifest:
@@ -76,3 +86,5 @@ class FileSnapshotStore:
             target.parent.mkdir(parents=True, exist_ok=True)
             source.replace(target)
             (target / "quarantine-reason.txt").write_text(reason + "\n", encoding="utf-8")
+        elif source.exists():
+            shutil.rmtree(source)

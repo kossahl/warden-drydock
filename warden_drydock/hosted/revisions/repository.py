@@ -33,6 +33,17 @@ class InMemoryWorkflowRepository:
         existing = self.intents.get(intent.intent_id)
         if existing is not None and existing != intent:
             raise ValueError("intent identity conflict")
+        token_owner = next(
+            (
+                item
+                for item in self.intents.values()
+                if item.intent_token == intent.intent_token
+                and item.intent_id != intent.intent_id
+            ),
+            None,
+        )
+        if token_owner is not None:
+            raise PublicationIntentError("publication intent token conflict")
         self.intents[intent.intent_id] = intent
 
     def matching_intents(self, token: str) -> tuple[PublicationIntent, ...]:

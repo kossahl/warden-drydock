@@ -11,7 +11,7 @@ CREATE TABLE hosted_publication_intent (
     tree_digest char(64) NOT NULL,
     change_digest char(64) NOT NULL,
     status text NOT NULL CHECK (status IN ('pending', 'finalized', 'quarantined')),
-    UNIQUE (intent_token, intent_id)
+    UNIQUE (intent_token)
 );
 CREATE INDEX hosted_publication_intent_token_idx ON hosted_publication_intent(intent_token);
 
