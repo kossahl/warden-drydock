@@ -61,6 +61,13 @@ class FileSnapshotStore:
     def verify(self, tree_digest: str, campaign_id: str, revision_id: str) -> SnapshotManifest:
         target = self.snapshots / tree_digest / campaign_id / revision_id
         manifest = decode_manifest((target / MANIFEST_NAME).read_bytes())
+        if (
+            manifest.campaign_id != campaign_id
+            or manifest.revision_id != revision_id
+        ):
+            raise SnapshotIntegrityError(
+                "snapshot storage identity does not match manifest identity"
+            )
         files, digest = canonicalize_tree(target / "tree")
         if digest != tree_digest or digest != manifest.tree_digest or files != manifest.files:
             raise SnapshotIntegrityError("snapshot hash verification failed")
@@ -76,6 +83,21 @@ class FileSnapshotStore:
             for revision_path in sorted(campaign_path.iterdir())
             if revision_path.is_dir()
         )
+
+    def campaign_inventory(self, campaign_id: str) -> tuple[SnapshotManifest, ...]:
+        manifests: list[SnapshotManifest] = []
+        for digest_path in sorted(self.snapshots.iterdir()):
+            campaign_path = digest_path / campaign_id
+            if not digest_path.is_dir() or not campaign_path.is_dir():
+                continue
+            for revision_path in sorted(campaign_path.iterdir()):
+                if revision_path.is_dir():
+                    manifests.append(
+                        self.verify(
+                            digest_path.name, campaign_id, revision_path.name
+                        )
+                    )
+        return tuple(manifests)
 
     def quarantine_snapshot(
         self, tree_digest: str, campaign_id: str, revision_id: str, reason: str

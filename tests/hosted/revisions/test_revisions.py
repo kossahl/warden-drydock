@@ -176,6 +176,56 @@ class PublicationTests(RevisionFixture):
 
 
 class LineageAndProjectionTests(RevisionFixture):
+    def test_rebuild_rejects_finalized_non_head_revision(self) -> None:
+        first = self.publish()
+        (self.source / "record.md").write_text(
+            "---\nid: record-one\n---\n# Two\n", encoding="utf-8"
+        )
+        self.publish(
+            self.intent(
+                intent_id="intent_two", token="token_two",
+                revision="revision_two", parent=first.revision_id, ordinal=2,
+            )
+        )
+        with self.assertRaises(SnapshotLineageError):
+            ProjectionRebuilder(
+                self.store, InMemoryProjectionRepository(), self.repository
+            ).rebuild(first)
+
+    def test_verify_rejects_manifest_stored_under_another_identity(self) -> None:
+        import shutil
+
+        manifest = self.publish()
+        source = (
+            self.store.snapshots / manifest.tree_digest / manifest.campaign_id
+            / manifest.revision_id
+        )
+        target = (
+            self.store.snapshots / manifest.tree_digest / "campaign_other"
+            / "revision_other"
+        )
+        target.parent.mkdir(parents=True)
+        shutil.copytree(source, target)
+        with self.assertRaises(SnapshotIntegrityError):
+            self.store.verify(
+                manifest.tree_digest, "campaign_other", "revision_other"
+            )
+
+    def test_unrelated_corrupt_campaign_does_not_block_rebuild(self) -> None:
+        manifest = self.publish()
+        corrupt = (
+            self.store.snapshots / ("f" * 64) / "campaign_other"
+            / "revision_other"
+        )
+        corrupt.mkdir(parents=True)
+        (corrupt / "snapshot-manifest-v1.json").write_text(
+            "not-json", encoding="utf-8"
+        )
+        result = ProjectionRebuilder(
+            self.store, InMemoryProjectionRepository(), self.repository
+        ).rebuild(manifest)
+        self.assertEqual(manifest.revision_id, result.revision_id)
+
     def test_rebuild_rejects_child_when_parent_snapshot_is_missing(self) -> None:
         first = self.publish()
         (self.source / "record.md").write_text(

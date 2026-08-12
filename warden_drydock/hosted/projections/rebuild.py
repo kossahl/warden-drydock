@@ -52,12 +52,12 @@ class ProjectionRebuilder:
         )
 
     def _verify_campaign_lineage(self, target) -> None:
+        if self.workflow_repository.head(target.campaign_id) != target.revision_id:
+            raise SnapshotLineageError(
+                "only the authoritative campaign head can become active projection"
+            )
         campaign = sorted(
-            (
-                manifest
-                for manifest in self.store.inventory()
-                if manifest.campaign_id == target.campaign_id
-            ),
+            self.store.campaign_inventory(target.campaign_id),
             key=lambda manifest: (manifest.ordinal, manifest.revision_id),
         )
         if target not in campaign:
