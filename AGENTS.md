@@ -11,10 +11,12 @@ Read:
 1. `README.md`
 2. `docs/project-brief.md`
 3. `docs/product-decisions.md`
-4. `docs/conversation-handoff.md`
-5. all accepted ADRs in `docs/adr/`
+4. all accepted ADRs in `docs/adr/`
 
-These files are the durable handoff from the original design conversation.
+These files describe the implemented product and its accepted technical
+boundaries. Future Hosted MVP planning lives in the private GitHub Project;
+before delegated Hosted MVP work, the parent also provides its Project README,
+the assigned versioned Work Package, and a verified remote `master` baseline.
 
 ## Product rule
 
