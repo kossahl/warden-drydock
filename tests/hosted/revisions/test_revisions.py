@@ -187,7 +187,13 @@ class LineageAndProjectionTests(RevisionFixture):
 
 class MigrationContractTests(unittest.TestCase):
     def test_postgres_migration_separates_operational_and_rebuildable_tables(self) -> None:
-        migration = (Path(__file__).parents[3] / "migrations" / "hosted" / "0001_revision_projection.sql").read_text(encoding="utf-8")
+        migration = (
+            Path(__file__).parents[3]
+            / "warden_drydock"
+            / "hosted"
+            / "migrations"
+            / "0001_revision_projection.sql"
+        ).read_text(encoding="utf-8")
         for table in (
             "hosted_publication_intent", "hosted_campaign_head",
             "hosted_projection_checkpoint", "hosted_projection_record",
