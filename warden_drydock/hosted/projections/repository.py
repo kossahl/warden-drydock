@@ -15,10 +15,21 @@ class InMemoryProjectionRepository:
         self.shadow[bundle.campaign_id] = bundle
         self.shadow_checkpoint[bundle.campaign_id] = bundle
 
-    def swap(self, campaign_id: str, expected_digest: str) -> None:
+    def swap(
+        self,
+        campaign_id: str,
+        expected_digest: str,
+        expected_revision: str,
+        workflow_repository,
+    ) -> None:
         bundle = self.shadow[campaign_id]
         if bundle.projection_digest != expected_digest:
             raise ValueError("shadow projection digest mismatch")
+        if (
+            bundle.revision_id != expected_revision
+            or workflow_repository.head(campaign_id) != expected_revision
+        ):
+            raise ValueError("campaign head changed before projection swap")
         self.active[campaign_id] = bundle
         self.active_checkpoint[campaign_id] = bundle
         del self.shadow[campaign_id]
@@ -40,13 +51,36 @@ class PostgresProjectionRepository:
         finally:
             connection.close()
 
-    def swap(self, campaign_id: str, expected_digest: str) -> None:
+    def swap(
+        self,
+        campaign_id: str,
+        expected_digest: str,
+        expected_revision: str,
+        workflow_repository,
+    ) -> None:
         connection = self._connect()
         try:
             with connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (campaign_id,),
+                )
+                cursor.execute(
+                    "SELECT revision_id FROM hosted_campaign_head WHERE campaign_id=%s FOR UPDATE",
+                    (campaign_id,),
+                )
+                head = cursor.fetchone()
+                if head is None or head[0] != expected_revision:
+                    raise ValueError(
+                        "campaign head changed before projection swap"
+                    )
                 cursor.execute("SELECT revision_id,projection_version,record_count,projection_digest FROM hosted_projection_shadow_checkpoint WHERE campaign_id=%s FOR UPDATE", (campaign_id,))
                 row = cursor.fetchone()
-                if row is None or row[3] != expected_digest:
+                if (
+                    row is None
+                    or row[0] != expected_revision
+                    or row[3] != expected_digest
+                ):
                     raise ValueError("shadow projection digest mismatch")
                 cursor.execute("SELECT record_id,relative_path,body_digest FROM hosted_projection_shadow_record WHERE campaign_id=%s ORDER BY record_id,relative_path,body_digest", (campaign_id,))
                 records = tuple(cursor.fetchall())

@@ -192,6 +192,32 @@ class LineageAndProjectionTests(RevisionFixture):
                 self.store, InMemoryProjectionRepository(), self.repository
             ).rebuild(first)
 
+    def test_head_advance_between_stage_and_swap_rejects_stale_projection(self) -> None:
+        first = self.publish()
+        projections = InMemoryProjectionRepository()
+        real_stage = projections.stage
+
+        def stage_then_advance(bundle):
+            real_stage(bundle)
+            (self.source / "record.md").write_text(
+                "---\nid: record-one\n---\n# Two\n", encoding="utf-8"
+            )
+            self.publish(
+                self.intent(
+                    intent_id="intent_two", token="token_two",
+                    revision="revision_two", parent=first.revision_id,
+                    ordinal=2,
+                )
+            )
+
+        with mock.patch.object(projections, "stage", stage_then_advance):
+            with self.assertRaises(ValueError):
+                ProjectionRebuilder(
+                    self.store, projections, self.repository
+                ).rebuild(first)
+        self.assertEqual("revision_two", self.repository.head("campaign_one"))
+        self.assertEqual({}, projections.active)
+
     def test_verify_rejects_manifest_stored_under_another_identity(self) -> None:
         import shutil
 

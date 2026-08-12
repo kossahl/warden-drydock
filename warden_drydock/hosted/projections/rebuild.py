@@ -93,5 +93,10 @@ class ProjectionRebuilder:
     def rebuild(self, manifest) -> ProjectionBundle:
         bundle = self.build(manifest)
         self.repository.stage(bundle)
-        self.repository.swap(bundle.campaign_id, bundle.projection_digest)
+        self.repository.swap(
+            bundle.campaign_id,
+            bundle.projection_digest,
+            bundle.revision_id,
+            self.workflow_repository,
+        )
         return bundle
