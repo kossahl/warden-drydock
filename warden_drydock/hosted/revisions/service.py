@@ -39,6 +39,13 @@ class RevisionService:
         return manifest
 
     def reconcile_manifest(self, manifest: SnapshotManifest) -> bool:
+        stored_manifest = self.store.verify(
+            manifest.tree_digest, manifest.campaign_id, manifest.revision_id
+        )
+        if stored_manifest != manifest:
+            raise SnapshotIntegrityError(
+                "stored snapshot manifest does not match reconciliation input"
+            )
         matches = self.repository.matching_intents(manifest.publication_intent_token)
         exact = tuple(intent for intent in matches if self._matches(intent, manifest))
         if len(matches) != 1 or len(exact) != 1:

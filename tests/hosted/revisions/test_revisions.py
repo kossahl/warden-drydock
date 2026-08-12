@@ -90,6 +90,58 @@ class CanonicalizationTests(RevisionFixture):
 
 
 class PublicationTests(RevisionFixture):
+    def test_reconciliation_rejects_missing_snapshot_without_finalizing(self) -> None:
+        intent = self.intent()
+        self.repository.add_intent(intent)
+        files, digest = canonicalize_tree(self.source)
+        from warden_drydock.hosted.revisions.models import SnapshotManifest
+
+        manifest = SnapshotManifest(
+            "campaign_one", "revision_one", None, 1, digest, files,
+            "0.2.0", "1.0.0", "b" * 64, DIGEST, intent.intent_token,
+        )
+        with self.assertRaises(FileNotFoundError):
+            self.service.reconcile_manifest(manifest)
+        self.assertIsNone(self.repository.head("campaign_one"))
+        self.assertEqual("pending", self.repository.intents[intent.intent_id].status.value)
+
+    def test_reconciliation_rejects_corrupt_stored_snapshot(self) -> None:
+        intent = self.intent()
+        self.repository.add_intent(intent)
+        files, digest = canonicalize_tree(self.source)
+        from warden_drydock.hosted.revisions.models import SnapshotManifest
+
+        manifest = SnapshotManifest(
+            "campaign_one", "revision_one", None, 1, digest, files,
+            "0.2.0", "1.0.0", "b" * 64, DIGEST, intent.intent_token,
+        )
+        self.store.put_if_absent(self.source, manifest)
+        stored = (
+            self.store.snapshots / digest / manifest.campaign_id
+            / manifest.revision_id / "tree" / "record.md"
+        )
+        stored.write_bytes(b"corrupt\n")
+        with self.assertRaises(SnapshotIntegrityError):
+            self.service.reconcile_manifest(manifest)
+        self.assertIsNone(self.repository.head("campaign_one"))
+
+    def test_reconciliation_rejects_manifest_different_from_stored(self) -> None:
+        intent = self.intent()
+        self.repository.add_intent(intent)
+        files, digest = canonicalize_tree(self.source)
+        from dataclasses import replace
+        from warden_drydock.hosted.revisions.models import SnapshotManifest
+
+        stored = SnapshotManifest(
+            "campaign_one", "revision_one", None, 1, digest, files,
+            "0.2.0", "1.0.0", "b" * 64, DIGEST, intent.intent_token,
+        )
+        self.store.put_if_absent(self.source, stored)
+        supplied = replace(stored, framework_version="0.2.1")
+        with self.assertRaises(SnapshotIntegrityError):
+            self.service.reconcile_manifest(supplied)
+        self.assertIsNone(self.repository.head("campaign_one"))
+
     def test_matching_intent_finalizes_exactly_once(self) -> None:
         manifest = self.publish()
         self.assertEqual("revision_one", self.repository.head("campaign_one"))
