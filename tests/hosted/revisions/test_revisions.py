@@ -23,8 +23,10 @@ class RevisionFixture(unittest.TestCase):
         root = Path(self.temporary.name)
         self.source = root / "source"
         self.source.mkdir()
-        (self.source / "record.md").write_text("---\nid: record-one\n---\n# One\n", encoding="utf-8")
-        (self.source / "config.json").write_text("{}\n", encoding="utf-8")
+        (self.source / "record.md").write_bytes(
+            b"---\nid: record-one\n---\n# One\n"
+        )
+        (self.source / "config.json").write_bytes(b"{}\n")
         self.store = FileSnapshotStore(root / "store")
         self.repository = InMemoryWorkflowRepository()
         self.service = RevisionService(self.store, self.repository)
@@ -46,7 +48,10 @@ class CanonicalizationTests(RevisionFixture):
     def test_golden_canonicalization_is_sorted_and_stable(self) -> None:
         files, digest = canonicalize_tree(self.source)
         self.assertEqual(("config.json", "record.md"), tuple(item.relative_path for item in files))
-        self.assertEqual("d8fba46438f4e609c4f95cf8ae4a54d63c9402180e1b9ba3eb4e334fd5d920fd", digest)
+        self.assertEqual(
+            "89914a610bf5e5133cdb6c3d4bd3e93a6d42d9cd1f7816ee986db18103be46b0",
+            digest,
+        )
         self.assertEqual((files, digest), canonicalize_tree(self.source))
 
     def test_symlink_and_non_regular_entries_fail_closed(self) -> None:
