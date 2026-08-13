@@ -11,7 +11,8 @@ Assert-NativeSuccess 'runtime version check'
 python -c "import pathlib; from warden_drydock.hosted.operations.recovery import verify_manifest; verify_manifest(pathlib.Path(r'$Backup'))"
 Assert-NativeSuccess 'backup manifest verification'
 if ($RestoreProject -notmatch '^[a-z0-9][a-z0-9_-]+$') { throw 'Unsafe restore project name' }
-$env:DRYDOCK_PORT = '0'
+$env:DRYDOCK_PORT = '18080'
+$env:DRYDOCK_ALLOWED_HOSTS = 'localhost:18080,127.0.0.1:18080'
 $existing = docker compose --project-name $RestoreProject ps --all --quiet
 Assert-NativeSuccess 'restore project inspection'
 if ($existing) { throw 'Restore project already has containers; choose a fresh project name' }
@@ -23,7 +24,7 @@ $stagingRoot = Join-Path $Backup 'snapshot-restore-staging'
 if (Test-Path -LiteralPath $stagingRoot) { throw 'Restore staging path already exists' }
 python -c "import pathlib; from warden_drydock.hosted.operations.recovery import extract_snapshot_archive; print(extract_snapshot_archive(pathlib.Path(r'$Backup')/'snapshots.tar',pathlib.Path(r'$Backup')))"
 Assert-NativeSuccess 'snapshot archive validation'
-docker compose --project-name $RestoreProject up -d db
+docker compose --project-name $RestoreProject up -d --wait db
 Assert-NativeSuccess 'fresh database startup'
 docker compose --project-name $RestoreProject cp (Join-Path $Backup 'postgres.dump') db:/tmp/postgres.dump
 Assert-NativeSuccess 'PostgreSQL dump copy'

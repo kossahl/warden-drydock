@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import pathlib
 import tarfile
@@ -10,7 +11,7 @@ import unittest
 import yaml
 
 from warden_drydock.hosted.operations.migrate import migration_body, migration_files
-from warden_drydock.hosted.operations.recovery import build_manifest, safe_members, verify_manifest
+from warden_drydock.hosted.operations.recovery import build_manifest, safe_members, snapshot_archive_inventory, verify_manifest
 from warden_drydock.hosted.operations.runtime_guard import parse_version, require_minimum
 from warden_drydock.hosted.operations.secrets import SecretStore
 
@@ -80,8 +81,11 @@ class RuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             (root / "postgres.dump").write_bytes(b"database")
-            (root / "snapshots.tar").write_bytes(b"snapshots")
-            manifest = build_manifest(root / "postgres.dump", root / "snapshots.tar", "a" * 64)
+            with tarfile.open(root / "snapshots.tar", "w") as archive:
+                info = tarfile.TarInfo("snapshots/example")
+                info.size = len(b"snapshots")
+                archive.addfile(info, io.BytesIO(b"snapshots"))
+            manifest = build_manifest(root / "postgres.dump", root / "snapshots.tar", snapshot_archive_inventory(root / "snapshots.tar"))
             (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
             self.assertEqual(manifest, verify_manifest(root))
             (root / "postgres.dump").write_bytes(b"changed")

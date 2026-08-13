@@ -67,6 +67,16 @@ class Handler(SimpleHTTPRequestHandler):
         self.path = path
         super().do_HEAD()
 
+    def _reject_unsupported(self) -> None:
+        if self._prepare_request():
+            self.send_error(HTTPStatus.METHOD_NOT_ALLOWED)
+
+    do_POST = _reject_unsupported
+    do_PUT = _reject_unsupported
+    do_PATCH = _reject_unsupported
+    do_DELETE = _reject_unsupported
+    do_OPTIONS = _reject_unsupported
+
     def log_message(self, format: str, *args) -> None:
         # Request targets can contain campaign content; emit no access log.
         return None

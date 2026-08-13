@@ -31,13 +31,17 @@ def recover(database_url: str, snapshot_root: pathlib.Path) -> None:
     by_revision = {(item.campaign_id, item.revision_id): item for item in inventory}
     intents = _query(
         database_url,
-        "SELECT campaign_id,revision_id,intent_token,status FROM hosted_publication_intent ORDER BY campaign_id,ordinal",
+        "SELECT campaign_id,revision_id,intent_token,status,COALESCE(parent_revision,''),ordinal::text,tree_digest,change_digest FROM hosted_publication_intent ORDER BY campaign_id,ordinal",
     )
     if any(row[3] == "pending" for row in intents):
         raise RuntimeError("pending_publication_intent_requires_operator_recovery")
-    finalized = {(row[0], row[1], row[2]) for row in intents if row[3] == "finalized"}
+    finalized = {
+        (row[0], row[1], row[2], row[4] or None, int(row[5]), row[6], row[7])
+        for row in intents if row[3] == "finalized"
+    }
     stored = {
-        (item.campaign_id, item.revision_id, item.publication_intent_token)
+        (item.campaign_id, item.revision_id, item.publication_intent_token,
+         item.parent_revision, item.ordinal, item.tree_digest, item.change_digest)
         for item in inventory
     }
     if stored != finalized:
@@ -63,8 +67,19 @@ def recover(database_url: str, snapshot_root: pathlib.Path) -> None:
     ]
     for campaign_id, revision_id in heads:
         manifest = by_revision.get((campaign_id, revision_id))
-        if manifest is None or (campaign_id, revision_id, manifest.publication_intent_token) not in finalized:
+        binding = None if manifest is None else (
+            campaign_id, revision_id, manifest.publication_intent_token,
+            manifest.parent_revision, manifest.ordinal, manifest.tree_digest,
+            manifest.change_digest,
+        )
+        if manifest is None or binding not in finalized:
             raise RuntimeError("head_snapshot_or_intent_mismatch")
+        statements.append("SELECT pg_advisory_xact_lock(hashtextextended(" + _literal(campaign_id) + ",0))")
+        statements.append(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM hosted_campaign_head WHERE campaign_id="
+            + _literal(campaign_id) + " AND revision_id=" + _literal(revision_id)
+            + ") THEN RAISE EXCEPTION 'campaign head changed during recovery'; END IF; END $$"
+        )
         verified = store.verify(manifest.tree_digest, campaign_id, revision_id)
         tree = store.snapshots / verified.tree_digest / campaign_id / revision_id / "tree"
         records: list[tuple[str, str, str]] = []
@@ -79,15 +94,13 @@ def recover(database_url: str, snapshot_root: pathlib.Path) -> None:
         ).hexdigest()
         for record_id, relative_path, body_digest in records:
             values = ",".join(map(_literal, (campaign_id, revision_id, record_id, relative_path, body_digest)))
-            statements.append(
-                "INSERT INTO hosted_projection_record(campaign_id,revision_id,record_id,relative_path,body_digest) VALUES(" + values + ")"
-            )
+            statements.append("INSERT INTO hosted_projection_shadow_record(campaign_id,revision_id,record_id,relative_path,body_digest) VALUES(" + values + ")")
         checkpoint = ",".join(
             (_literal(campaign_id), _literal(revision_id), "1", str(len(records)), _literal(digest))
         )
-        statements.append(
-            "INSERT INTO hosted_projection_checkpoint(campaign_id,revision_id,projection_version,record_count,projection_digest) VALUES(" + checkpoint + ")"
-        )
+        statements.append("INSERT INTO hosted_projection_shadow_checkpoint(campaign_id,revision_id,projection_version,record_count,projection_digest) VALUES(" + checkpoint + ")")
+        statements.append("INSERT INTO hosted_projection_record SELECT * FROM hosted_projection_shadow_record WHERE campaign_id=" + _literal(campaign_id))
+        statements.append("INSERT INTO hosted_projection_checkpoint SELECT * FROM hosted_projection_shadow_checkpoint WHERE campaign_id=" + _literal(campaign_id))
     statements.extend(
         (
             "UPDATE hosted_runtime_state SET maintenance_mode=false,reconciliation_complete=true,schema_compatibility=1,updated_at=now() WHERE singleton",

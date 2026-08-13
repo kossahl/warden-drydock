@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory=$true)][switch]$AcknowledgeUnsynchronizedBrowserData
 )
 $ErrorActionPreference = 'Stop'
+if (-not $AcknowledgeUnsynchronizedBrowserData.IsPresent) { throw 'Unsynchronized browser data acknowledgement is required' }
 function Assert-NativeSuccess([string]$Step) {
     if ($LASTEXITCODE -ne 0) { throw "$Step failed with exit code $LASTEXITCODE" }
 }

@@ -42,7 +42,8 @@ def create_snapshot_archive(source: pathlib.Path, destination: pathlib.Path) -> 
     with tarfile.open(destination, "r") as archive:
         members = safe_members(archive.getmembers())
         identity = "".join(
-            f"{member.name}:{member.size}\n" for member in members if member.isfile()
+            f"{member.name}:{hashlib.sha256(archive.extractfile(member).read()).hexdigest()}\n"
+            for member in members if member.isfile()
         ).encode("utf-8")
     return hashlib.sha256(identity).hexdigest()
 
@@ -53,6 +54,16 @@ def extract_snapshot_archive(archive_path: pathlib.Path, destination: pathlib.Pa
     with tarfile.open(archive_path, "r") as archive:
         archive.extractall(staging, members=safe_members(archive.getmembers()), filter="data")
     return staging / "snapshots"
+
+
+def snapshot_archive_inventory(archive_path: pathlib.Path) -> str:
+    with tarfile.open(archive_path, "r") as archive:
+        members = safe_members(archive.getmembers())
+        identity = "".join(
+            f"{member.name}:{hashlib.sha256(archive.extractfile(member).read()).hexdigest()}\n"
+            for member in members if member.isfile()
+        ).encode("utf-8")
+    return hashlib.sha256(identity).hexdigest()
 
 
 def build_manifest(
@@ -77,8 +88,13 @@ def verify_manifest(root: pathlib.Path) -> dict[str, object]:
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("format_version") != 1 or manifest.get("schema_compatibility") != 1:
         raise ValueError("unsupported_backup_format")
+    inventory = manifest.get("snapshot_inventory_digest")
+    if not isinstance(inventory, str) or len(inventory) != 64:
+        raise ValueError("invalid_snapshot_inventory_digest")
     for name, expected in manifest.get("files", {}).items():
         path = root / name
         if not path.is_file() or sha256_file(path) != expected:
             raise ValueError("backup_digest_mismatch")
+    if snapshot_archive_inventory(root / "snapshots.tar") != inventory:
+        raise ValueError("snapshot_inventory_digest_mismatch")
     return manifest

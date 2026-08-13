@@ -21,9 +21,13 @@ def readiness() -> bool:
         "AND r.reconciliation_complete AND r.schema_compatibility=1 "
         "AND EXISTS (SELECT 1 FROM hosted_schema_migration WHERE version='0002')"
     )
+    environment = os.environ.copy()
+    secret = pathlib.Path("/run/secrets/db_password")
+    if secret.is_file():
+        environment["PGPASSWORD"] = secret.read_text(encoding="utf-8").strip()
     result = subprocess.run(
         ["psql", os.environ["DATABASE_URL"], "-X", "-At", "-c", query],
-        capture_output=True, text=True,
+        capture_output=True, text=True, env=environment,
     )
     return result.returncode == 0 and result.stdout.strip() == "1"
 

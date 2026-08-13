@@ -24,7 +24,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://drydock@db:5432/drydock
-      DRYDOCK_ALLOWED_HOSTS: localhost:8080,127.0.0.1:8080
+      DRYDOCK_ALLOWED_HOSTS: "${DRYDOCK_ALLOWED_HOSTS:-localhost:8080,127.0.0.1:8080}"
       DRYDOCK_MIGRATIONS: /app/warden_drydock/hosted/migrations
       DRYDOCK_SNAPSHOTS: /var/lib/drydock/snapshots
       DRYDOCK_SECRETS: /var/lib/drydock/secrets
