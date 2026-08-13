@@ -52,9 +52,17 @@ def recover(database_url: str, snapshot_root: pathlib.Path) -> None:
     for manifests in campaigns.values():
         ordered = sorted(manifests, key=lambda item: (item.ordinal, item.revision_id))
         parent = None
+        compatibility = None
         for ordinal, manifest in enumerate(ordered, 1):
             if manifest.ordinal != ordinal or manifest.parent_revision != parent:
                 raise RuntimeError("snapshot_lineage_is_not_linear")
+            current = (
+                manifest.manifest_version, manifest.framework_version,
+                manifest.adapter_version, manifest.validation_contract_digest,
+            )
+            if compatibility is not None and current != compatibility:
+                raise RuntimeError("snapshot_lineage_is_incompatible")
+            compatibility = current
             parent = manifest.revision_id
     heads = _query(database_url, "SELECT campaign_id,revision_id FROM hosted_campaign_head ORDER BY campaign_id")
     statements = [

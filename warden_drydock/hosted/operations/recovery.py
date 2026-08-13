@@ -91,7 +91,14 @@ def verify_manifest(root: pathlib.Path) -> dict[str, object]:
     inventory = manifest.get("snapshot_inventory_digest")
     if not isinstance(inventory, str) or len(inventory) != 64:
         raise ValueError("invalid_snapshot_inventory_digest")
-    for name, expected in manifest.get("files", {}).items():
+    files = manifest.get("files")
+    if not isinstance(files, dict) or set(files) != {"postgres.dump", "snapshots.tar"}:
+        raise ValueError("backup_file_set_mismatch")
+    if manifest.get("secrets_included") is not False:
+        raise ValueError("backup_must_exclude_secrets")
+    for name, expected in files.items():
+        if not isinstance(expected, str) or len(expected) != 64:
+            raise ValueError("invalid_backup_digest")
         path = root / name
         if not path.is_file() or sha256_file(path) != expected:
             raise ValueError("backup_digest_mismatch")

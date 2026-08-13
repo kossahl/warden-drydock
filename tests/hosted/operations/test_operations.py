@@ -88,6 +88,12 @@ class RuntimeTests(unittest.TestCase):
             manifest = build_manifest(root / "postgres.dump", root / "snapshots.tar", snapshot_archive_inventory(root / "snapshots.tar"))
             (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
             self.assertEqual(manifest, verify_manifest(root))
+            incomplete = dict(manifest)
+            incomplete["files"] = {"snapshots.tar": manifest["files"]["snapshots.tar"]}
+            (root / "manifest.json").write_text(json.dumps(incomplete), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "backup_file_set_mismatch"):
+                verify_manifest(root)
+            (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
             (root / "postgres.dump").write_bytes(b"changed")
             with self.assertRaisesRegex(ValueError, "backup_digest_mismatch"):
                 verify_manifest(root)
