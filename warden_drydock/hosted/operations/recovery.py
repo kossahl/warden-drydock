@@ -20,6 +20,7 @@ def safe_members(members: Iterable[tarfile.TarInfo]) -> list[tarfile.TarInfo]:
     names: set[str] = set()
     for member in members:
         path = pathlib.PurePosixPath(member.name)
+        normalized = path.as_posix()
         if (
             path.is_absolute()
             or ".." in path.parts
@@ -28,10 +29,16 @@ def safe_members(members: Iterable[tarfile.TarInfo]) -> list[tarfile.TarInfo]:
             or member.issym()
             or member.islnk()
             or not (member.isfile() or member.isdir())
-            or member.name in names
+            or member.name != normalized
+            or normalized in names
+            or any(
+                normalized.startswith(existing.rstrip("/") + "/")
+                and not existing.endswith("/")
+                for existing in names
+            )
         ):
             raise ValueError("unsafe_backup_member")
-        names.add(member.name)
+        names.add(normalized)
         accepted.append(member)
     return accepted
 
@@ -41,10 +48,10 @@ def create_snapshot_archive(source: pathlib.Path, destination: pathlib.Path) -> 
         archive.add(source, arcname="snapshots", recursive=True)
     with tarfile.open(destination, "r") as archive:
         members = safe_members(archive.getmembers())
-        identity = "".join(
+        identity = "".join(sorted(
             f"{member.name}:{hashlib.sha256(archive.extractfile(member).read()).hexdigest()}\n"
             for member in members if member.isfile()
-        ).encode("utf-8")
+        )).encode("utf-8")
     return hashlib.sha256(identity).hexdigest()
 
 
@@ -59,10 +66,10 @@ def extract_snapshot_archive(archive_path: pathlib.Path, destination: pathlib.Pa
 def snapshot_archive_inventory(archive_path: pathlib.Path) -> str:
     with tarfile.open(archive_path, "r") as archive:
         members = safe_members(archive.getmembers())
-        identity = "".join(
+        identity = "".join(sorted(
             f"{member.name}:{hashlib.sha256(archive.extractfile(member).read()).hexdigest()}\n"
             for member in members if member.isfile()
-        ).encode("utf-8")
+        )).encode("utf-8")
     return hashlib.sha256(identity).hexdigest()
 
 

@@ -34,5 +34,9 @@ try {
     Assert-NativeSuccess 'backup manifest verification'
 } finally {
     docker compose exec -T db psql -U drydock -d drydock -v ON_ERROR_STOP=1 -c "UPDATE hosted_runtime_state SET maintenance_mode=false, updated_at=now() WHERE singleton" | Out-Null
-    if ($appWasStopped) { docker compose start app | Out-Null }
+    Assert-NativeSuccess 'maintenance cleanup'
+    if ($appWasStopped) {
+        docker compose start app | Out-Null
+        Assert-NativeSuccess 'application restart'
+    }
 }

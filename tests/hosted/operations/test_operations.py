@@ -101,6 +101,8 @@ class RuntimeTests(unittest.TestCase):
             safe_members([tarfile.TarInfo("../escape")])
         with self.assertRaisesRegex(ValueError, "unsafe_backup_member"):
             safe_members([tarfile.TarInfo("secrets/provider")])
+        with self.assertRaisesRegex(ValueError, "unsafe_backup_member"):
+            safe_members([tarfile.TarInfo("snapshots/a"), tarfile.TarInfo("snapshots/./a")])
 
     def test_build_context_excludes_real_secrets(self) -> None:
         ignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")

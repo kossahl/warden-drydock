@@ -16,6 +16,14 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=os.environ["DRYDOCK_STATIC"], **kwargs)
 
+    def parse_request(self) -> bool:
+        if not super().parse_request():
+            return False
+        if self._binding_allowed():
+            return True
+        self.send_error(HTTPStatus.FORBIDDEN)
+        return False
+
     def end_headers(self) -> None:
         self.send_header("Content-Security-Policy", "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
         self.send_header("X-Content-Type-Options", "nosniff")
