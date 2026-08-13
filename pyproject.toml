@@ -26,7 +26,7 @@ dev = ["build>=1", "PyYAML>=6", "jsonschema>=4.23"]
 drydock = "warden_drydock.cli:main"
 
 [tool.setuptools.package-data]
-warden_drydock = ["data/**/*"]
+warden_drydock = ["data/**/*", "hosted/migrations/*.sql"]
 
 [tool.setuptools.dynamic]
 version = {attr = "warden_drydock.__version__"}
