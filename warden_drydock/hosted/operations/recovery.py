@@ -36,6 +36,10 @@ def safe_members(members: Iterable[tarfile.TarInfo]) -> list[tarfile.TarInfo]:
                 and not is_directory
                 for existing, is_directory in names.items()
             )
+            or (
+                member.isfile()
+                and any(existing.startswith(normalized.rstrip("/") + "/") for existing in names)
+            )
         ):
             raise ValueError("unsafe_backup_member")
         names[normalized] = member.isdir()

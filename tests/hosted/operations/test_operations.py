@@ -103,6 +103,8 @@ class RuntimeTests(unittest.TestCase):
             safe_members([tarfile.TarInfo("secrets/provider")])
         with self.assertRaisesRegex(ValueError, "unsafe_backup_member"):
             safe_members([tarfile.TarInfo("snapshots/a"), tarfile.TarInfo("snapshots/./a")])
+        with self.assertRaisesRegex(ValueError, "unsafe_backup_member"):
+            safe_members([tarfile.TarInfo("snapshots/a"), tarfile.TarInfo("snapshots")])
 
     def test_snapshot_archive_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
