@@ -1,0 +1,14 @@
+{
+  "contract_version": 1,
+  "build_directory": "dist",
+  "entrypoint": "index.html",
+  "asset_prefix": "/assets/",
+  "fallback": {
+    "method": "GET",
+    "accept": "text/html",
+    "serve": "index.html"
+  },
+  "excluded_paths": ["/api"],
+  "excluded_prefixes": ["/api/"],
+  "runtime_tools_forbidden": ["node", "npm", "bun", "vite"]
+}

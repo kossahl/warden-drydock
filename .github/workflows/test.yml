@@ -81,6 +81,31 @@ jobs:
           "$ENVIRONMENT/bin/python" "$CAMPAIGN/scripts/drydock.py" validate
           test ! -d "$CAMPAIGN/.git"
 
+  frontend:
+    name: frontend (Node 24.11.1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Verify pinned npm
+        run: |
+          test "$(node --version)" = "v24.11.1"
+          test "$(npm --version)" = "11.6.2"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - run: npm run build:reproducible
+
   compatibility:
     name: compatibility (3.13)
     if: ${{ github.event_name == 'push' }}

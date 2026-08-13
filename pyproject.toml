@@ -28,5 +28,8 @@ drydock = "warden_drydock.cli:main"
 [tool.setuptools.package-data]
 warden_drydock = ["data/**/*", "hosted/migrations/*.sql"]
 
+[tool.setuptools.packages.find]
+include = ["warden_drydock*"]
+
 [tool.setuptools.dynamic]
 version = {attr = "warden_drydock.__version__"}
