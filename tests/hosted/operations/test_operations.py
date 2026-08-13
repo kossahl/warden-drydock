@@ -89,6 +89,22 @@ class RuntimeTests(unittest.TestCase):
                 verify_manifest(root)
         with self.assertRaisesRegex(ValueError, "unsafe_backup_member"):
             safe_members([tarfile.TarInfo("../escape")])
+        with self.assertRaisesRegex(ValueError, "unsafe_backup_member"):
+            safe_members([tarfile.TarInfo("secrets/provider")])
+
+    def test_build_context_excludes_real_secrets(self) -> None:
+        ignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
+        self.assertIn("docker/secrets/*.txt", ignore)
+        self.assertIn(".git/**", ignore)
+
+    def test_recovery_scripts_fail_closed(self) -> None:
+        backup = (ROOT / "docker" / "backup.ps1").read_text(encoding="utf-8")
+        restore = (ROOT / "docker" / "restore.ps1").read_text(encoding="utf-8")
+        self.assertIn("docker compose stop app", backup)
+        self.assertIn("pending publication intents", backup)
+        self.assertIn("Assert-NativeSuccess", backup)
+        self.assertIn("Restore volume already exists", restore)
+        self.assertLess(restore.index("snapshot restore copy"), restore.index("application startup"))
 
 
 if __name__ == "__main__":

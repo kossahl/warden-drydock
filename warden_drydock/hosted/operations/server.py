@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import urllib.parse
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -28,12 +29,18 @@ class Handler(SimpleHTTPRequestHandler):
         origin = self.headers.get("Origin")
         return origin is None or origin in {f"http://{host}" for host in allowed}
 
+    def _prepare_request(self) -> bool:
+        if self._binding_allowed():
+            return True
+        self.send_error(HTTPStatus.FORBIDDEN)
+        return False
+
     def do_GET(self) -> None:  # noqa: N802
-        if not self._binding_allowed():
-            self.send_error(HTTPStatus.FORBIDDEN)
+        if not self._prepare_request():
             return
-        if self.path in ("/health/live", "/health/ready"):
-            ok = liveness() if self.path.endswith("live") else readiness()
+        path = urllib.parse.urlsplit(self.path).path
+        if path in ("/health/live", "/health/ready"):
+            ok = liveness() if path.endswith("live") else readiness()
             body = json.dumps({"status": "ok" if ok else "unavailable"}).encode()
             self.send_response(HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE)
             self.send_header("Content-Type", "application/json")
@@ -41,14 +48,24 @@ class Handler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if self.path == "/api" or self.path.startswith("/api/"):
+        if path == "/api" or path.startswith("/api/"):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        requested = pathlib.PurePosixPath(self.path.split("?", 1)[0])
+        requested = pathlib.PurePosixPath(path)
         target = pathlib.Path(os.environ["DRYDOCK_STATIC"], *requested.parts[1:])
         if not target.is_file():
             self.path = "/index.html"
         super().do_GET()
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        if not self._prepare_request():
+            return
+        path = urllib.parse.urlsplit(self.path).path
+        if path == "/api" or path.startswith("/api/"):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self.path = path
+        super().do_HEAD()
 
     def log_message(self, format: str, *args) -> None:
         # Request targets can contain campaign content; emit no access log.

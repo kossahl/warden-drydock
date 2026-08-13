@@ -15,7 +15,12 @@ def readiness() -> bool:
         root = pathlib.Path(os.environ[name])
         if not root.is_dir() or not os.access(root, os.R_OK | os.W_OK):
             return False
-    query = "SELECT 1 FROM hosted_schema_migration WHERE version='0002'"
+    query = (
+        "SELECT 1 FROM hosted_runtime_state r "
+        "WHERE r.singleton AND NOT r.maintenance_mode "
+        "AND r.reconciliation_complete AND r.schema_compatibility=1 "
+        "AND EXISTS (SELECT 1 FROM hosted_schema_migration WHERE version='0002')"
+    )
     result = subprocess.run(
         ["psql", os.environ["DATABASE_URL"], "-X", "-At", "-c", query],
         capture_output=True, text=True,

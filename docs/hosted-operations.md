@@ -41,9 +41,11 @@ the browser queue is synchronized, run:
 ./docker/backup.ps1 -Destination ./docker/backups/2026-08-14 -AcknowledgeUnsynchronizedBrowserData
 ```
 
-The command enters maintenance mode, creates and lists a PostgreSQL custom
-dump, archives snapshots, records hashes and inventory identity, verifies the
-manifest, excludes provider secrets, and always leaves maintenance mode.
+The command stops `app` as the write barrier, rejects unresolved publication
+intents, enters maintenance mode, creates and lists a PostgreSQL custom dump,
+copies the stopped snapshot volume, archives it, records hashes and inventory
+identity, verifies the manifest, excludes provider secrets, and restarts the
+application. A failed native command terminates the workflow.
 
 ## Restore drill and rollback
 
@@ -53,9 +55,13 @@ Restore to a new Compose project name, never over the running project:
 ./docker/restore.ps1 -Backup ./docker/backups/2026-08-14 -RestoreProject drydock-restore-drill
 ```
 
-The command verifies hashes, starts fresh named volumes, restores PostgreSQL in
-one transaction, validates archive members, restores snapshots, and checks
-readiness. The original project and volumes remain the rollback target. Do not
+The command fails if the restore project or any of its expected volumes already
+exists. It uses an ephemeral host port so the original app can remain available
+as the rollback target. It verifies hashes, starts fresh named volumes, restores PostgreSQL in
+one transaction, restricts archive members to the snapshot namespace, restores
+snapshots before normal service, reconciles intent bindings, rebuilds
+projections, and only then enables readiness. The original project and volumes
+remain the rollback target. Do not
 run `docker compose down --volumes` against either project until the Warden has
 accepted the restored heads, snapshot inventory, and projection digests.
 Provider secrets are excluded; restored service remains behind provider setup

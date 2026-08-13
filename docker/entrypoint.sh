@@ -8,4 +8,5 @@ fi
 export PGPASSWORD="$(cat /run/secrets/db_password)"
 python -m warden_drydock.hosted.operations.runtime_guard
 python -m warden_drydock.hosted.operations.migrate
+python -m warden_drydock.hosted.operations.recover
 exec "$@"

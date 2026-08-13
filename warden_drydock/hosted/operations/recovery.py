@@ -17,12 +17,42 @@ def sha256_file(path: pathlib.Path) -> str:
 
 def safe_members(members: Iterable[tarfile.TarInfo]) -> list[tarfile.TarInfo]:
     accepted = []
+    names: set[str] = set()
     for member in members:
         path = pathlib.PurePosixPath(member.name)
-        if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or not path.parts
+            or path.parts[0] != "snapshots"
+            or member.issym()
+            or member.islnk()
+            or not (member.isfile() or member.isdir())
+            or member.name in names
+        ):
             raise ValueError("unsafe_backup_member")
+        names.add(member.name)
         accepted.append(member)
     return accepted
+
+
+def create_snapshot_archive(source: pathlib.Path, destination: pathlib.Path) -> str:
+    with tarfile.open(destination, "w") as archive:
+        archive.add(source, arcname="snapshots", recursive=True)
+    with tarfile.open(destination, "r") as archive:
+        members = safe_members(archive.getmembers())
+        identity = "".join(
+            f"{member.name}:{member.size}\n" for member in members if member.isfile()
+        ).encode("utf-8")
+    return hashlib.sha256(identity).hexdigest()
+
+
+def extract_snapshot_archive(archive_path: pathlib.Path, destination: pathlib.Path) -> pathlib.Path:
+    staging = destination / "snapshot-restore-staging"
+    staging.mkdir(parents=True, exist_ok=False)
+    with tarfile.open(archive_path, "r") as archive:
+        archive.extractall(staging, members=safe_members(archive.getmembers()), filter="data")
+    return staging / "snapshots"
 
 
 def build_manifest(
