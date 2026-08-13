@@ -17,7 +17,7 @@ def sha256_file(path: pathlib.Path) -> str:
 
 def safe_members(members: Iterable[tarfile.TarInfo]) -> list[tarfile.TarInfo]:
     accepted = []
-    names: set[str] = set()
+    names: dict[str, bool] = {}
     for member in members:
         path = pathlib.PurePosixPath(member.name)
         normalized = path.as_posix()
@@ -33,12 +33,12 @@ def safe_members(members: Iterable[tarfile.TarInfo]) -> list[tarfile.TarInfo]:
             or normalized in names
             or any(
                 normalized.startswith(existing.rstrip("/") + "/")
-                and not existing.endswith("/")
-                for existing in names
+                and not is_directory
+                for existing, is_directory in names.items()
             )
         ):
             raise ValueError("unsafe_backup_member")
-        names.add(normalized)
+        names[normalized] = member.isdir()
         accepted.append(member)
     return accepted
 

@@ -11,7 +11,7 @@ import unittest
 import yaml
 
 from warden_drydock.hosted.operations.migrate import migration_body, migration_files
-from warden_drydock.hosted.operations.recovery import build_manifest, safe_members, snapshot_archive_inventory, verify_manifest
+from warden_drydock.hosted.operations.recovery import build_manifest, create_snapshot_archive, extract_snapshot_archive, safe_members, snapshot_archive_inventory, verify_manifest
 from warden_drydock.hosted.operations.runtime_guard import parse_version, require_minimum
 from warden_drydock.hosted.operations.secrets import SecretStore
 
@@ -103,6 +103,18 @@ class RuntimeTests(unittest.TestCase):
             safe_members([tarfile.TarInfo("secrets/provider")])
         with self.assertRaisesRegex(ValueError, "unsafe_backup_member"):
             safe_members([tarfile.TarInfo("snapshots/a"), tarfile.TarInfo("snapshots/./a")])
+
+    def test_snapshot_archive_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"
+            (source / "nested").mkdir(parents=True)
+            (source / "nested" / "snapshot.txt").write_text("content", encoding="utf-8")
+            archive = root / "snapshots.tar"
+            inventory = create_snapshot_archive(source, archive)
+            self.assertEqual(inventory, snapshot_archive_inventory(archive))
+            restored = extract_snapshot_archive(archive, root)
+            self.assertEqual("content", (restored / "nested" / "snapshot.txt").read_text(encoding="utf-8"))
 
     def test_build_context_excludes_real_secrets(self) -> None:
         ignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
