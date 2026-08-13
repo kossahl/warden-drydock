@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Added the hardened two-service localhost Compose runtime, reviewed startup
+  migrations, health checks, provider-secret storage boundary, and verified
+  backup/restore workflow for the Hosted MVP operations baseline.
+
 ## 0.2.0 - Mothership 1e Narrative Adapter
 
 - Expanded the Mothership adapter to 20 narrative record types covering the

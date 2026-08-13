@@ -49,6 +49,8 @@ The current implementation provides:
 - versioned hosted data, authority, workflow, and recovery contracts;
 - a typed non-publishing hosted engine facade for deterministic initialization,
   indexing, context, validation, retrieval, and exact-diff staging;
+- immutable hosted revision and projection persistence plus a hardened
+  two-service localhost Compose operations baseline;
 - agent instruction files;
 - architecture decision records;
 - deterministic generator tests.
@@ -68,8 +70,9 @@ detected and require an explicit `--apply` flag.
 
 ## Current implementation boundary
 
-- No browser application, hosted API service, PostgreSQL persistence, Compose
-  runtime, or provider integration is implemented yet.
+- The browser and hosted API remain incomplete, and provider integration is not
+  implemented. The committed Compose baseline is an operations foundation, not
+  a claim that the full vertical slice is available.
 - Notion integration.
 - Obsidian as a required dependency.
 - Git submodules between framework and campaigns.

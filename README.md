@@ -98,6 +98,7 @@ Warden-only headings.
 - `warden_drydock/core/`: system-agnostic project generation and validation
 - `warden_drydock/standalone.py`: portable campaign maintenance implementation
 - `warden_drydock/hosted/engine/`: typed, non-publishing facade over deterministic operations
+- `warden_drydock/hosted/operations/`: localhost runtime, migration, health, secret, and recovery boundaries
 - `warden_drydock/data/adapters/`: RPG-system adapter assets
 - `warden_drydock/data/project_template/`: generic generated campaign files
 - `docs/contracts/hosted/`: versioned hosted data and authority contracts
@@ -140,6 +141,9 @@ The package remains distributed from its pinned GitHub tag rather than a
 package registry.
 
 The repository also contains the implemented Hosted MVP foundation: accepted
-hosted ADRs, versioned executable contracts, and a typed deterministic engine
-facade. It does not yet contain the browser application, API service,
-PostgreSQL persistence, Compose runtime, or provider integration.
+hosted ADRs, versioned executable contracts, a typed deterministic engine
+facade, immutable revision/projection persistence, the frontend foundation, and
+the hardened two-service Compose operations baseline. See
+[`docs/hosted-operations.md`](docs/hosted-operations.md) for runtime and recovery
+instructions. Provider integration and the complete API service remain future
+work packages.

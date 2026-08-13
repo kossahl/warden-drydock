@@ -1,0 +1,108 @@
+name: warden-drydock
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/app.Dockerfile
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - target: 8080
+        published: "8080"
+        host_ip: 127.0.0.1
+        protocol: tcp
+    networks:
+      - backend
+      - egress
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://drydock@db:5432/drydock
+      DRYDOCK_ALLOWED_HOSTS: localhost:8080,127.0.0.1:8080
+      DRYDOCK_MIGRATIONS: /app/warden_drydock/hosted/migrations
+      DRYDOCK_SNAPSHOTS: /var/lib/drydock/snapshots
+      DRYDOCK_SECRETS: /var/lib/drydock/secrets
+      DRYDOCK_STATIC: /app/web/dist
+    secrets:
+      - db_password
+    volumes:
+      - snapshots:/var/lib/drydock/snapshots
+      - provider_secrets:/var/lib/drydock/secrets
+    tmpfs:
+      - /tmp:size=64m,mode=1770,uid=10001,gid=10001
+    healthcheck:
+      test: [CMD, python, -m, warden_drydock.hosted.operations.health, --ready]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+      start_interval: 2s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  db:
+    image: postgres:17.6-bookworm
+    user: postgres
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+    environment:
+      POSTGRES_DB: drydock
+      POSTGRES_USER: drydock
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    secrets:
+      - db_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    tmpfs:
+      - /tmp:size=64m,mode=1770,uid=999,gid=999
+      - /var/run/postgresql:size=16m,mode=3775,uid=999,gid=999
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U drydock -d drydock]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+      start_interval: 2s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  backend:
+    internal: true
+  egress: {}
+
+volumes:
+  postgres_data: {}
+  snapshots: {}
+  provider_secrets: {}
+
+secrets:
+  db_password:
+    file: ./docker/secrets/db_password.txt
