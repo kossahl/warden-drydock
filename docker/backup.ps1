@@ -13,6 +13,7 @@ if (Test-Path -LiteralPath $Destination) { throw 'Backup destination already exi
 New-Item -ItemType Directory -Path $Destination | Out-Null
 $appWasStopped = $false
 $dumpPath = '/var/lib/postgresql/data/.drydock-backup.dump'
+$primaryError = $null
 try {
     docker compose stop app
     Assert-NativeSuccess 'application maintenance stop'
@@ -33,13 +34,29 @@ try {
     Assert-NativeSuccess 'backup manifest creation'
     python -c "import pathlib; from warden_drydock.hosted.operations.recovery import verify_manifest; verify_manifest(pathlib.Path(r'$Destination'))"
     Assert-NativeSuccess 'backup manifest verification'
+} catch {
+    $primaryError = $_
 } finally {
-    docker compose exec -T db rm -f $dumpPath | Out-Null
-    Assert-NativeSuccess 'database dump staging cleanup'
-    docker compose exec -T db psql -U drydock -d drydock -v ON_ERROR_STOP=1 -c "UPDATE hosted_runtime_state SET maintenance_mode=false, updated_at=now() WHERE singleton" | Out-Null
-    Assert-NativeSuccess 'maintenance cleanup'
+    $cleanupErrors = @()
+    try {
+        docker compose exec -T db rm -f $dumpPath | Out-Null
+        Assert-NativeSuccess 'database dump staging cleanup'
+    } catch { $cleanupErrors += $_.Exception.Message }
+    try {
+        docker compose exec -T db psql -U drydock -d drydock -v ON_ERROR_STOP=1 -c "UPDATE hosted_runtime_state SET maintenance_mode=false, updated_at=now() WHERE singleton" | Out-Null
+        Assert-NativeSuccess 'maintenance cleanup'
+    } catch { $cleanupErrors += $_.Exception.Message }
     if ($appWasStopped) {
-        docker compose start app | Out-Null
-        Assert-NativeSuccess 'application restart'
+        try {
+            docker compose start app | Out-Null
+            Assert-NativeSuccess 'application restart'
+        } catch { $cleanupErrors += $_.Exception.Message }
+    }
+    if ($primaryError) {
+        if ($cleanupErrors.Count -gt 0) { throw "$($primaryError.Exception.Message) Cleanup failures: $($cleanupErrors -join '; ')" }
+        throw $primaryError
+    }
+    if ($cleanupErrors.Count -gt 0) {
+        throw "Backup cleanup failures: $($cleanupErrors -join '; ')"
     }
 }

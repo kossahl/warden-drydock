@@ -36,6 +36,7 @@ class ComposePolicyTests(unittest.TestCase):
         self.assertNotIn("ports", db)
         self.assertEqual(["backend"], db["networks"])
         self.assertTrue(self.compose["networks"]["backend"]["internal"])
+        self.assertIn("/proc/1/comm", self.compose["services"]["db"]["healthcheck"]["test"][1])
 
     def test_containers_are_hardened(self) -> None:
         for service in self.compose["services"].values():
@@ -136,8 +137,12 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("/var/lib/postgresql/data/.drydock-backup.dump", backup)
         self.assertIn("Restore volume already exists", restore)
         self.assertIn("docker volume ls --quiet", restore)
+        self.assertIn("finally", restore)
         self.assertIn("/var/lib/postgresql/data/.drydock-restore.dump", restore)
         self.assertLess(restore.index("snapshot restore copy"), restore.index("application startup"))
+        initializer = (ROOT / "docker" / "initialize-secrets.ps1").read_text(encoding="utf-8")
+        self.assertIn("cmp -s", initializer)
+        self.assertIn("440 0:20000", initializer)
 
 
 if __name__ == "__main__":

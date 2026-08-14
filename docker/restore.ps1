@@ -32,12 +32,23 @@ Assert-NativeSuccess 'restored application image build'
 & (Join-Path $PSScriptRoot 'initialize-secrets.ps1') -ProjectName $RestoreProject
 docker compose --project-name $RestoreProject up -d --wait db
 Assert-NativeSuccess 'fresh database startup'
-docker compose --project-name $RestoreProject cp (Join-Path $Backup 'postgres.dump') "db:${dumpPath}"
-Assert-NativeSuccess 'PostgreSQL dump copy'
-docker compose --project-name $RestoreProject exec -T db pg_restore -U drydock -d drydock --clean --if-exists --exit-on-error --single-transaction $dumpPath
-Assert-NativeSuccess 'PostgreSQL restore'
-docker compose --project-name $RestoreProject exec -T db rm -f $dumpPath
-Assert-NativeSuccess 'PostgreSQL restore staging cleanup'
+$restoreError = $null
+try {
+    docker compose --project-name $RestoreProject cp (Join-Path $Backup 'postgres.dump') "db:${dumpPath}"
+    Assert-NativeSuccess 'PostgreSQL dump copy'
+    docker compose --project-name $RestoreProject exec -T db pg_restore -U drydock -d drydock --clean --if-exists --exit-on-error --single-transaction $dumpPath
+    Assert-NativeSuccess 'PostgreSQL restore'
+} catch {
+    $restoreError = $_
+} finally {
+    docker compose --project-name $RestoreProject exec -T db rm -f $dumpPath
+    $cleanupExit = $LASTEXITCODE
+}
+if ($restoreError) {
+    if ($cleanupExit -ne 0) { throw "$($restoreError.Exception.Message) Restore staging cleanup failed with exit code $cleanupExit" }
+    throw $restoreError
+}
+if ($cleanupExit -ne 0) { throw "PostgreSQL restore staging cleanup failed with exit code $cleanupExit" }
 docker compose --project-name $RestoreProject create app
 Assert-NativeSuccess 'application recovery container creation'
 docker compose --project-name $RestoreProject cp (Join-Path $stagingRoot 'snapshots\.') app:/var/lib/drydock/snapshots
