@@ -16,8 +16,15 @@ password, then start the two-service runtime:
 
 ```powershell
 docker compose config --quiet
+docker compose build app
+./docker/initialize-secrets.ps1
 docker compose up --build --wait
 ```
+
+The initialization step copies the database credential into a project-scoped
+Docker volume as `root:20000` with mode `0440`. Both runtime users receive only
+that supplemental read group. This avoids Docker Desktop's Windows file-secret
+mount behavior, which cannot enforce Compose `uid`, `gid`, or `mode` fields.
 
 Only `app` publishes `127.0.0.1:8080`. PostgreSQL is internal-only. Use
 `docker/compose.ipv6.yaml` only after verifying `::1` binding and LAN isolation
@@ -64,5 +71,6 @@ projections, and only then enables readiness. The original project and volumes
 remain the rollback target. Do not
 run `docker compose down --volumes` against either project until the Warden has
 accepted the restored heads, snapshot inventory, and projection digests.
-Provider secrets are excluded; restored service remains behind provider setup
+Database and provider secrets are excluded; restore initializes a fresh
+database-secret volume from current local configuration. The restored service remains behind provider setup
 and renewed-consent gates.

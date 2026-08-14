@@ -7,6 +7,7 @@ services:
       dockerfile: docker/app.Dockerfile
     init: true
     user: "10001:10001"
+    group_add: ["20000"]
     read_only: true
     cap_drop: [ALL]
     security_opt:
@@ -29,11 +30,10 @@ services:
       DRYDOCK_SNAPSHOTS: /var/lib/drydock/snapshots
       DRYDOCK_SECRETS: /var/lib/drydock/secrets
       DRYDOCK_STATIC: /app/web/dist
-    secrets:
-      - db_password
     volumes:
       - snapshots:/var/lib/drydock/snapshots
       - provider_secrets:/var/lib/drydock/secrets
+      - database_secrets:/run/secrets:ro
     tmpfs:
       - /tmp:size=64m,mode=1770,uid=10001,gid=10001
     healthcheck:
@@ -57,6 +57,7 @@ services:
   db:
     image: postgres:17.6-bookworm
     user: postgres
+    group_add: ["20000"]
     read_only: true
     cap_drop: [ALL]
     security_opt:
@@ -68,10 +69,9 @@ services:
       POSTGRES_USER: drydock
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
       PGDATA: /var/lib/postgresql/data/pgdata
-    secrets:
-      - db_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - database_secrets:/run/secrets:ro
     tmpfs:
       - /tmp:size=64m,mode=1770,uid=999,gid=999
       - /var/run/postgresql:size=16m,mode=3775,uid=999,gid=999
@@ -102,7 +102,6 @@ volumes:
   postgres_data: {}
   snapshots: {}
   provider_secrets: {}
-
-secrets:
-  db_password:
-    file: ./docker/secrets/db_password.txt
+  database_secrets:
+    external: true
+    name: "${COMPOSE_PROJECT_NAME:-warden-drydock}_database_secrets"

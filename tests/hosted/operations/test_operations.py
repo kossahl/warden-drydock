@@ -50,6 +50,10 @@ class ComposePolicyTests(unittest.TestCase):
         rendered = json.dumps(self.compose["services"])
         self.assertNotIn("POSTGRES_PASSWORD\"", rendered)
         self.assertNotIn("PROVIDER_API_KEY", rendered)
+        for service in self.compose["services"].values():
+            self.assertEqual(["20000"], service["group_add"])
+            self.assertIn("database_secrets:/run/secrets:ro", service["volumes"])
+        self.assertIn("database_secrets", self.compose["volumes"])
 
 
 class RuntimeTests(unittest.TestCase):
@@ -129,7 +133,10 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("docker compose stop app", backup)
         self.assertIn("pending publication intents", backup)
         self.assertIn("Assert-NativeSuccess", backup)
+        self.assertIn("/var/lib/postgresql/data/.drydock-backup.dump", backup)
         self.assertIn("Restore volume already exists", restore)
+        self.assertIn("docker volume ls --quiet", restore)
+        self.assertIn("/var/lib/postgresql/data/.drydock-restore.dump", restore)
         self.assertLess(restore.index("snapshot restore copy"), restore.index("application startup"))
 
 
