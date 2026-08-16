@@ -1,0 +1,13 @@
+services:
+  app:
+    environment:
+      DRYDOCK_ALLOWED_HOSTS: localhost:8080,127.0.0.1:8080,[::1]:8080
+    ports:
+      - target: 8080
+        published: "8080"
+        host_ip: 127.0.0.1
+        protocol: tcp
+      - target: 8080
+        published: "8080"
+        host_ip: "::1"
+        protocol: tcp
