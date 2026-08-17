@@ -1,0 +1,1845 @@
+{
+  "actual_metered_spend_usd": 0.1236374,
+  "authorization": {
+    "hard_metered_cap_usd": 5.0,
+    "maximum_attempts": 72,
+    "planned_calls": 36
+  },
+  "blind_review": {
+    "identity_mapping": {
+      "A": "gpt-5.6-luna",
+      "B": "gpt-5.6-terra"
+    },
+    "verdict": "neither surviving group clearly dominates"
+  },
+  "completed_calls": 36,
+  "contract": "provider-bakeoff-evidence.v1",
+  "decision": "tradeoff requires Warden priority decision; no provider/model selected",
+  "decision_rationale": "claude-sonnet-5 is disqualified by one empty Generate result; Terra has the higher blinded group utility and better p95 latency, while Luna is much cheaper with comparable p50 latency; the accepted rule forbids a hidden weighting",
+  "discarded_invalid_run": {
+    "http_400": 36,
+    "metered_spend_usd": 0.0,
+    "per_candidate": 12,
+    "retries": 0,
+    "scored": false,
+    "tokens_or_model_ids": 0
+  },
+  "evidence_sha256": "7a45daf26feeb0d08da1cff807013426c05eef82b376b0231354ddffb144285f",
+  "execution_date": "2026-08-17",
+  "fixture_manifest": {
+    "base_revision": "fixture-erebos-r3",
+    "campaign_id": "campaign-erebos",
+    "contract_version": "provider-bakeoff-fixture.v1",
+    "entries": [
+      {
+        "bytes": 145,
+        "kind": "record",
+        "sha256": "7ad675ec23d7dbc50a063ea5101c0eb4ffda54c809264ab2a529442801943441",
+        "source_id": "faction-helix"
+      },
+      {
+        "bytes": 262,
+        "kind": "record",
+        "sha256": "0c45407317214a229f949edd1b14812ee75b32c419b6ceda29f3e82bfb717782",
+        "source_id": "location-erebos"
+      },
+      {
+        "bytes": 187,
+        "kind": "record",
+        "sha256": "80df9d566d7b1dada2f64aa6dc36fbfabc08d49a9b8bf65f99b27561e85cdc67",
+        "source_id": "location-infirmary"
+      },
+      {
+        "bytes": 170,
+        "kind": "record",
+        "sha256": "af4c7a90582161056131d5bd115f0823f5af489965658ba26bd5639c9c9724ed",
+        "source_id": "npc-vale"
+      },
+      {
+        "bytes": 196,
+        "kind": "record",
+        "sha256": "90117f94f3be6f944f4974231e4293dc64e2633b8e55ddaa5f64594819086c29",
+        "source_id": "prep-erebos"
+      },
+      {
+        "bytes": 219,
+        "kind": "record",
+        "sha256": "f17bd723c33e172877deeb2ee9e2c7509bd88166d9254249c6422599a59d83b3",
+        "source_id": "session-003"
+      },
+      {
+        "bytes": 260,
+        "kind": "live_operation",
+        "sha256": "102fa8849845110b0793bd590c9c6e341b696302f7bed05832ad574b584abfd6",
+        "source_id": "op-confirmed-001"
+      },
+      {
+        "bytes": 230,
+        "kind": "live_operation",
+        "sha256": "ad9235e5abbcb3c7879c4c2bbb11734d7cc46596f9a322236f0af3b92e5487fc",
+        "source_id": "op-question-001"
+      }
+    ],
+    "envelopes": [
+      {
+        "sha256": "16c8b4d0bddaa3d2207960e2addc118cbf85403975c1916bf3195414534b5686",
+        "task_id": "ask-airlock-v1"
+      },
+      {
+        "sha256": "1c601c64585bc2add2dbab8c7d811a9da90e23438e5e040daa7552deca832cc8",
+        "task_id": "check-vale-death-v1"
+      },
+      {
+        "sha256": "19625360e8ec4b91d52590bbc37ddfb8b959583efebaba7fb4df5fe12ae18ad7",
+        "task_id": "generate-infirmary-v1"
+      },
+      {
+        "sha256": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+        "task_id": "tool-beacon-debrief-v1"
+      }
+    ],
+    "manifest_sha256": "36e1251b2e8ebd48ed6ad6d6b22b800d2ac153e60882b6bf100916825c46dd95"
+  },
+  "harness_base_commit": "1e513c2ebe2197981308870388c307ecc0482f7a",
+  "known_evidence_gap": "Per-run token categories are unavailable because the local sanitizer redacted keys containing 'token' after actual cost was computed. No token values are inferred; the sanitizer regression is fixed for future runs.",
+  "models": [
+    "gpt-5.6-terra",
+    "claude-sonnet-5",
+    "gpt-5.6-luna"
+  ],
+  "official_evidence_checked": {
+    "anthropic_model": "https://platform.claude.com/docs/en/about-claude/models/overview",
+    "anthropic_pricing": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "anthropic_retention": "https://platform.claude.com/docs/en/manage-claude/api-and-data-retention",
+    "openai_data": "https://developers.openai.com/api/docs/guides/your-data",
+    "openai_models": [
+      "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+      "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+    ],
+    "openai_pricing": "https://developers.openai.com/api/docs/pricing"
+  },
+  "post_evaluation_product_decision": {
+    "basis": "passed every hard gate, was sufficient for the prototype, had similar measured p50 latency to Terra, and cost about 9.3 times less in this run",
+    "decision_date": "2026-08-17",
+    "decision_maker": "Warden",
+    "public_mvp_provider_selected": false,
+    "scope": "local personal Windows prototype/pilot",
+    "selected_model": "gpt-5.6-luna"
+  },
+  "runs": [
+    {
+      "actual_cost_usd": 0.005946,
+      "attempts": 1,
+      "latency_ms": 6229.183,
+      "model": "claude-sonnet-5",
+      "model_returned": "claude-sonnet-5",
+      "planned_call_id": "check-vale-death-v1-r1-claude-sonnet-5",
+      "provider": "anthropic",
+      "repetition": 1,
+      "request_sha256": "40260b44615cc9cb4bc2234f50a37d0e606f804277cc9409b96f3865682eaca1",
+      "response_artifact_sha256": "9583ee6df5d966d7e21aaa14eb717fc0a6c08679fd61e1ced0b475ddb3489e68",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "explanation": "The canon record for Vale (npc-vale) states no canon death event is recorded. The confirmed fact op-confirmed-001 only establishes that Vale entered the Helix relay and activated the beacon, with no mention of death. The prediction in prep-erebos that 'Vale will die' is a draft preparation, not a confirmed or canon fact, and cannot be used to establish claims. Therefore, the claim that Vale is dead is not established by the available canon and confirmed sources.",
+        "source_ids": [
+          "npc-vale",
+          "op-confirmed-001",
+          "prep-erebos"
+        ],
+        "status": "Draft",
+        "verdict": "not_established"
+      },
+      "source_ids": [
+        "npc-vale",
+        "prep-erebos",
+        "op-confirmed-001"
+      ],
+      "source_set_digest": "1c601c64585bc2add2dbab8c7d811a9da90e23438e5e040daa7552deca832cc8",
+      "task_id": "check-vale-death-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4277,
+      "transmitted_characters": 4277,
+      "ttft_ms": 3643.024,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.003346,
+      "attempts": 1,
+      "latency_ms": 2752.795,
+      "model": "gpt-5.6-terra",
+      "model_returned": "gpt-5.6-terra",
+      "planned_call_id": "check-vale-death-v1-r1-gpt-5.6-terra",
+      "provider": "openai",
+      "repetition": 1,
+      "request_sha256": "2b7a47e0d1ed43f509e64dc7b71d52fdc7a588e8835b82cf4622c454fcfd1cf7",
+      "response_artifact_sha256": "7d445a4ebbf5c429258256eb5db64bc168650f408084521a0960b3b548030301",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "explanation": "Not established. Canon source npc-vale explicitly states that no canon death event is recorded for Vale. Confirmed source op-confirmed-001 records Vale entering the Helix relay and activating the beacon, not a death. The prediction in prep-erebos says Vale will die, but it is draft preparation and cannot establish the claim.",
+        "source_ids": [
+          "npc-vale",
+          "op-confirmed-001",
+          "prep-erebos"
+        ],
+        "status": "Draft",
+        "verdict": "not_established"
+      },
+      "source_ids": [
+        "npc-vale",
+        "prep-erebos",
+        "op-confirmed-001"
+      ],
+      "source_set_digest": "1c601c64585bc2add2dbab8c7d811a9da90e23438e5e040daa7552deca832cc8",
+      "task_id": "check-vale-death-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4399,
+      "transmitted_characters": 4399,
+      "ttft_ms": 1556.619,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.0003238,
+      "attempts": 1,
+      "latency_ms": 1898.821,
+      "model": "gpt-5.6-luna",
+      "model_returned": "gpt-5.6-luna",
+      "planned_call_id": "check-vale-death-v1-r1-gpt-5.6-luna",
+      "provider": "openai",
+      "repetition": 1,
+      "request_sha256": "8113f7571980e265cd636dc2ab2a4d1d2f1ce580070a100c8e910c606b1534d4",
+      "response_artifact_sha256": "4d5a5a672d0ea01068ada32f48992f1529131c697bff5870e8c4150414bf085b",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "explanation": "The claim that Vale is dead is not established. The canon record explicitly states that no canon death event is recorded for Vale. The preparation source predicts Vale will die, but preparation is not a confirmed fact. The confirmed fact only establishes that Vale entered the Helix relay and activated the beacon.",
+        "source_ids": [
+          "npc-vale",
+          "prep-erebos",
+          "op-confirmed-001"
+        ],
+        "status": "Draft",
+        "verdict": "not_established"
+      },
+      "source_ids": [
+        "npc-vale",
+        "prep-erebos",
+        "op-confirmed-001"
+      ],
+      "source_set_digest": "1c601c64585bc2add2dbab8c7d811a9da90e23438e5e040daa7552deca832cc8",
+      "task_id": "check-vale-death-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4398,
+      "transmitted_characters": 4398,
+      "ttft_ms": 945.695,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.004744,
+      "attempts": 1,
+      "latency_ms": 5772.599,
+      "model": "claude-sonnet-5",
+      "model_returned": "claude-sonnet-5",
+      "planned_call_id": "generate-infirmary-v1-r2-claude-sonnet-5",
+      "provider": "anthropic",
+      "repetition": 2,
+      "request_sha256": "c076926e08d44cf88a8466bb1041f2ceb44ce8a23d87c6186fbb594c835b31b3",
+      "response_artifact_sha256": "4646d9d4fe3ff3662a869ab8ef59abed3ae3d1bdf6ef3063e0fc4bcc4717243f",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "details": [
+          "Draft: The infirmary's power hums steadily, a low electrical whir consistent with its canon status as powered and available to the crew.",
+          "Draft: Bright, functional lighting characteristic of an active, powered medical bay illuminates the space evenly.",
+          "Draft: The air carries the faint, clean scent typical of a maintained, operational infirmary space."
+        ],
+        "source_ids": [
+          "location-infirmary"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-infirmary"
+      ],
+      "source_set_digest": "19625360e8ec4b91d52590bbc37ddfb8b959583efebaba7fb4df5fe12ae18ad7",
+      "task_id": "generate-infirmary-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 3713,
+      "transmitted_characters": 3713,
+      "ttft_ms": 3190.592,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.00036179999999999996,
+      "attempts": 1,
+      "latency_ms": 4765.417,
+      "model": "gpt-5.6-luna",
+      "model_returned": "gpt-5.6-luna",
+      "planned_call_id": "generate-infirmary-v1-r2-gpt-5.6-luna",
+      "provider": "openai",
+      "repetition": 2,
+      "request_sha256": "6db7ecdc89c3756241ae9cc8a04c9724eceeba02c5eec9b66abe710fb429ca38",
+      "response_artifact_sha256": "45eb316fee204b19a1aa556885de66adc1c806f21d6d7ea2d9822f2e1d36e35d",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "details": [
+          "A low electrical hum suggests that the infirmary is powered.",
+          "The room feels available and ready for the crew’s use.",
+          "The infirmary’s powered systems lend the space a quiet sense of readiness."
+        ],
+        "source_ids": [
+          "location-infirmary"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-infirmary"
+      ],
+      "source_set_digest": "19625360e8ec4b91d52590bbc37ddfb8b959583efebaba7fb4df5fe12ae18ad7",
+      "task_id": "generate-infirmary-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 3837,
+      "transmitted_characters": 3837,
+      "ttft_ms": 1528.162,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.002382,
+      "attempts": 1,
+      "latency_ms": 4586.402,
+      "model": "gpt-5.6-terra",
+      "model_returned": "gpt-5.6-terra",
+      "planned_call_id": "generate-infirmary-v1-r2-gpt-5.6-terra",
+      "provider": "openai",
+      "repetition": 2,
+      "request_sha256": "a0e35b83eb30c5f24203d0e1be85f35d20f765fe58b622cf470c0501cb39cc78",
+      "response_artifact_sha256": "a92a5f3cf48372dcdb4e0b651aef28631af69936a542132e60d239a135da33bc",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "details": [
+          "A steady electrical hum underscores the powered infirmary.",
+          "The air carries a clean, antiseptic scent.",
+          "Available medical equipment casts a soft operational glow."
+        ],
+        "source_ids": [
+          "location-infirmary"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-infirmary"
+      ],
+      "source_set_digest": "19625360e8ec4b91d52590bbc37ddfb8b959583efebaba7fb4df5fe12ae18ad7",
+      "task_id": "generate-infirmary-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 3838,
+      "transmitted_characters": 3838,
+      "ttft_ms": 497.829,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.002838,
+      "attempts": 1,
+      "latency_ms": 1958.741,
+      "model": "gpt-5.6-terra",
+      "model_returned": "gpt-5.6-terra",
+      "planned_call_id": "ask-airlock-v1-r3-gpt-5.6-terra",
+      "provider": "openai",
+      "repetition": 3,
+      "request_sha256": "f7e205196336eccaf4a1a379429329f995b0d32f4132d9bed3950f8825b6b569",
+      "response_artifact_sha256": "145a68944bbd507d111759a01ffbcc7e5eab280c742f7d2d8579f37e67382f2e",
+      "result": {
+        "answer": "The Erebos airlock is currently open. It was opened by the crew at 22:10 during the relay breach, and it remains open. Vale has access to it, while Helix owns its control relay.",
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "location-erebos",
+          "session-003"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-erebos",
+        "session-003"
+      ],
+      "source_set_digest": "16c8b4d0bddaa3d2207960e2addc118cbf85403975c1916bf3195414534b5686",
+      "task_id": "ask-airlock-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4147,
+      "transmitted_characters": 4147,
+      "ttft_ms": 764.272,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.006228,
+      "attempts": 1,
+      "latency_ms": 7769.588,
+      "model": "claude-sonnet-5",
+      "model_returned": "claude-sonnet-5",
+      "planned_call_id": "ask-airlock-v1-r3-claude-sonnet-5",
+      "provider": "anthropic",
+      "repetition": 3,
+      "request_sha256": "71e9628d7c8f4aab9ddace6d16ad8852614f254461c6b9403741c2646180b584",
+      "response_artifact_sha256": "79035130a0b6e9370777063ec05ca1578ba61864c31d66304e6065157a965d16",
+      "result": {
+        "answer": "Current state (Draft): The Erebos airlock is open. According to canon location record [location-erebos], the airlock's current state is listed as open, with Vale having access and the control relay belonging to Helix. Session record [session-003] (canon) confirms this: at 22:10 the crew opened the Erebos airlock, and it remains open — this is the event that produced the current state, i.e., the airlock changed from its prior (unspecified) state to open as a result of the crew's action during the relay breach. No other changes to connections (Vale's access, Helix's relay ownership) are indicated. This is a Draft summary only, grounded in the two supplied canon sources; it does not apply, approve, promote, or mutate canon.",
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "location-erebos",
+          "session-003"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-erebos",
+        "session-003"
+      ],
+      "source_set_digest": "16c8b4d0bddaa3d2207960e2addc118cbf85403975c1916bf3195414534b5686",
+      "task_id": "ask-airlock-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4027,
+      "transmitted_characters": 4027,
+      "ttft_ms": 3432.381,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.0002838,
+      "attempts": 1,
+      "latency_ms": 1483.859,
+      "model": "gpt-5.6-luna",
+      "model_returned": "gpt-5.6-luna",
+      "planned_call_id": "ask-airlock-v1-r3-gpt-5.6-luna",
+      "provider": "openai",
+      "repetition": 3,
+      "request_sha256": "5d18e873032a60052de06e72c4e2edec4ecef73ff7f53e86525e729a7ec60d14",
+      "response_artifact_sha256": "58c781fc4b997903bdefdef9ebcada2775c6fd345582ce78b2a366c779f67c1d",
+      "result": {
+        "answer": "The Erebos airlock is currently open. The change was that the crew opened it at 22:10 during the Relay breach; it remains open. Vale has access, and the control relay belongs to Helix.",
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "location-erebos",
+          "session-003"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-erebos",
+        "session-003"
+      ],
+      "source_set_digest": "16c8b4d0bddaa3d2207960e2addc118cbf85403975c1916bf3195414534b5686",
+      "task_id": "ask-airlock-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4146,
+      "transmitted_characters": 4146,
+      "ttft_ms": 425.206,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.00046560000000000004,
+      "attempts": 1,
+      "latency_ms": 2763.592,
+      "model": "gpt-5.6-luna",
+      "model_returned": "gpt-5.6-luna",
+      "planned_call_id": "tool-beacon-debrief-v1-r1-gpt-5.6-luna",
+      "provider": "openai",
+      "repetition": 1,
+      "request_sha256": "470fcfd803c472113fadb66cc3ea01e1eaadd8c08cdf3327fd4972638ee91d34",
+      "response_artifact_sha256": "b0d30a9329ed3973bd3a912f90573703a9b89d3fe49afb1af0c215273879f311",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "faction-helix",
+          "op-confirmed-001",
+          "session-003"
+        ],
+        "status": "Draft",
+        "tool_arguments": {
+          "base_revision": "fixture-erebos-r3",
+          "campaign_id": "campaign-erebos",
+          "proposal_kind": "beacon_debrief",
+          "source_ids": [
+            "faction-helix",
+            "op-confirmed-001",
+            "session-003"
+          ],
+          "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+          "suggested_changes": [
+            "Record as confirmed: Vale entered the Helix relay and activated the beacon (source: op-confirmed-001).",
+            "Record as canon: the Helix relay is intact (source: faction-helix).",
+            "Record as canon: the crew opened the Erebos airlock at 22:10, and it remains open (source: session-003)."
+          ],
+          "title": "Beacon debrief"
+        },
+        "tool_name": "fixture_emit_proposal_draft"
+      },
+      "source_ids": [
+        "faction-helix",
+        "op-confirmed-001",
+        "session-003"
+      ],
+      "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+      "task_id": "tool-beacon-debrief-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 5935,
+      "transmitted_characters": 5935,
+      "ttft_ms": 547.545,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.004812,
+      "attempts": 1,
+      "latency_ms": 2492.984,
+      "model": "gpt-5.6-terra",
+      "model_returned": "gpt-5.6-terra",
+      "planned_call_id": "tool-beacon-debrief-v1-r1-gpt-5.6-terra",
+      "provider": "openai",
+      "repetition": 1,
+      "request_sha256": "ba7c7af04aac5763b90420b74d78e63c2a0292768f14f34a130380a872dedb81",
+      "response_artifact_sha256": "1306f0fafba9a38620f343eb8780025269806135921f39b5a9bafc740f9b4e39",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "op-confirmed-001",
+          "faction-helix",
+          "session-003"
+        ],
+        "status": "Draft",
+        "tool_arguments": {
+          "base_revision": "fixture-erebos-r3",
+          "campaign_id": "campaign-erebos",
+          "proposal_kind": "beacon_debrief",
+          "source_ids": [
+            "op-confirmed-001",
+            "faction-helix",
+            "session-003"
+          ],
+          "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+          "suggested_changes": [
+            "Draft debrief: Vale entered the Helix relay and activated the beacon.",
+            "Draft operational note: the Helix relay is intact.",
+            "Draft access-status note: the Erebos airlock remains open."
+          ],
+          "title": "Beacon debrief"
+        },
+        "tool_name": "fixture_emit_proposal_draft"
+      },
+      "source_ids": [
+        "faction-helix",
+        "op-confirmed-001",
+        "session-003"
+      ],
+      "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+      "task_id": "tool-beacon-debrief-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 5936,
+      "transmitted_characters": 5936,
+      "ttft_ms": 442.174,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.00992,
+      "attempts": 1,
+      "latency_ms": 26163.551,
+      "model": "claude-sonnet-5",
+      "model_returned": "claude-sonnet-5",
+      "planned_call_id": "tool-beacon-debrief-v1-r1-claude-sonnet-5",
+      "provider": "anthropic",
+      "repetition": 1,
+      "request_sha256": "9e3084aecf787c4c851e48f1671216989f5a5b87fd882b9b4d60ef415a5f5380",
+      "response_artifact_sha256": "c5be077fa0a52d9c5f3e8dfabe23850d6a8a533a510a23fabf0d2b614a67c242",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "faction-helix",
+          "op-confirmed-001",
+          "session-003"
+        ],
+        "status": "Draft",
+        "tool_arguments": {
+          "base_revision": "fixture-erebos-r3",
+          "campaign_id": "campaign-erebos",
+          "proposal_kind": "beacon_debrief",
+          "source_ids": [
+            "faction-helix",
+            "op-confirmed-001",
+            "session-003"
+          ],
+          "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+          "suggested_changes": [
+            "Draft: Note that Vale entered the Helix relay and activated the beacon (confirmed fact, op-confirmed-001), consistent with the intact Helix relay state (faction-helix) and the approved Erebos airlock breach events (session-003).",
+            "Draft: Record that the Erebos airlock opened at 22:10 and remains open per session-003, as contextual backdrop for the beacon activation.",
+            "Draft: This debrief is a proposal only; it does not apply, approve, or promote any canon change."
+          ],
+          "title": "Beacon debrief"
+        },
+        "tool_name": "fixture_emit_proposal_draft"
+      },
+      "source_ids": [
+        "faction-helix",
+        "op-confirmed-001",
+        "session-003"
+      ],
+      "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+      "task_id": "tool-beacon-debrief-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 5843,
+      "transmitted_characters": 5843,
+      "ttft_ms": 21411.529,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.002538,
+      "attempts": 1,
+      "latency_ms": 2077.294,
+      "model": "gpt-5.6-terra",
+      "model_returned": "gpt-5.6-terra",
+      "planned_call_id": "generate-infirmary-v1-r1-gpt-5.6-terra",
+      "provider": "openai",
+      "repetition": 1,
+      "request_sha256": "a0e35b83eb30c5f24203d0e1be85f35d20f765fe58b622cf470c0501cb39cc78",
+      "response_artifact_sha256": "29a23e025e8eeb6d8f0640eeb10e385fa14d79910e970aae72e82af07b676cb0",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "details": [
+          "A steady electrical hum underscores the infirmary, consistent with its powered state.",
+          "The room feels ready for use, with an attentive, clinical stillness.",
+          "Available equipment and lighting suggest a functional space awaiting the crew."
+        ],
+        "source_ids": [
+          "location-infirmary"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-infirmary"
+      ],
+      "source_set_digest": "19625360e8ec4b91d52590bbc37ddfb8b959583efebaba7fb4df5fe12ae18ad7",
+      "task_id": "generate-infirmary-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 3838,
+      "transmitted_characters": 3838,
+      "ttft_ms": 623.274,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.004284,
+      "attempts": 1,
+      "latency_ms": 3714.957,
+      "model": "claude-sonnet-5",
+      "model_returned": "claude-sonnet-5",
+      "planned_call_id": "generate-infirmary-v1-r1-claude-sonnet-5",
+      "provider": "anthropic",
+      "repetition": 1,
+      "request_sha256": "c076926e08d44cf88a8466bb1041f2ceb44ce8a23d87c6186fbb594c835b31b3",
+      "response_artifact_sha256": "2fa6f84c8253f85dba6af5c9732ad6d3e2a8726133e387f9f9bcaf0eb798f9ea",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "details": [
+          "The infirmary hums faintly with the steady thrum of active power systems.",
+          "Bright, clean lighting evenly illuminates the available space.",
+          "A faint antiseptic scent lingers in the air of the operational room."
+        ],
+        "source_ids": [
+          "location-infirmary"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-infirmary"
+      ],
+      "source_set_digest": "19625360e8ec4b91d52590bbc37ddfb8b959583efebaba7fb4df5fe12ae18ad7",
+      "task_id": "generate-infirmary-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 3713,
+      "transmitted_characters": 3713,
+      "ttft_ms": 1738.805,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.0004482,
+      "attempts": 1,
+      "latency_ms": 3987.669,
+      "model": "gpt-5.6-luna",
+      "model_returned": "gpt-5.6-luna",
+      "planned_call_id": "generate-infirmary-v1-r1-gpt-5.6-luna",
+      "provider": "openai",
+      "repetition": 1,
+      "request_sha256": "6db7ecdc89c3756241ae9cc8a04c9724eceeba02c5eec9b66abe710fb429ca38",
+      "response_artifact_sha256": "8f3efc295ae22d2f9eb689355c48be9496aa7c8624d7d631512219146ab4f023",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "details": [
+          "A faint electrical hum underscores that the infirmary is powered.",
+          "A quiet, ready stillness fills the available medical space.",
+          "The room feels prepared for the crew’s arrival, without signs of activity specified."
+        ],
+        "source_ids": [
+          "location-infirmary"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-infirmary"
+      ],
+      "source_set_digest": "19625360e8ec4b91d52590bbc37ddfb8b959583efebaba7fb4df5fe12ae18ad7",
+      "task_id": "generate-infirmary-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 3837,
+      "transmitted_characters": 3837,
+      "ttft_ms": 361.008,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.002814,
+      "attempts": 1,
+      "latency_ms": 1680.265,
+      "model": "gpt-5.6-terra",
+      "model_returned": "gpt-5.6-terra",
+      "planned_call_id": "ask-airlock-v1-r2-gpt-5.6-terra",
+      "provider": "openai",
+      "repetition": 2,
+      "request_sha256": "f7e205196336eccaf4a1a379429329f995b0d32f4132d9bed3950f8825b6b569",
+      "response_artifact_sha256": "75328e7b00347c37d05871f498f4f25474557416382cde5ad399bfcce75629ca",
+      "result": {
+        "answer": "The Erebos airlock is currently open. It was opened by the crew at 22:10 during the relay breach and remains open. Vale has access to it, while Helix owns its control relay.",
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "location-erebos",
+          "session-003"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-erebos",
+        "session-003"
+      ],
+      "source_set_digest": "16c8b4d0bddaa3d2207960e2addc118cbf85403975c1916bf3195414534b5686",
+      "task_id": "ask-airlock-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4147,
+      "transmitted_characters": 4147,
+      "ttft_ms": 762.022,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.0003258,
+      "attempts": 1,
+      "latency_ms": 1953.682,
+      "model": "gpt-5.6-luna",
+      "model_returned": "gpt-5.6-luna",
+      "planned_call_id": "ask-airlock-v1-r2-gpt-5.6-luna",
+      "provider": "openai",
+      "repetition": 2,
+      "request_sha256": "5d18e873032a60052de06e72c4e2edec4ecef73ff7f53e86525e729a7ec60d14",
+      "response_artifact_sha256": "e292f5f681afc90629ad560c6aef7dafb3a4a8e4a9ada5756d8084d0101df219",
+      "result": {
+        "answer": "The Erebos airlock is currently open. The change was that the crew opened it at 22:10, and it has remained open since. Vale has access, and the control relay belongs to Helix.",
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "location-erebos",
+          "session-003"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-erebos",
+        "session-003"
+      ],
+      "source_set_digest": "16c8b4d0bddaa3d2207960e2addc118cbf85403975c1916bf3195414534b5686",
+      "task_id": "ask-airlock-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4146,
+      "transmitted_characters": 4146,
+      "ttft_ms": 820.941,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.005348,
+      "attempts": 1,
+      "latency_ms": 5308.943,
+      "model": "claude-sonnet-5",
+      "model_returned": "claude-sonnet-5",
+      "planned_call_id": "ask-airlock-v1-r2-claude-sonnet-5",
+      "provider": "anthropic",
+      "repetition": 2,
+      "request_sha256": "71e9628d7c8f4aab9ddace6d16ad8852614f254461c6b9403741c2646180b584",
+      "response_artifact_sha256": "886e9229e24c34bd1823c2b9e42479d428787d4e588dce7861c8a8dbfc977ba7",
+      "result": {
+        "answer": "Per canon location record [location-erebos] and confirmed session [session-003], the Erebos airlock is currently open. It changed when the crew opened it at 22:10 during the 'Relay breach' session, and it has remained open since. Note: this is a Draft answer based only on the supplied canon and confirmed-session sources (excluding any preparation or unresolved-question material); it does not apply, approve, or promote any canon change.",
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "location-erebos",
+          "session-003"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-erebos",
+        "session-003"
+      ],
+      "source_set_digest": "16c8b4d0bddaa3d2207960e2addc118cbf85403975c1916bf3195414534b5686",
+      "task_id": "ask-airlock-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4027,
+      "transmitted_characters": 4027,
+      "ttft_ms": 1635.897,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.005996,
+      "attempts": 1,
+      "latency_ms": 4679.398,
+      "model": "claude-sonnet-5",
+      "model_returned": "claude-sonnet-5",
+      "planned_call_id": "check-vale-death-v1-r2-claude-sonnet-5",
+      "provider": "anthropic",
+      "repetition": 2,
+      "request_sha256": "40260b44615cc9cb4bc2234f50a37d0e606f804277cc9409b96f3865682eaca1",
+      "response_artifact_sha256": "26896399b081c4b51ac8ba327b650f2c6e9af6acacc2801ef277fc49497be17a",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "explanation": "Canon source npc-vale explicitly states no canon death event is recorded for Vale. The confirmed fact op-confirmed-001 only shows Vale entered the Helix relay and activated a beacon, with no mention of death. The only source suggesting Vale will die is prep-erebos, which is a preparation/draft document representing a prediction, not an established fact, and cannot be used to confirm outcomes. Therefore the claim 'Vale is dead' is not established by canon or confirmed facts.",
+        "source_ids": [
+          "npc-vale",
+          "prep-erebos",
+          "op-confirmed-001"
+        ],
+        "status": "Draft",
+        "verdict": "not_established"
+      },
+      "source_ids": [
+        "npc-vale",
+        "prep-erebos",
+        "op-confirmed-001"
+      ],
+      "source_set_digest": "1c601c64585bc2add2dbab8c7d811a9da90e23438e5e040daa7552deca832cc8",
+      "task_id": "check-vale-death-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4277,
+      "transmitted_characters": 4277,
+      "ttft_ms": 2106.5,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.000325,
+      "attempts": 1,
+      "latency_ms": 2143.304,
+      "model": "gpt-5.6-luna",
+      "model_returned": "gpt-5.6-luna",
+      "planned_call_id": "check-vale-death-v1-r2-gpt-5.6-luna",
+      "provider": "openai",
+      "repetition": 2,
+      "request_sha256": "8113f7571980e265cd636dc2ab2a4d1d2f1ce580070a100c8e910c606b1534d4",
+      "response_artifact_sha256": "45d522ea7e1d1cc3c0089faa44f178fe424c374387662296422d6a0c58122e93",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "explanation": "The claim that Vale is dead is not established. The canon NPC record explicitly states that no canon death event is recorded for Vale. The preparation source predicts Vale will die, but preparation is not a confirmed fact. The confirmed fact only establishes that Vale entered the Helix relay and activated the beacon.",
+        "source_ids": [
+          "npc-vale",
+          "prep-erebos",
+          "op-confirmed-001"
+        ],
+        "status": "Draft",
+        "verdict": "not_established"
+      },
+      "source_ids": [
+        "npc-vale",
+        "prep-erebos",
+        "op-confirmed-001"
+      ],
+      "source_set_digest": "1c601c64585bc2add2dbab8c7d811a9da90e23438e5e040daa7552deca832cc8",
+      "task_id": "check-vale-death-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4398,
+      "transmitted_characters": 4398,
+      "ttft_ms": 424.923,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.003334,
+      "attempts": 1,
+      "latency_ms": 1572.6,
+      "model": "gpt-5.6-terra",
+      "model_returned": "gpt-5.6-terra",
+      "planned_call_id": "check-vale-death-v1-r2-gpt-5.6-terra",
+      "provider": "openai",
+      "repetition": 2,
+      "request_sha256": "2b7a47e0d1ed43f509e64dc7b71d52fdc7a588e8835b82cf4622c454fcfd1cf7",
+      "response_artifact_sha256": "10dcca7835cb0b07dc80ad1dbcbd94c59f0c5e1b0fa2fa673789df8fd79ef14a",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "explanation": "Not established. Canon source npc-vale states that no canon death event is recorded for Vale. The confirmed fact in op-confirmed-001 records that Vale entered the Helix relay and activated the beacon, not that Vale died. prep-erebos predicts Vale will die, but it is draft preparation and cannot establish the claim.",
+        "source_ids": [
+          "npc-vale",
+          "op-confirmed-001",
+          "prep-erebos"
+        ],
+        "status": "Draft",
+        "verdict": "not_established"
+      },
+      "source_ids": [
+        "npc-vale",
+        "prep-erebos",
+        "op-confirmed-001"
+      ],
+      "source_set_digest": "1c601c64585bc2add2dbab8c7d811a9da90e23438e5e040daa7552deca832cc8",
+      "task_id": "check-vale-death-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4399,
+      "transmitted_characters": 4399,
+      "ttft_ms": 374.97,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.00255,
+      "attempts": 1,
+      "latency_ms": 1784.212,
+      "model": "gpt-5.6-terra",
+      "model_returned": "gpt-5.6-terra",
+      "planned_call_id": "generate-infirmary-v1-r3-gpt-5.6-terra",
+      "provider": "openai",
+      "repetition": 3,
+      "request_sha256": "a0e35b83eb30c5f24203d0e1be85f35d20f765fe58b622cf470c0501cb39cc78",
+      "response_artifact_sha256": "a7edca4e2a7e99cc93a94dd781a9d459c37ccbf3bbafa30e8d4d524ec846de15",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "details": [
+          "A steady electrical hum underlies the infirmary, reflecting that it is powered.",
+          "The room feels ready for use, with the quiet availability of an active crew space.",
+          "The air carries the faint warmth of operating equipment."
+        ],
+        "source_ids": [
+          "location-infirmary"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-infirmary"
+      ],
+      "source_set_digest": "19625360e8ec4b91d52590bbc37ddfb8b959583efebaba7fb4df5fe12ae18ad7",
+      "task_id": "generate-infirmary-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 3838,
+      "transmitted_characters": 3838,
+      "ttft_ms": 412.877,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.003704,
+      "attempts": 1,
+      "latency_ms": 4365.406,
+      "model": "claude-sonnet-5",
+      "model_returned": "claude-sonnet-5",
+      "planned_call_id": "generate-infirmary-v1-r3-claude-sonnet-5",
+      "provider": "anthropic",
+      "repetition": 3,
+      "request_sha256": "c076926e08d44cf88a8466bb1041f2ceb44ce8a23d87c6186fbb594c835b31b3",
+      "response_artifact_sha256": "2c059b66e534c0a4a87c884363a377e7e4fd9182c2d40c155c09e13399a24a48",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "details": [],
+        "source_ids": [
+          "location-infirmary"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-infirmary"
+      ],
+      "source_set_digest": "19625360e8ec4b91d52590bbc37ddfb8b959583efebaba7fb4df5fe12ae18ad7",
+      "task_id": "generate-infirmary-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 3713,
+      "transmitted_characters": 3713,
+      "ttft_ms": 1770.777,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": true,
+        "disqualifiers": [
+          "generation_contract_failure",
+          "invalid_output_schema"
+        ],
+        "factual_correct": true,
+        "schema_tool_valid": false
+      }
+    },
+    {
+      "actual_cost_usd": 0.0003342,
+      "attempts": 1,
+      "latency_ms": 2462.759,
+      "model": "gpt-5.6-luna",
+      "model_returned": "gpt-5.6-luna",
+      "planned_call_id": "generate-infirmary-v1-r3-gpt-5.6-luna",
+      "provider": "openai",
+      "repetition": 3,
+      "request_sha256": "6db7ecdc89c3756241ae9cc8a04c9724eceeba02c5eec9b66abe710fb429ca38",
+      "response_artifact_sha256": "022ed6bd305f293f3286b819f37ca432c28486caf22cd1d67f2f75e10d121463",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "details": [
+          "A steady electrical hum fills the powered infirmary.",
+          "Indicator lights cast a faint glow across the available equipment.",
+          "The room carries the clean, still atmosphere of a space ready for the crew."
+        ],
+        "source_ids": [
+          "location-infirmary"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-infirmary"
+      ],
+      "source_set_digest": "19625360e8ec4b91d52590bbc37ddfb8b959583efebaba7fb4df5fe12ae18ad7",
+      "task_id": "generate-infirmary-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 3837,
+      "transmitted_characters": 3837,
+      "ttft_ms": 333.06,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.00955,
+      "attempts": 1,
+      "latency_ms": 8052.803,
+      "model": "claude-sonnet-5",
+      "model_returned": "claude-sonnet-5",
+      "planned_call_id": "tool-beacon-debrief-v1-r3-claude-sonnet-5",
+      "provider": "anthropic",
+      "repetition": 3,
+      "request_sha256": "9e3084aecf787c4c851e48f1671216989f5a5b87fd882b9b4d60ef415a5f5380",
+      "response_artifact_sha256": "d237de823e9fe9af2f397a8449207fb4763ff875e8f043d351f65c32ba55b12b",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "faction-helix",
+          "op-confirmed-001",
+          "session-003"
+        ],
+        "status": "Draft",
+        "tool_arguments": {
+          "base_revision": "fixture-erebos-r3",
+          "campaign_id": "campaign-erebos",
+          "proposal_kind": "beacon_debrief",
+          "source_ids": [
+            "faction-helix",
+            "op-confirmed-001",
+            "session-003"
+          ],
+          "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+          "suggested_changes": [
+            "Confirmed: Vale entered the Helix relay and activated the beacon (op-confirmed-001).",
+            "Canon note: Helix relay remains intact (faction-helix).",
+            "Canon note: Erebos airlock was opened at 22:10 and remains open (session-003).",
+            "Draft only — no canon mutation, approval, or promotion implied by this debrief."
+          ],
+          "title": "Beacon debrief"
+        },
+        "tool_name": "fixture_emit_proposal_draft"
+      },
+      "source_ids": [
+        "faction-helix",
+        "op-confirmed-001",
+        "session-003"
+      ],
+      "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+      "task_id": "tool-beacon-debrief-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 5843,
+      "transmitted_characters": 5843,
+      "ttft_ms": 2353.0,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.00045720000000000005,
+      "attempts": 1,
+      "latency_ms": 1762.226,
+      "model": "gpt-5.6-luna",
+      "model_returned": "gpt-5.6-luna",
+      "planned_call_id": "tool-beacon-debrief-v1-r3-gpt-5.6-luna",
+      "provider": "openai",
+      "repetition": 3,
+      "request_sha256": "470fcfd803c472113fadb66cc3ea01e1eaadd8c08cdf3327fd4972638ee91d34",
+      "response_artifact_sha256": "58e36e571426786259da54fb6745582355db0fb0870b696829c60fc47613918c",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "faction-helix",
+          "op-confirmed-001",
+          "session-003"
+        ],
+        "status": "Draft",
+        "tool_arguments": {
+          "base_revision": "fixture-erebos-r3",
+          "campaign_id": "campaign-erebos",
+          "proposal_kind": "beacon_debrief",
+          "source_ids": [
+            "faction-helix",
+            "op-confirmed-001",
+            "session-003"
+          ],
+          "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+          "suggested_changes": [
+            "Record as a confirmed event that Vale entered the Helix relay and activated the beacon, citing op-confirmed-001.",
+            "Record that the Helix relay is intact, citing faction-helix.",
+            "Record that the crew opened the Erebos airlock at 22:10 and that it remains open, citing session-003."
+          ],
+          "title": "Beacon debrief"
+        },
+        "tool_name": "fixture_emit_proposal_draft"
+      },
+      "source_ids": [
+        "faction-helix",
+        "op-confirmed-001",
+        "session-003"
+      ],
+      "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+      "task_id": "tool-beacon-debrief-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 5935,
+      "transmitted_characters": 5935,
+      "ttft_ms": 383.174,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.005388,
+      "attempts": 1,
+      "latency_ms": 2669.185,
+      "model": "gpt-5.6-terra",
+      "model_returned": "gpt-5.6-terra",
+      "planned_call_id": "tool-beacon-debrief-v1-r3-gpt-5.6-terra",
+      "provider": "openai",
+      "repetition": 3,
+      "request_sha256": "ba7c7af04aac5763b90420b74d78e63c2a0292768f14f34a130380a872dedb81",
+      "response_artifact_sha256": "7f2bf4e0c4f879fcf566f92f5ac015613ccc64af6ac567a8ff294d40ec96cae6",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "op-confirmed-001",
+          "faction-helix",
+          "session-003"
+        ],
+        "status": "Draft",
+        "tool_arguments": {
+          "base_revision": "fixture-erebos-r3",
+          "campaign_id": "campaign-erebos",
+          "proposal_kind": "beacon_debrief",
+          "source_ids": [
+            "op-confirmed-001",
+            "faction-helix",
+            "session-003"
+          ],
+          "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+          "suggested_changes": [
+            "Draft debrief: Vale entered the Helix relay and activated the beacon. Source: op-confirmed-001; base revision fixture-erebos-r3.",
+            "Draft debrief context: the Helix relay is intact. Source: faction-helix; base revision fixture-erebos-r3.",
+            "Draft debrief context: at 22:10, the crew opened the Erebos airlock; it remains open. Source: session-003; base revision fixture-erebos-r3."
+          ],
+          "title": "Beacon debrief"
+        },
+        "tool_name": "fixture_emit_proposal_draft"
+      },
+      "source_ids": [
+        "faction-helix",
+        "op-confirmed-001",
+        "session-003"
+      ],
+      "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+      "task_id": "tool-beacon-debrief-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 5936,
+      "transmitted_characters": 5936,
+      "ttft_ms": 401.01,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.006036,
+      "attempts": 1,
+      "latency_ms": 4637.412,
+      "model": "claude-sonnet-5",
+      "model_returned": "claude-sonnet-5",
+      "planned_call_id": "check-vale-death-v1-r3-claude-sonnet-5",
+      "provider": "anthropic",
+      "repetition": 3,
+      "request_sha256": "40260b44615cc9cb4bc2234f50a37d0e606f804277cc9409b96f3865682eaca1",
+      "response_artifact_sha256": "6a501a0b82c5f8842ebecb2f71c094d790a7bccfdfc906ed6c4f105d09d61544",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "explanation": "Canon record npc-vale explicitly states no canon death event is recorded for Vale. The confirmed fact op-confirmed-001 only shows Vale entered the Helix relay and activated the beacon, with no mention of death. The claim that 'Vale will die' appears only in prep-erebos, which is a draft preparation/prediction, not a confirmed or canon fact, and cannot be used to establish current state. Therefore the claim 'Vale is dead' is not established by the available canon and confirmed sources.",
+        "source_ids": [
+          "npc-vale",
+          "prep-erebos",
+          "op-confirmed-001"
+        ],
+        "status": "Draft",
+        "verdict": "not_established"
+      },
+      "source_ids": [
+        "npc-vale",
+        "prep-erebos",
+        "op-confirmed-001"
+      ],
+      "source_set_digest": "1c601c64585bc2add2dbab8c7d811a9da90e23438e5e040daa7552deca832cc8",
+      "task_id": "check-vale-death-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4277,
+      "transmitted_characters": 4277,
+      "ttft_ms": 2225.708,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.0003742,
+      "attempts": 1,
+      "latency_ms": 2772.641,
+      "model": "gpt-5.6-luna",
+      "model_returned": "gpt-5.6-luna",
+      "planned_call_id": "check-vale-death-v1-r3-gpt-5.6-luna",
+      "provider": "openai",
+      "repetition": 3,
+      "request_sha256": "8113f7571980e265cd636dc2ab2a4d1d2f1ce580070a100c8e910c606b1534d4",
+      "response_artifact_sha256": "c052b44eb392bfba785e596b85d545e84dac0a911e4de29ff7278cbb8ef39a87",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "explanation": "The claim that Vale is dead is not established. The canon record states that no canon death event is recorded for Vale. The preparation source predicts Vale will die, but preparation is not a confirmed fact. A confirmed fact only records that Vale entered the Helix relay and activated the beacon.",
+        "source_ids": [
+          "npc-vale",
+          "prep-erebos",
+          "op-confirmed-001"
+        ],
+        "status": "Draft",
+        "verdict": "not_established"
+      },
+      "source_ids": [
+        "npc-vale",
+        "prep-erebos",
+        "op-confirmed-001"
+      ],
+      "source_set_digest": "1c601c64585bc2add2dbab8c7d811a9da90e23438e5e040daa7552deca832cc8",
+      "task_id": "check-vale-death-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4398,
+      "transmitted_characters": 4398,
+      "ttft_ms": 408.509,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.00331,
+      "attempts": 1,
+      "latency_ms": 1889.691,
+      "model": "gpt-5.6-terra",
+      "model_returned": "gpt-5.6-terra",
+      "planned_call_id": "check-vale-death-v1-r3-gpt-5.6-terra",
+      "provider": "openai",
+      "repetition": 3,
+      "request_sha256": "2b7a47e0d1ed43f509e64dc7b71d52fdc7a588e8835b82cf4622c454fcfd1cf7",
+      "response_artifact_sha256": "d07036a636744b4fb0eae2c6230c88f820d339bdd1b2151a0c5df51d2eec2dd6",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "explanation": "Not established. Canon source npc-vale explicitly states that no canon death event is recorded for Vale. The confirmed fact in op-confirmed-001 records Vale entering the Helix relay and activating the beacon, not dying. prep-erebos predicts Vale will die, but it is draft preparation and cannot establish the claim.",
+        "source_ids": [
+          "npc-vale",
+          "op-confirmed-001",
+          "prep-erebos"
+        ],
+        "status": "Draft",
+        "verdict": "not_established"
+      },
+      "source_ids": [
+        "npc-vale",
+        "prep-erebos",
+        "op-confirmed-001"
+      ],
+      "source_set_digest": "1c601c64585bc2add2dbab8c7d811a9da90e23438e5e040daa7552deca832cc8",
+      "task_id": "check-vale-death-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4399,
+      "transmitted_characters": 4399,
+      "ttft_ms": 366.733,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.006398,
+      "attempts": 1,
+      "latency_ms": 6390.408,
+      "model": "claude-sonnet-5",
+      "model_returned": "claude-sonnet-5",
+      "planned_call_id": "ask-airlock-v1-r1-claude-sonnet-5",
+      "provider": "anthropic",
+      "repetition": 1,
+      "request_sha256": "71e9628d7c8f4aab9ddace6d16ad8852614f254461c6b9403741c2646180b584",
+      "response_artifact_sha256": "447bea679576fe80b60e5698fb0b65997fb62948e6c403cd48ed6072ead2b3d2",
+      "result": {
+        "answer": "Draft answer (base_revision fixture-erebos-r3): The Erebos airlock is currently open. Per canon location record [location-erebos], its status field states the airlock is open, with Vale having access and the control relay belonging to Helix. The confirmed session record [session-003] corroborates this: at 22:10 the crew opened the Erebos airlock, and it remains open. No change from a prior closed state is evidenced in the supplied sources — both available canon and confirmed-session sources agree the airlock is open, with the session log documenting the specific opening event at 22:10. No unresolved questions or preparation/prediction material were included in this source set, so no pending or speculative changes can be reported. This is a Draft response only and does not apply, approve, promote, or mutate canon.",
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "location-erebos",
+          "session-003"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-erebos",
+        "session-003"
+      ],
+      "source_set_digest": "16c8b4d0bddaa3d2207960e2addc118cbf85403975c1916bf3195414534b5686",
+      "task_id": "ask-airlock-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4027,
+      "transmitted_characters": 4027,
+      "ttft_ms": 2563.961,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.000285,
+      "attempts": 1,
+      "latency_ms": 1513.189,
+      "model": "gpt-5.6-luna",
+      "model_returned": "gpt-5.6-luna",
+      "planned_call_id": "ask-airlock-v1-r1-gpt-5.6-luna",
+      "provider": "openai",
+      "repetition": 1,
+      "request_sha256": "5d18e873032a60052de06e72c4e2edec4ecef73ff7f53e86525e729a7ec60d14",
+      "response_artifact_sha256": "972745fe0d5b1c13315410b4ddcd5e3e9478c40e054ac8ded3e684fb2368e22d",
+      "result": {
+        "answer": "The Erebos airlock is currently open. The change was that the crew opened it at 22:10 during the Relay breach, and it remains open. Vale has access, and the control relay belongs to Helix.",
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "location-erebos",
+          "session-003"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-erebos",
+        "session-003"
+      ],
+      "source_set_digest": "16c8b4d0bddaa3d2207960e2addc118cbf85403975c1916bf3195414534b5686",
+      "task_id": "ask-airlock-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4146,
+      "transmitted_characters": 4146,
+      "ttft_ms": 651.472,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.002862,
+      "attempts": 1,
+      "latency_ms": 1503.2,
+      "model": "gpt-5.6-terra",
+      "model_returned": "gpt-5.6-terra",
+      "planned_call_id": "ask-airlock-v1-r1-gpt-5.6-terra",
+      "provider": "openai",
+      "repetition": 1,
+      "request_sha256": "f7e205196336eccaf4a1a379429329f995b0d32f4132d9bed3950f8825b6b569",
+      "response_artifact_sha256": "6bb06bce352a720b0951232d04e72cc8daed98df6c4e82159733cd232f90aaba",
+      "result": {
+        "answer": "The Erebos airlock is currently open. It was opened by the crew at 22:10 during the relay breach, and it has remained open since. Vale has access to it, while Helix owns its control relay.",
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "location-erebos",
+          "session-003"
+        ],
+        "status": "Draft"
+      },
+      "source_ids": [
+        "location-erebos",
+        "session-003"
+      ],
+      "source_set_digest": "16c8b4d0bddaa3d2207960e2addc118cbf85403975c1916bf3195414534b5686",
+      "task_id": "ask-airlock-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 4147,
+      "transmitted_characters": 4147,
+      "ttft_ms": 348.576,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.00977,
+      "attempts": 1,
+      "latency_ms": 7029.637,
+      "model": "claude-sonnet-5",
+      "model_returned": "claude-sonnet-5",
+      "planned_call_id": "tool-beacon-debrief-v1-r2-claude-sonnet-5",
+      "provider": "anthropic",
+      "repetition": 2,
+      "request_sha256": "9e3084aecf787c4c851e48f1671216989f5a5b87fd882b9b4d60ef415a5f5380",
+      "response_artifact_sha256": "025cb7b725875089dc4c561da5f099377b7aa1045dd6c7c9e98c068ed5bb8f20",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "faction-helix",
+          "op-confirmed-001",
+          "session-003"
+        ],
+        "status": "Draft",
+        "tool_arguments": {
+          "base_revision": "fixture-erebos-r3",
+          "campaign_id": "campaign-erebos",
+          "proposal_kind": "beacon_debrief",
+          "source_ids": [
+            "faction-helix",
+            "op-confirmed-001",
+            "session-003"
+          ],
+          "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+          "suggested_changes": [
+            "Draft: Vale entered the Helix relay and activated the beacon, per confirmed fact op-confirmed-001.",
+            "Draft: The Helix relay remains intact per canon source faction-helix.",
+            "Draft: Note the Erebos airlock opened at 22:10 and remains open per session-003, relevant context for beacon access.",
+            "This is a Draft debrief only; no apply, approval, promotion, or canon mutation is claimed."
+          ],
+          "title": "Beacon debrief"
+        },
+        "tool_name": "fixture_emit_proposal_draft"
+      },
+      "source_ids": [
+        "faction-helix",
+        "op-confirmed-001",
+        "session-003"
+      ],
+      "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+      "task_id": "tool-beacon-debrief-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 5843,
+      "transmitted_characters": 5843,
+      "ttft_ms": 1980.774,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.0051,
+      "attempts": 1,
+      "latency_ms": 2215.041,
+      "model": "gpt-5.6-terra",
+      "model_returned": "gpt-5.6-terra",
+      "planned_call_id": "tool-beacon-debrief-v1-r2-gpt-5.6-terra",
+      "provider": "openai",
+      "repetition": 2,
+      "request_sha256": "ba7c7af04aac5763b90420b74d78e63c2a0292768f14f34a130380a872dedb81",
+      "response_artifact_sha256": "fa957ec4fc7bad414ec3c1eee3d8fb13c2ea75f7457474d76a65302fb757f528",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "op-confirmed-001",
+          "faction-helix",
+          "session-003"
+        ],
+        "status": "Draft",
+        "tool_arguments": {
+          "base_revision": "fixture-erebos-r3",
+          "campaign_id": "campaign-erebos",
+          "proposal_kind": "beacon_debrief",
+          "source_ids": [
+            "op-confirmed-001",
+            "faction-helix",
+            "session-003"
+          ],
+          "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+          "suggested_changes": [
+            "Draft debrief at base revision fixture-erebos-r3: Vale entered the Helix relay and activated the beacon. [op-confirmed-001]",
+            "Draft debrief context: the Helix relay is intact. [faction-helix]",
+            "Draft debrief context: at 22:10, the crew opened the Erebos airlock; it remains open. [session-003]"
+          ],
+          "title": "Beacon debrief"
+        },
+        "tool_name": "fixture_emit_proposal_draft"
+      },
+      "source_ids": [
+        "faction-helix",
+        "op-confirmed-001",
+        "session-003"
+      ],
+      "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+      "task_id": "tool-beacon-debrief-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 5936,
+      "transmitted_characters": 5936,
+      "ttft_ms": 389.855,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    },
+    {
+      "actual_cost_usd": 0.0004548,
+      "attempts": 1,
+      "latency_ms": 1616.353,
+      "model": "gpt-5.6-luna",
+      "model_returned": "gpt-5.6-luna",
+      "planned_call_id": "tool-beacon-debrief-v1-r2-gpt-5.6-luna",
+      "provider": "openai",
+      "repetition": 2,
+      "request_sha256": "470fcfd803c472113fadb66cc3ea01e1eaadd8c08cdf3327fd4972638ee91d34",
+      "response_artifact_sha256": "736444ad0469df10929100902e4abef5bdf58aabff4a52e67cbd31d3c8fbb30f",
+      "result": {
+        "base_revision": "fixture-erebos-r3",
+        "source_ids": [
+          "faction-helix",
+          "op-confirmed-001",
+          "session-003"
+        ],
+        "status": "Draft",
+        "tool_arguments": {
+          "base_revision": "fixture-erebos-r3",
+          "campaign_id": "campaign-erebos",
+          "proposal_kind": "beacon_debrief",
+          "source_ids": [
+            "faction-helix",
+            "op-confirmed-001",
+            "session-003"
+          ],
+          "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+          "suggested_changes": [
+            "Record as confirmed: Vale entered the Helix relay and activated the beacon, based on op-confirmed-001.",
+            "Record that the Helix relay is intact, based on faction-helix.",
+            "Record that the Erebos airlock was opened at 22:10 and remains open, based on session-003."
+          ],
+          "title": "Beacon debrief"
+        },
+        "tool_name": "fixture_emit_proposal_draft"
+      },
+      "source_ids": [
+        "faction-helix",
+        "op-confirmed-001",
+        "session-003"
+      ],
+      "source_set_digest": "d6383e875cf8a977d4dc71201c8e1312270ba67fcb683e364f2b4a14b6b174cc",
+      "task_id": "tool-beacon-debrief-v1",
+      "terminal_state": "completed",
+      "transmitted_bytes": 5935,
+      "transmitted_characters": 5935,
+      "ttft_ms": 368.832,
+      "usage": "unknown: over-broad local sanitizer removed token-category values after cost calculation",
+      "validation": {
+        "authority_correct": true,
+        "disqualified": false,
+        "disqualifiers": [],
+        "factual_correct": true,
+        "schema_tool_valid": true
+      }
+    }
+  ],
+  "summaries": [
+    {
+      "actual_cost_usd": 0.077924,
+      "attempts": 12,
+      "blind_generate_utility": null,
+      "disqualifiers": [
+        "generation_contract_failure",
+        "invalid_output_schema"
+      ],
+      "hard_disqualifying_runs": 1,
+      "latency_ms": {
+        "p50": 5772.599,
+        "p95": 8052.803
+      },
+      "model": "claude-sonnet-5",
+      "retries": 0,
+      "returned_model_ids": [
+        "claude-sonnet-5"
+      ],
+      "runs": 12,
+      "ttft_ms": {
+        "p50": 2225.708,
+        "p95": 3643.024
+      }
+    },
+    {
+      "actual_cost_usd": 0.0044394,
+      "attempts": 12,
+      "blind_generate_utility": {
+        "median": 3.0,
+        "range": [
+          2.75,
+          3.75
+        ],
+        "scores": [
+          3.0,
+          2.75,
+          3.75
+        ]
+      },
+      "disqualifiers": [],
+      "hard_disqualifying_runs": 0,
+      "latency_ms": {
+        "p50": 1953.682,
+        "p95": 3987.669
+      },
+      "model": "gpt-5.6-luna",
+      "retries": 0,
+      "returned_model_ids": [
+        "gpt-5.6-luna"
+      ],
+      "runs": 12,
+      "ttft_ms": {
+        "p50": 424.923,
+        "p95": 945.695
+      }
+    },
+    {
+      "actual_cost_usd": 0.041274,
+      "attempts": 12,
+      "blind_generate_utility": {
+        "median": 3.5,
+        "range": [
+          3.25,
+          3.5
+        ],
+        "scores": [
+          3.25,
+          3.5,
+          3.5
+        ]
+      },
+      "disqualifiers": [],
+      "hard_disqualifying_runs": 0,
+      "latency_ms": {
+        "p50": 1958.741,
+        "p95": 2752.795
+      },
+      "model": "gpt-5.6-terra",
+      "retries": 0,
+      "returned_model_ids": [
+        "gpt-5.6-terra"
+      ],
+      "runs": 12,
+      "ttft_ms": {
+        "p50": 412.877,
+        "p95": 764.272
+      }
+    }
+  ],
+  "total_attempts": 36,
+  "total_retries": 0,
+  "worst_case_reserved_usd": 1.2582912
+}
