@@ -54,14 +54,10 @@ class GroundedAIService:
         records = self.source_loader.load(campaign_id, revision_id, prompt)
         envelope = self.selector.select(campaign_id, revision_id, records, session_id=session_id, confirmed_facts=confirmed_facts)
         request = GenerationRequest(generation_id, campaign_id, revision_id, action, prompt, envelope)
-        existing = self.repository.get_generation(generation_id)
-        if existing is not None:
-            if existing.request != request:
-                raise ValueError("idempotency_digest_conflict")
-            return existing
         record = GenerationRecord(request)
         # The persistence boundary is completed before provider dispatch.
-        self.repository.begin_generation(record)
+        if not self.repository.reserve_generation(record):
+            return self.repository.get_generation(generation_id)
         self.repository.dispatch_log.append(generation_id)
         self._append(record, "start")
         pending_terminal: tuple[str, str | None] | None = None
@@ -78,15 +74,11 @@ class GroundedAIService:
                     record.terminal_content += fragment
                 self._append(record, event_type, fragment)
             if pending_terminal is not None:
-                self._append(record, pending_terminal[0], pending_terminal[1])
-                record.terminal_status = "complete" if pending_terminal[0] == "completion" else "failed"
+                self._finalize(record, pending_terminal[0], pending_terminal[1], status="complete" if pending_terminal[0] == "completion" else "failed")
             else:
-                self._append(record, "failure", retryable=True)
-                record.terminal_status = "failed"
+                self._finalize(record, "failure", retryable=True, status="failed")
         except ProviderUnavailable:
-            self._append(record, "failure", retryable=pending_terminal is None)
-            record.terminal_status = "failed"
-        self.repository.save_generation(record)
+            self._finalize(record, "failure", retryable=pending_terminal is None, status="failed")
         return record
 
     @staticmethod
@@ -96,3 +88,7 @@ class GroundedAIService:
     def _append(self, record: GenerationRecord, event_type: str, fragment: str | None = None, *, retryable: bool | None = None) -> None:
         record.events.append(StreamEvent(len(record.events) + 1, event_type, fragment, retryable))
         self.repository.save_generation(record)
+
+    def _finalize(self, record: GenerationRecord, event_type: str, fragment: str | None = None, *, retryable: bool | None = None, status: str) -> None:
+        event = StreamEvent(len(record.events) + 1, event_type, fragment, retryable)
+        self.repository.finalize_generation(record, event, status)

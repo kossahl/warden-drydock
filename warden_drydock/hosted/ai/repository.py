@@ -5,6 +5,7 @@ from copy import deepcopy
 import json
 import uuid
 from typing import Iterator
+import threading
 
 from .models import Action, Capture, CaptureType, GenerationRecord, GenerationRequest, LiveSession, ProviderConsent, SourceEnvelope, SourceExcerpt, StreamEvent
 
@@ -18,6 +19,7 @@ class InMemoryAIRepository:
         self.sessions: dict[str, LiveSession] = {}
         self.dispatch_log: list[str] = []
         self._provider_consent: ProviderConsent | None = None
+        self._lock = threading.RLock()
 
     @contextmanager
     def transaction(self) -> Iterator["InMemoryAIRepository"]:
@@ -37,16 +39,27 @@ class InMemoryAIRepository:
     def get_generation(self, generation_id: str) -> GenerationRecord | None:
         return self.generations.get(generation_id)
 
-    def begin_generation(self, record: GenerationRecord) -> None:
+    def reserve_generation(self, record: GenerationRecord) -> bool:
         generation_id = record.request.generation_id
-        existing = self.generations.get(generation_id)
-        if existing is not None and existing.request != record.request:
-            raise ValueError("idempotency_digest_conflict")
-        self.sources[generation_id] = record.request.envelope
-        self.generations.setdefault(generation_id, record)
+        with self._lock:
+            existing = self.generations.get(generation_id)
+            if existing is not None:
+                if existing.request != record.request:
+                    raise ValueError("idempotency_digest_conflict")
+                return False
+            self.sources[generation_id] = record.request.envelope
+            self.generations[generation_id] = record
+            return True
 
     def save_generation(self, record: GenerationRecord) -> None:
-        self.generations[record.request.generation_id] = record
+        with self._lock:
+            self.generations[record.request.generation_id] = record
+
+    def finalize_generation(self, record: GenerationRecord, event: StreamEvent, status: str) -> None:
+        with self._lock:
+            record.events.append(event)
+            record.terminal_status = status
+            self.generations[record.request.generation_id] = record
 
     def active_session(self, campaign_id: str) -> LiveSession | None:
         return next((item for item in self.sessions.values() if item.campaign_id == campaign_id and item.mode == "active"), None)
@@ -119,17 +132,20 @@ class PostgresAIRepository:
             record.events = [StreamEvent(item[0], item[1], item[2].get("draft_fragment"), item[2].get("retryable")) for item in cursor.fetchall()]
             return record
 
-    def begin_generation(self, record: GenerationRecord) -> None:
+    def reserve_generation(self, record: GenerationRecord) -> bool:
         request = record.request
         envelope = request.envelope
+        request_digest = __import__("hashlib").sha256(json.dumps({"action": request.action.value, "campaign_id": request.campaign_id, "prompt": request.prompt, "revision_id": request.revision_id, "session_id": envelope.session_id, "source_set_digest": envelope.source_set_digest}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         encoded = {"campaign_id": envelope.campaign_id, "revision_id": envelope.revision_id, "session_id": envelope.session_id, "retrieval_policy_version": envelope.retrieval_policy_version, "excerpts": [item.__dict__ for item in envelope.excerpts]}
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute("INSERT INTO hosted_ai_generation(generation_id,campaign_id,revision_id,session_id,action,prompt,request_digest,source_set_digest,source_envelope,status) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'pending') ON CONFLICT(generation_id) DO NOTHING",
-                (request.generation_id, request.campaign_id, request.revision_id, envelope.session_id, request.action.value, request.prompt, __import__("hashlib").sha256(request.prompt.encode()).hexdigest(), envelope.source_set_digest, json.dumps(encoded)))
+                (request.generation_id, request.campaign_id, request.revision_id, envelope.session_id, request.action.value, request.prompt, request_digest, envelope.source_set_digest, json.dumps(encoded)))
             if cursor.rowcount == 0:
-                cursor.execute("SELECT request_digest,source_set_digest FROM hosted_ai_generation WHERE generation_id=%s", (request.generation_id,))
-                if cursor.fetchone() != (__import__("hashlib").sha256(request.prompt.encode()).hexdigest(), envelope.source_set_digest):
+                cursor.execute("SELECT request_digest FROM hosted_ai_generation WHERE generation_id=%s", (request.generation_id,))
+                if cursor.fetchone() != (request_digest,):
                     raise ValueError("idempotency_digest_conflict")
+                return False
+            return True
 
     def save_generation(self, record: GenerationRecord) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
@@ -142,6 +158,21 @@ class PostgresAIRepository:
                     if stored is None or stored[0] != event.event_type or stored[1] != payload:
                         raise ValueError("stream_sequence_conflict")
             cursor.execute("UPDATE hosted_ai_generation SET status=%s,terminal_draft=%s WHERE generation_id=%s", (record.terminal_status or "pending", record.terminal_content or None, record.request.generation_id))
+
+    def finalize_generation(self, record: GenerationRecord, event: StreamEvent, status: str) -> None:
+        payload = {"draft_fragment": event.draft_fragment, "retryable": event.retryable}
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("INSERT INTO hosted_ai_stream_event(generation_id,sequence,event_type,payload) VALUES(%s,%s,%s,%s::jsonb) ON CONFLICT DO NOTHING", (record.request.generation_id, event.sequence, event.event_type, json.dumps(payload)))
+            if cursor.rowcount == 0:
+                cursor.execute("SELECT event_type,payload FROM hosted_ai_stream_event WHERE generation_id=%s AND sequence=%s", (record.request.generation_id, event.sequence))
+                stored = cursor.fetchone()
+                if stored is None or stored[0] != event.event_type or stored[1] != payload:
+                    raise ValueError("stream_sequence_conflict")
+            cursor.execute("UPDATE hosted_ai_generation SET status=%s,terminal_draft=%s WHERE generation_id=%s AND status='pending'", (status, record.terminal_content or None, record.request.generation_id))
+            if cursor.rowcount != 1:
+                raise ValueError("stream_sequence_conflict")
+        record.events.append(event)
+        record.terminal_status = status
 
     def active_session(self, campaign_id: str) -> LiveSession | None:
         with self._connect() as connection, connection.cursor() as cursor:

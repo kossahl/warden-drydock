@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 import unittest
 
 from warden_drydock.hosted.ai.live import LiveSessionService, StaleController, StaleWorkflow
@@ -106,6 +108,14 @@ class GroundedAIServiceTests(unittest.TestCase):
         self.assertEqual(["generation_one"], self.repository.dispatch_log)
         with self.assertRaises(ValueError):
             self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "Changed")
+
+    def test_concurrent_exact_replay_has_one_provider_dispatch(self):
+        self.service.record_consent(explicit=True)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            records = list(pool.map(lambda _: self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?"), range(2)))
+        self.assertEqual(1, len(self.provider.calls))
+        self.assertEqual(["generation_one"], self.repository.dispatch_log)
+        self.assertEqual(records[0].request, records[1].request)
 
     def test_incomplete_provider_stream_is_resumable_failure(self):
         self.service.provider = FakeProvider(events=[("delta", "partial")])
@@ -272,6 +282,21 @@ class EngineSourceLoaderTests(unittest.TestCase):
                 with self.subTest(prompt=prompt):
                     records = loader.load("campaign_one", "revision_one", prompt)
                     self.assertIn("campaign-main", [item.subject_id for item in records])
+
+    def test_relevance_keeps_named_source_in_noisy_campaign(self):
+        noisy = tuple(Record(f"npc-person-{index:02d}", "canon", "The Person has status unknown") for index in range(25))
+        ship = Record("ship-zeta", "canon", "Zeta is operational")
+
+        class FakeEngine:
+            def retrieve(self, request):
+                records = noisy if request.subject_id == "status" else ((ship,) if request.subject_id == "zeta" else ())
+                return SimpleNamespace(result=SimpleNamespace(status=Status.STAGED), records=tuple(records))
+
+        loader = EngineSourceLoader(FakeEngine(), lambda campaign, revision: object())
+        loaded = loader.load("campaign_one", "revision_one", "What is the status of the Zeta?")
+        envelope = DeterministicSourceSelector(max_sources=20).select("campaign_one", "revision_one", loaded)
+        self.assertIn("ship-zeta", [item.source_id for item in envelope.excerpts])
+        self.assertLess(len([item for item in envelope.excerpts if item.source_id.startswith("npc-")]), 20)
 
 
 if __name__ == "__main__":
