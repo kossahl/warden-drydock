@@ -53,8 +53,10 @@ class RankedRecord:
 class DeterministicSourceSelector:
     """Selects a stable bounded set before a provider can be invoked."""
 
-    def __init__(self, *, max_sources: int = 20) -> None:
+    def __init__(self, *, max_sources: int = 20, max_excerpt_characters: int = 8000, max_total_characters: int = 32000) -> None:
         self.max_sources = max_sources
+        self.max_excerpt_characters = max_excerpt_characters
+        self.max_total_characters = max_total_characters
 
     def select(self, campaign_id: str, revision_id: str, records: Iterable[object], *, session_id: str | None = None, confirmed_facts: Iterable[object] = ()) -> SourceEnvelope:
         ranked: list[tuple[int, int, str, str, str]] = []
@@ -70,7 +72,16 @@ class DeterministicSourceSelector:
             text = str(getattr(fact, "text"))
             ranked.append((-1000000, 0, source_id, "table_fact", text))
         ranked.sort(key=lambda item: (item[0], item[1], item[2], item[4]))
-        excerpts = tuple(SourceExcerpt(source_id, authority, text, order) for order, (_, _, source_id, authority, text) in enumerate(ranked[:self.max_sources], 1))
+        excerpts: list[SourceExcerpt] = []
+        remaining = self.max_total_characters
+        for _, _, source_id, authority, text in ranked:
+            if len(excerpts) >= self.max_sources or remaining <= 0:
+                break
+            bounded = text[: min(self.max_excerpt_characters, remaining)]
+            if bounded:
+                excerpts.append(SourceExcerpt(source_id, authority, bounded, len(excerpts) + 1))
+                remaining -= len(bounded)
+        excerpts = tuple(excerpts)
         if not excerpts:
             raise ValueError("retrieval produced no grounded sources")
         return SourceEnvelope(campaign_id, revision_id, excerpts, session_id)

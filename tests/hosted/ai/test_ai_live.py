@@ -298,6 +298,14 @@ class EngineSourceLoaderTests(unittest.TestCase):
         self.assertIn("ship-zeta", [item.source_id for item in envelope.excerpts])
         self.assertLess(len([item for item in envelope.excerpts if item.source_id.startswith("npc-")]), 20)
 
+    def test_source_envelope_enforces_excerpt_and_aggregate_bounds(self):
+        records = [Record(f"source-{index}", "canon", str(index) * 20000) for index in range(6)]
+        envelope = DeterministicSourceSelector().select("campaign_one", "revision_one", records)
+        self.assertTrue(all(len(item.text) <= 8000 for item in envelope.excerpts))
+        self.assertLessEqual(sum(len(item.text) for item in envelope.excerpts), 32000)
+        repeated = DeterministicSourceSelector().select("campaign_one", "revision_one", reversed(records))
+        self.assertEqual(envelope.source_set_digest, repeated.source_set_digest)
+
 
 if __name__ == "__main__":
     unittest.main()
