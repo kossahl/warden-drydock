@@ -136,3 +136,11 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.service.reconcile(quarantined, wrong)
         self.assertEqual(ProposalStatus.QUARANTINED, self.repository.get(item.proposal_id, 1).status)
+
+    def test_unsafe_identifiers_never_reach_postgres_or_audit(self):
+        with self.assertRaises(ValueError):
+            self.service.draft(r"C:\private\campaign.md", "campaign_one", "revision_one",
+                (ExactTextChange("change_one", "record_one", "a" * 64, "private"),))
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM hosted_proposal_audit WHERE proposal_id LIKE %s", (self.prefix + "%",))
+            self.assertEqual((0,), cursor.fetchone())

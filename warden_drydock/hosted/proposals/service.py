@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 import hashlib
 import json
+import re
 import threading
 
 from warden_drydock.hosted.engine.models import ExactTextChange, Status, exact_diff_digest
@@ -24,6 +25,15 @@ class ProposalStatus(str, Enum):
     QUARANTINED = "quarantined"
 
 
+_PUBLIC_ID = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+_DIGEST = re.compile(r"^[a-f0-9]{64}$")
+
+
+def _require_public_id(value, field):
+    if not isinstance(value, str) or not 3 <= len(value) <= 80 or _PUBLIC_ID.fullmatch(value) is None:
+        raise ValueError(f"{field} is not a safe public identifier")
+
+
 @dataclass(frozen=True)
 class ProposalVersion:
     proposal_id: str
@@ -34,6 +44,24 @@ class ProposalVersion:
     diff_digest: str
     payload_digest: str
     status: ProposalStatus = ProposalStatus.DRAFT
+
+    def __post_init__(self):
+        for field, value in (("proposal_id", self.proposal_id),
+                             ("campaign_id", self.campaign_id),
+                             ("base_revision", self.base_revision)):
+            _require_public_id(value, field)
+        if self.version < 1 or not self.changes:
+            raise ValueError("proposal version and changes must be non-empty")
+        for change in self.changes:
+            _require_public_id(change.change_id, "change_id")
+            _require_public_id(change.subject_id, "subject_id")
+            if change.record_type is not None:
+                _require_public_id(change.record_type, "record_type")
+            if change.expected_content_digest is not None and _DIGEST.fullmatch(change.expected_content_digest) is None:
+                raise ValueError("expected_content_digest is not a lowercase SHA-256 digest")
+        for field, value in (("diff_digest", self.diff_digest), ("payload_digest", self.payload_digest)):
+            if _DIGEST.fullmatch(value) is None:
+                raise ValueError(f"{field} is not a lowercase SHA-256 digest")
 
 
 def _payload_digest(changes: tuple[ExactTextChange, ...]) -> str:

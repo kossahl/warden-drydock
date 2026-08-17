@@ -39,3 +39,7 @@ class Proposals(unittest.TestCase):
   item=self.draft(); self.assertIsNotNone(self.repo.claim(item)); self.assertRaises(ValueError,self.s.reject,item); self.assertEqual(ProposalStatus.APPROVING,self.repo.items[('proposal_one',1)].status)
  def test_approval_claim_excludes_concurrent_correction(self):
   item=self.draft(); self.assertIsNotNone(self.repo.claim(item)); self.assertRaises(ValueError,self.s.correct,item,(ExactTextChange('change_new','record_one','a'*64,'# New'),)); self.assertEqual(1,len(self.repo.items))
+ def test_private_paths_and_unsafe_change_ids_never_reach_audit(self):
+  with self.assertRaises(ValueError): self.s.draft(r'C:\private\campaign.md','campaign_one','rev_one',(ExactTextChange('change_one','record_one','a'*64,'x'),))
+  with self.assertRaises(ValueError): self.s.draft('proposal_safe','campaign_one','rev_one',(ExactTextChange('../private','record_one','a'*64,'x'),))
+  self.assertEqual([],self.repo.audit)
