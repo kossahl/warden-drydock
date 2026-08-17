@@ -72,6 +72,11 @@ class RuntimeTests(unittest.TestCase):
             self.assertFalse(body.startswith("BEGIN;"))
             self.assertFalse(body.endswith("COMMIT;"))
 
+    def test_readiness_requires_current_ai_live_schema(self) -> None:
+        health = (ROOT / "warden_drydock" / "hosted" / "operations" / "health.py").read_text(encoding="utf-8")
+        self.assertIn("version='0003'", health)
+        self.assertNotIn("version='0002'", health)
+
     def test_secret_replace_is_atomic_and_metadata_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SecretStore(pathlib.Path(directory))

@@ -2,11 +2,12 @@
 
 from .live import LiveSessionService
 from .provider import OpenAIResponsesAdapter, ProviderUnavailable
-from .retrieval import DeterministicSourceSelector
+from .retrieval import DeterministicSourceSelector, EngineSourceLoader
 from .service import GroundedAIService
 
 __all__ = [
     "DeterministicSourceSelector",
+    "EngineSourceLoader",
     "GroundedAIService",
     "LiveSessionService",
     "OpenAIResponsesAdapter",

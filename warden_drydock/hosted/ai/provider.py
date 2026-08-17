@@ -5,6 +5,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+import hashlib
 
 from .models import GenerationRequest
 
@@ -24,7 +25,24 @@ class OpenAIResponsesAdapter:
         self._transport = transport or self._http_transport
 
     def verify(self) -> bool:
-        return bool(os.environ.get("OPENAI_API_KEY"))
+        key = os.environ.get("OPENAI_API_KEY")
+        if not key:
+            return False
+        request = urllib.request.Request(
+            f"https://api.openai.com/v1/models/{self.model}",
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return response.status == 200
+        except (urllib.error.URLError, TimeoutError):
+            return False
+
+    def credential_revision_fingerprint(self) -> str:
+        key = os.environ.get("OPENAI_API_KEY")
+        if not key:
+            raise ProviderUnavailable("provider credential is not configured")
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
     def stream(self, request: GenerationRequest) -> Iterable[tuple[str, str | None]]:
         payload = self.build_payload(request)
@@ -56,6 +74,30 @@ class OpenAIResponsesAdapter:
         }
 
     @staticmethod
+    def _parse_sse(lines: Iterable[bytes]) -> Iterable[tuple[str, str | None]]:
+        for raw in lines:
+            try:
+                line = raw.decode("utf-8").strip()
+            except UnicodeDecodeError as exc:
+                raise ProviderUnavailable("malformed provider stream") from exc
+            if not line.startswith("data: ") or line == "data: [DONE]":
+                continue
+            try:
+                event = json.loads(line[6:])
+            except json.JSONDecodeError as exc:
+                raise ProviderUnavailable("malformed provider stream") from exc
+            kind = event.get("type", "")
+            if kind == "response.output_text.delta":
+                yield "delta", event.get("delta", "")
+            elif kind == "response.completed":
+                usage = event.get("response", {}).get("usage")
+                if usage is not None:
+                    yield "usage", json.dumps(usage, separators=(",", ":"), sort_keys=True)
+                yield "completion", None
+            elif kind == "response.failed":
+                yield "failure", None
+
+    @staticmethod
     def _http_transport(payload: dict) -> Iterable[tuple[str, str | None]]:
         key = os.environ.get("OPENAI_API_KEY")
         if not key:
@@ -68,17 +110,6 @@ class OpenAIResponsesAdapter:
         )
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
-                for raw in response:
-                    line = raw.decode("utf-8").strip()
-                    if not line.startswith("data: ") or line == "data: [DONE]":
-                        continue
-                    event = json.loads(line[6:])
-                    kind = event.get("type", "")
-                    if kind == "response.output_text.delta":
-                        yield "delta", event.get("delta", "")
-                    elif kind == "response.completed":
-                        yield "completion", None
-                    elif kind == "response.failed":
-                        yield "failure", None
+                yield from OpenAIResponsesAdapter._parse_sse(response)
         except (urllib.error.URLError, TimeoutError) as exc:
             raise ProviderUnavailable("provider unavailable") from exc

@@ -19,6 +19,7 @@ CREATE TABLE hosted_ai_generation (
     revision_id text NOT NULL,
     session_id text,
     action text NOT NULL CHECK (action IN ('ask','check','generate')),
+    prompt text NOT NULL,
     request_digest char(64) NOT NULL,
     source_set_digest char(64) NOT NULL,
     source_envelope jsonb NOT NULL,
@@ -45,6 +46,8 @@ CREATE TABLE hosted_live_session (
     controller_id text NOT NULL,
     mode text NOT NULL CHECK (mode IN ('active','ended_review_pending','ended'))
 );
+CREATE UNIQUE INDEX hosted_live_one_active_campaign_idx
+    ON hosted_live_session(campaign_id) WHERE mode = 'active';
 
 CREATE TABLE hosted_live_capture (
     session_id text NOT NULL REFERENCES hosted_live_session(session_id),

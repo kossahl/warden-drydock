@@ -19,7 +19,7 @@ def readiness() -> bool:
         "SELECT 1 FROM hosted_runtime_state r "
         "WHERE r.singleton AND NOT r.maintenance_mode "
         "AND r.reconciliation_complete AND r.schema_compatibility=1 "
-        "AND EXISTS (SELECT 1 FROM hosted_schema_migration WHERE version='0002')"
+        "AND EXISTS (SELECT 1 FROM hosted_schema_migration WHERE version='0003')"
     )
     environment = os.environ.copy()
     secret = pathlib.Path("/run/secrets/db_password")

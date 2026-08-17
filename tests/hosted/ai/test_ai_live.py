@@ -25,9 +25,13 @@ class FakeProvider:
         self.events = events or [("delta", "Authority: Draft. [source:station]"), ("completion", None)]
         self.available = available
         self.calls = []
+        self.fingerprint = "a" * 64
 
     def verify(self):
         return True
+
+    def credential_revision_fingerprint(self):
+        return self.fingerprint
 
     def stream(self, request):
         self.calls.append(request)
@@ -36,26 +40,37 @@ class FakeProvider:
         yield from self.events
 
 
+class FakeSourceLoader:
+    def __init__(self, records):
+        self.records = records
+        self.calls = []
+
+    def load(self, campaign_id, revision_id, prompt):
+        self.calls.append((campaign_id, revision_id, prompt))
+        return tuple(self.records)
+
+
 class GroundedAIServiceTests(unittest.TestCase):
     def setUp(self):
         self.repository = InMemoryAIRepository()
         self.provider = FakeProvider()
-        self.service = GroundedAIService(self.repository, DeterministicSourceSelector(), self.provider)
         self.records = [Record("station", "canon", "The airlock is sealed."), Record("plan", "preparation", "Open it later.")]
+        self.loader = FakeSourceLoader(self.records)
+        self.service = GroundedAIService(self.repository, DeterministicSourceSelector(), self.provider, self.loader)
 
     def test_verification_and_explicit_consent_gate_dispatch(self):
         with self.assertRaises(ConsentRequired):
-            self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
+            self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         with self.assertRaises(ConsentRequired):
             self.service.record_consent(explicit=False)
         self.service.record_consent(explicit=True)
-        self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
+        self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         self.assertEqual(["generation_one"], self.repository.dispatch_log)
 
     def test_retrieval_is_identical_and_persisted_before_dispatch(self):
         self.service.record_consent(explicit=True)
-        one = self.service.start("generation_one", "campaign_one", "revision_one", Action.CHECK, "Check", reversed(self.records))
-        two = self.service.start("generation_two", "campaign_one", "revision_one", Action.CHECK, "Check", self.records)
+        one = self.service.start("generation_one", "campaign_one", "revision_one", Action.CHECK, "Check")
+        two = self.service.start("generation_two", "campaign_one", "revision_one", Action.CHECK, "Check")
         self.assertEqual(one.request.envelope.source_set_digest, two.request.envelope.source_set_digest)
         self.assertIn("generation_one", self.repository.sources)
         self.assertEqual(1, len(self.provider.calls)) if False else None
@@ -63,24 +78,49 @@ class GroundedAIServiceTests(unittest.TestCase):
 
     def test_generation_exact_replay_does_not_dispatch_twice(self):
         self.service.record_consent(explicit=True)
-        one = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
-        two = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
+        one = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
+        two = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         self.assertIs(one, two)
         self.assertEqual(["generation_one"], self.repository.dispatch_log)
         with self.assertRaises(ValueError):
-            self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "Changed", self.records)
+            self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "Changed")
 
     def test_incomplete_provider_stream_is_resumable_failure(self):
         self.service.provider = FakeProvider(events=[("delta", "partial")])
         self.service.record_consent(explicit=True)
-        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
+        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         self.assertEqual("failed", record.terminal_status)
         self.assertEqual("failure", record.events[-1].event_type)
         self.assertIs(record.events[-1].retryable, True)
 
+    def test_consent_is_invalidated_by_credential_revision_change(self):
+        self.service.record_consent(explicit=True)
+        self.provider.fingerprint = "b" * 64
+        with self.assertRaises(ConsentRequired):
+            self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
+
+    def test_live_generation_forces_base_revision_and_confirmed_facts(self):
+        live = LiveSessionService(self.repository)
+        session = live.start("session_one", "campaign_one", "revision_one", "controller_one")
+        live.capture("session_one", "controller_one", 1, session.workflow_version, event_id="question_one", device_id="device_one", operation_id="operation_one", device_order=1, capture_type=CaptureType.UNRESOLVED_QUESTION, text="Secret question")
+        live.capture("session_one", "controller_one", 1, session.workflow_version, event_id="fact_one", device_id="device_one", operation_id="operation_two", device_order=2, capture_type=CaptureType.CONFIRMED_FACT, text="Door opened")
+        self.service.record_consent(explicit=True)
+        record = self.service.start("generation_one", "campaign_one", "revision_new", Action.CHECK, "Check", session_id="session_one")
+        self.assertEqual("revision_one", record.request.revision_id)
+        texts = [item.text for item in record.request.envelope.excerpts]
+        self.assertIn("Door opened", texts)
+        self.assertNotIn("Secret question", texts)
+
+    def test_events_after_terminal_fail_closed(self):
+        self.service.provider = FakeProvider(events=[("completion", None), ("delta", "late")])
+        self.service.record_consent(explicit=True)
+        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
+        self.assertEqual("failed", record.terminal_status)
+        self.assertNotIn("late", record.terminal_content)
+
     def test_stream_is_ordered_resumable_and_terminal_draft_persists(self):
         self.service.record_consent(explicit=True)
-        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
+        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         self.assertEqual([1, 2, 3], [event.sequence for event in record.events])
         self.assertEqual([2, 3], [event.sequence for event in self.service.resume(record, 1)])
         self.assertEqual("complete", record.terminal_status)
@@ -89,19 +129,28 @@ class GroundedAIServiceTests(unittest.TestCase):
     def test_provider_outage_creates_failure_without_mutation(self):
         self.service.provider = FakeProvider(available=False)
         self.service.record_consent(explicit=True)
-        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.GENERATE, "Idea", self.records)
+        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.GENERATE, "Idea")
         self.assertEqual("failed", record.terminal_status)
         self.assertEqual(["start", "failure"], [event.event_type for event in record.events])
         self.assertEqual({}, self.repository.sessions)
 
     def test_openai_payload_is_luna_draft_only_and_store_false(self):
         self.service.record_consent(explicit=True)
-        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
+        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         payload = OpenAIResponsesAdapter(lambda _: ()).build_payload(record.request)
         self.assertEqual("gpt-5.6-luna", payload["model"])
         self.assertIs(payload["store"], False)
         self.assertNotIn("tools", payload)
         self.assertIn("Authority: Draft", payload["input"][0]["content"])
+
+    def test_openai_sse_is_normalized_and_malformed_input_fails(self):
+        lines = [
+            b'data: {"type":"response.output_text.delta","delta":"Draft"}\n',
+            b'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":1}}}\n',
+        ]
+        self.assertEqual(["delta", "usage", "completion"], [item[0] for item in OpenAIResponsesAdapter._parse_sse(lines)])
+        with self.assertRaises(ProviderUnavailable):
+            list(OpenAIResponsesAdapter._parse_sse([b"data: {broken}\n"]))
 
 
 class LiveSessionServiceTests(unittest.TestCase):
@@ -149,7 +198,7 @@ class LiveSessionServiceTests(unittest.TestCase):
         self.assertEqual([], self.session.captures)
 
     def test_takeover_invalidates_old_controller(self):
-        self.live.takeover("session_one", "controller_two", 1)
+        self.live.takeover("session_one", "controller_two", 1, self.session.workflow_version)
         with self.assertRaises(StaleController):
             self.live.capture("session_one", "controller_one", 1, self.session.workflow_version, event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1, capture_type=CaptureType.CONFIRMED_FACT, text="Fact")
 
@@ -165,6 +214,13 @@ class LiveSessionServiceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.live.start("session_two", "campaign_one", "revision_one", "controller_one")
         self.assertEqual(1, len(self.session.captures))
+
+    def test_only_one_active_session_and_no_capture_after_end(self):
+        with self.assertRaises(ValueError):
+            self.live.start("session_two", "campaign_one", "revision_one", "controller_two")
+        self.live.end("session_one", "controller_one", 1, self.session.workflow_version)
+        with self.assertRaises(StaleWorkflow):
+            self.live.capture("session_one", "controller_one", 1, self.session.workflow_version, event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1, capture_type=CaptureType.CONFIRMED_FACT, text="Fact")
 
 
 if __name__ == "__main__":

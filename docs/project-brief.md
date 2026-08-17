@@ -70,9 +70,11 @@ detected and require an explicit `--apply` flag.
 
 ## Current implementation boundary
 
-- The browser and hosted API remain incomplete, and provider integration is not
-  implemented. The committed Compose baseline is an operations foundation, not
-  a claim that the full vertical slice is available.
+- The browser and hosted HTTP API remain incomplete. Provider-neutral grounded
+  generation and live workflow application services are implemented for the
+  personal pilot, but are not yet wired into the browser vertical slice. The
+  committed Compose baseline remains an operations foundation, not a claim that
+  the full vertical slice is available.
 - Notion integration.
 - Obsidian as a required dependency.
 - Git submodules between framework and campaigns.
