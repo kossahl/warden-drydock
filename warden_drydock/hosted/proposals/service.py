@@ -5,7 +5,7 @@ from enum import Enum
 import hashlib
 import json
 
-from warden_drydock.hosted.engine.models import ExactTextChange, exact_diff_digest
+from warden_drydock.hosted.engine.models import ExactTextChange, Status, exact_diff_digest
 from warden_drydock.hosted.revisions.models import StaleHeadError
 
 
@@ -17,6 +17,7 @@ class ProposalStatus(str, Enum):
     DRAFT = "draft"
     REJECTED = "rejected"
     APPROVED = "approved"
+    APPROVING = "approving"
     CONFLICT = "conflict"
     PUBLISHED = "published"
     QUARANTINED = "quarantined"
@@ -69,14 +70,16 @@ class ProposalService:
         return self.repository.replace_status(version, ProposalStatus.REJECTED)
 
     def approve(self, version, *, diff_digest, base_revision, payload_digest):
-        version = self.repository.items[(version.proposal_id, version.version)]
-        if version.status is not ProposalStatus.DRAFT:
-            raise ValueError("only the current draft version can be approved")
         if (diff_digest, base_revision, payload_digest) != (version.diff_digest, version.base_revision, version.payload_digest):
             raise ValueError("approval binding mismatch")
+        version = self.repository.claim(version)
+        if version is None:
+            raise ValueError("only the current draft version can be approved")
         if self._head(version.campaign_id) != version.base_revision:
             return self.repository.replace_status(version, ProposalStatus.CONFLICT)
         staged = self._stage(version)
+        if getattr(staged, "status", None) is not Status.STAGED:
+            return self.repository.replace_status(version, ProposalStatus.DRAFT)
         try:
             result = self._publish(version, staged)
         except StaleHeadError:
@@ -96,3 +99,7 @@ class InMemoryProposalRepository:
         if current.status == status: return current
         updated = replace(current, status=status); self.items[(item.proposal_id, item.version)] = updated
         self.audit.append((item.proposal_id, item.version, status.value)); return updated
+    def claim(self, item):
+        current = self.items[(item.proposal_id, item.version)]
+        if current.status is not ProposalStatus.DRAFT: return None
+        return self.replace_status(current, ProposalStatus.APPROVING)
