@@ -65,6 +65,7 @@ class ProposalService:
         return self.draft(version.proposal_id, version.campaign_id, base_revision or version.base_revision, changes)
 
     def reject(self, version):
+        version = self.repository.items[(version.proposal_id, version.version)]
         if version.status is ProposalStatus.REJECTED:
             return version
         if version.status is not ProposalStatus.DRAFT:

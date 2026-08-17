@@ -28,3 +28,6 @@ class Proposals(unittest.TestCase):
  def test_head_failure_recovers_and_conflict_can_rebase(self):
   item=self.draft(); self.s._head=lambda _: (_ for _ in ()).throw(RuntimeError('head')); self.assertEqual(ProposalStatus.DRAFT,self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest).status)
   self.s._head=lambda _:'rev_other'; conflict=self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest); corrected=self.s.correct(conflict,(ExactTextChange('change_three','record_one','a'*64,'# Four'),),base_revision='rev_other'); self.assertEqual((2,'rev_other',ProposalStatus.DRAFT),(corrected.version,corrected.base_revision,corrected.status))
+ def test_stale_reject_cannot_rewrite_published_version(self):
+  item=self.draft(); self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest)
+  self.assertRaises(ValueError,self.s.reject,item); self.assertEqual(ProposalStatus.PUBLISHED,self.repo.items[('proposal_one',1)].status)
