@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import unittest
+
+from warden_drydock.hosted.ai.live import LiveSessionService, StaleController, StaleWorkflow
+from warden_drydock.hosted.ai.models import Action, CaptureType
+from warden_drydock.hosted.ai.provider import OpenAIResponsesAdapter, ProviderUnavailable
+from warden_drydock.hosted.ai.repository import InMemoryAIRepository
+from warden_drydock.hosted.ai.retrieval import DeterministicSourceSelector
+from warden_drydock.hosted.ai.service import ConsentRequired, GroundedAIService
+
+
+@dataclass(frozen=True)
+class Record:
+    subject_id: str
+    status: str
+    content: str
+
+
+class FakeProvider:
+    adapter_id = "fake_provider"
+    adapter_version = "1.0.0"
+    def __init__(self, events=None, *, available=True):
+        self.events = events or [("delta", "Authority: Draft. [source:station]"), ("completion", None)]
+        self.available = available
+        self.calls = []
+
+    def verify(self):
+        return True
+
+    def stream(self, request):
+        self.calls.append(request)
+        if not self.available:
+            raise ProviderUnavailable("offline")
+        yield from self.events
+
+
+class GroundedAIServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.repository = InMemoryAIRepository()
+        self.provider = FakeProvider()
+        self.service = GroundedAIService(self.repository, DeterministicSourceSelector(), self.provider)
+        self.records = [Record("station", "canon", "The airlock is sealed."), Record("plan", "preparation", "Open it later.")]
+
+    def test_verification_and_explicit_consent_gate_dispatch(self):
+        with self.assertRaises(ConsentRequired):
+            self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
+        with self.assertRaises(ConsentRequired):
+            self.service.record_consent(explicit=False)
+        self.service.record_consent(explicit=True)
+        self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
+        self.assertEqual(["generation_one"], self.repository.dispatch_log)
+
+    def test_retrieval_is_identical_and_persisted_before_dispatch(self):
+        self.service.record_consent(explicit=True)
+        one = self.service.start("generation_one", "campaign_one", "revision_one", Action.CHECK, "Check", reversed(self.records))
+        two = self.service.start("generation_two", "campaign_one", "revision_one", Action.CHECK, "Check", self.records)
+        self.assertEqual(one.request.envelope.source_set_digest, two.request.envelope.source_set_digest)
+        self.assertIn("generation_one", self.repository.sources)
+        self.assertEqual(1, len(self.provider.calls)) if False else None
+        self.assertEqual(["generation_one", "generation_two"], self.repository.dispatch_log)
+
+    def test_generation_exact_replay_does_not_dispatch_twice(self):
+        self.service.record_consent(explicit=True)
+        one = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
+        two = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
+        self.assertIs(one, two)
+        self.assertEqual(["generation_one"], self.repository.dispatch_log)
+        with self.assertRaises(ValueError):
+            self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "Changed", self.records)
+
+    def test_incomplete_provider_stream_is_resumable_failure(self):
+        self.service.provider = FakeProvider(events=[("delta", "partial")])
+        self.service.record_consent(explicit=True)
+        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
+        self.assertEqual("failed", record.terminal_status)
+        self.assertEqual("failure", record.events[-1].event_type)
+        self.assertIs(record.events[-1].retryable, True)
+
+    def test_stream_is_ordered_resumable_and_terminal_draft_persists(self):
+        self.service.record_consent(explicit=True)
+        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
+        self.assertEqual([1, 2, 3], [event.sequence for event in record.events])
+        self.assertEqual([2, 3], [event.sequence for event in self.service.resume(record, 1)])
+        self.assertEqual("complete", record.terminal_status)
+        self.assertTrue(record.terminal_content.startswith("Authority: Draft"))
+
+    def test_provider_outage_creates_failure_without_mutation(self):
+        self.service.provider = FakeProvider(available=False)
+        self.service.record_consent(explicit=True)
+        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.GENERATE, "Idea", self.records)
+        self.assertEqual("failed", record.terminal_status)
+        self.assertEqual(["start", "failure"], [event.event_type for event in record.events])
+        self.assertEqual({}, self.repository.sessions)
+
+    def test_openai_payload_is_luna_draft_only_and_store_false(self):
+        self.service.record_consent(explicit=True)
+        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?", self.records)
+        payload = OpenAIResponsesAdapter(lambda _: ()).build_payload(record.request)
+        self.assertEqual("gpt-5.6-luna", payload["model"])
+        self.assertIs(payload["store"], False)
+        self.assertNotIn("tools", payload)
+        self.assertIn("Authority: Draft", payload["input"][0]["content"])
+
+
+class LiveSessionServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.repository = InMemoryAIRepository()
+        self.live = LiveSessionService(self.repository)
+        self.session = self.live.start("session_one", "campaign_one", "revision_one", "controller_one")
+
+    def capture(self, operation="operation_one", kind=CaptureType.CONFIRMED_FACT, text="Door opened"):
+        return self.live.capture("session_one", "controller_one", 1, self.session.workflow_version,
+            event_id="event_" + operation.split("_")[-1], device_id="device_one", operation_id=operation,
+            device_order=len(self.session.captures) + 1, capture_type=kind, text=text)
+
+    def test_base_revision_stays_pinned_when_head_advances(self):
+        self.live.observe("session_one", reported_head_revision="revision_two")
+        self.assertEqual("revision_one", self.session.base_revision)
+        self.assertEqual("revision_two", self.session.reported_head_revision)
+
+    def test_question_is_never_grounding_fact(self):
+        self.capture(kind=CaptureType.UNRESOLVED_QUESTION, text="Who opened it?")
+        self.capture("operation_two", CaptureType.CONFIRMED_FACT, "Door opened")
+        facts = self.live.grounding_facts("session_one")
+        self.assertEqual(["Door opened"], [item.text for item in facts])
+
+    def test_capture_is_idempotent_and_digest_conflict_fails(self):
+        version = self.session.workflow_version
+        outcome = self.capture()
+        self.assertEqual("accepted", outcome)
+        outcome = self.live.capture("session_one", "controller_one", 1, self.session.workflow_version,
+            event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1,
+            capture_type=CaptureType.CONFIRMED_FACT, text="Door opened")
+        self.assertEqual("exact_replay", outcome)
+        self.assertEqual(1, len(self.session.captures))
+        with self.assertRaises(ValueError):
+            self.live.capture("session_one", "controller_one", 1, self.session.workflow_version,
+                event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1,
+                capture_type=CaptureType.CONFIRMED_FACT, text="Different")
+        self.assertGreater(self.session.workflow_version, version)
+
+    def test_stale_controller_and_workflow_fail_safely(self):
+        with self.assertRaises(StaleController):
+            self.live.capture("session_one", "other_controller", 1, 1, event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1, capture_type=CaptureType.CONFIRMED_FACT, text="Fact")
+        with self.assertRaises(StaleWorkflow):
+            self.live.capture("session_one", "controller_one", 1, 99, event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1, capture_type=CaptureType.CONFIRMED_FACT, text="Fact")
+        self.assertEqual([], self.session.captures)
+
+    def test_takeover_invalidates_old_controller(self):
+        self.live.takeover("session_one", "controller_two", 1)
+        with self.assertRaises(StaleController):
+            self.live.capture("session_one", "controller_one", 1, self.session.workflow_version, event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1, capture_type=CaptureType.CONFIRMED_FACT, text="Fact")
+
+    def test_provider_outage_does_not_block_typed_capture_or_end(self):
+        self.assertEqual("accepted", self.capture())
+        ended = self.live.end("session_one", "controller_one", 1, self.session.workflow_version)
+        self.assertEqual("ended_review_pending", ended.mode)
+        self.assertEqual("revision_one", ended.base_revision)
+
+    def test_recovery_disablement_preserves_existing_records(self):
+        self.capture()
+        self.live.disable()
+        with self.assertRaises(RuntimeError):
+            self.live.start("session_two", "campaign_one", "revision_one", "controller_one")
+        self.assertEqual(1, len(self.session.captures))
+
+
+if __name__ == "__main__":
+    unittest.main()

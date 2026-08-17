@@ -66,10 +66,11 @@ class RuntimeTests(unittest.TestCase):
 
     def test_migrations_are_ordered_and_outer_transactions_removed(self) -> None:
         files = migration_files(ROOT / "warden_drydock" / "hosted" / "migrations")
-        self.assertEqual(["0001", "0002"], [path.name[:4] for path in files])
-        body = migration_body(files[0])
-        self.assertFalse(body.startswith("BEGIN;"))
-        self.assertFalse(body.endswith("COMMIT;"))
+        self.assertEqual(["0001", "0002", "0003"], [path.name[:4] for path in files])
+        for path in files:
+            body = migration_body(path)
+            self.assertFalse(body.startswith("BEGIN;"))
+            self.assertFalse(body.endswith("COMMIT;"))
 
     def test_secret_replace_is_atomic_and_metadata_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
