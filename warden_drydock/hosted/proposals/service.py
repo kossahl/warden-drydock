@@ -65,12 +65,10 @@ class ProposalService:
         return self.draft(version.proposal_id, version.campaign_id, base_revision or version.base_revision, changes)
 
     def reject(self, version):
-        version = self.repository.items[(version.proposal_id, version.version)]
-        if version.status is ProposalStatus.REJECTED:
-            return version
-        if version.status is not ProposalStatus.DRAFT:
+        version = self.repository.reject(version)
+        if version is None:
             raise ValueError("only draft versions can be rejected")
-        return self.repository.replace_status(version, ProposalStatus.REJECTED)
+        return version
 
     def approve(self, version, *, diff_digest, base_revision, payload_digest):
         if (diff_digest, base_revision, payload_digest) != (version.diff_digest, version.base_revision, version.payload_digest):
@@ -114,6 +112,15 @@ class InMemoryProposalRepository:
             current = self.items[(item.proposal_id, item.version)]
             if current.status is not ProposalStatus.DRAFT: return None
             updated = replace(current, status=ProposalStatus.APPROVING)
+            self.items[(item.proposal_id, item.version)] = updated
+            self.audit.append((item.proposal_id, item.version, updated.status.value))
+            return updated
+    def reject(self, item):
+        with self._lock:
+            current = self.items[(item.proposal_id, item.version)]
+            if current.status is ProposalStatus.REJECTED: return current
+            if current.status is not ProposalStatus.DRAFT: return None
+            updated = replace(current, status=ProposalStatus.REJECTED)
             self.items[(item.proposal_id, item.version)] = updated
             self.audit.append((item.proposal_id, item.version, updated.status.value))
             return updated

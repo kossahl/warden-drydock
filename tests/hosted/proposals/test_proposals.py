@@ -31,3 +31,5 @@ class Proposals(unittest.TestCase):
  def test_stale_reject_cannot_rewrite_published_version(self):
   item=self.draft(); self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest)
   self.assertRaises(ValueError,self.s.reject,item); self.assertEqual(ProposalStatus.PUBLISHED,self.repo.items[('proposal_one',1)].status)
+ def test_approval_claim_excludes_concurrent_reject(self):
+  item=self.draft(); self.assertIsNotNone(self.repo.claim(item)); self.assertRaises(ValueError,self.s.reject,item); self.assertEqual(ProposalStatus.APPROVING,self.repo.items[('proposal_one',1)].status)
