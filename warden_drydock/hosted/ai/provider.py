@@ -20,9 +20,20 @@ class OpenAIResponsesAdapter:
     adapter_id = "openai_responses"
     adapter_version = "1.0.0"
     model = "gpt-5.6-luna"
+    default_max_output_tokens = 2048
+    maximum_output_tokens = 128_000
 
-    def __init__(self, transport=None) -> None:
+    def __init__(self, transport=None, *, max_output_tokens: int = default_max_output_tokens) -> None:
+        if (
+            isinstance(max_output_tokens, bool)
+            or not isinstance(max_output_tokens, int)
+            or not 1 <= max_output_tokens <= self.maximum_output_tokens
+        ):
+            raise ValueError(
+                f"max_output_tokens must be an integer from 1 to {self.maximum_output_tokens}"
+            )
         self._transport = transport or self._http_transport
+        self.max_output_tokens = max_output_tokens
 
     def verify(self) -> bool:
         key = os.environ.get("OPENAI_API_KEY")
@@ -60,6 +71,7 @@ class OpenAIResponsesAdapter:
         )
         return {
             "model": self.model,
+            "max_output_tokens": self.max_output_tokens,
             "store": False,
             "stream": True,
             "input": [{
