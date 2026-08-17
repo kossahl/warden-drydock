@@ -20,6 +20,7 @@ class OpenAIResponsesAdapter:
     adapter_id = "openai_responses"
     adapter_version = "1.0.0"
     model = "gpt-5.6-luna"
+    max_output_tokens = 512
 
     def __init__(self, transport=None) -> None:
         self._transport = transport or self._http_transport
@@ -60,6 +61,7 @@ class OpenAIResponsesAdapter:
         )
         return {
             "model": self.model,
+            "max_output_tokens": self.max_output_tokens,
             "store": False,
             "stream": True,
             "input": [{

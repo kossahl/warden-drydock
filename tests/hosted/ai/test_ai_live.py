@@ -195,9 +195,27 @@ class GroundedAIServiceTests(unittest.TestCase):
         record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         payload = OpenAIResponsesAdapter(lambda _: ()).build_payload(record.request)
         self.assertEqual("gpt-5.6-luna", payload["model"])
+        self.assertEqual(512, payload["max_output_tokens"])
         self.assertIs(payload["store"], False)
         self.assertNotIn("tools", payload)
         self.assertIn("Authority: Draft", payload["input"][0]["content"])
+
+    def test_openai_stream_sends_finite_output_cap_to_transport(self):
+        self.service.record_consent(explicit=True)
+        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
+        dispatched = []
+
+        def transport(payload):
+            dispatched.append(payload)
+            return iter(())
+
+        list(OpenAIResponsesAdapter(transport).stream(record.request))
+        self.assertEqual(1, len(dispatched))
+        self.assertEqual(512, dispatched[0]["max_output_tokens"])
+        self.assertEqual("gpt-5.6-luna", dispatched[0]["model"])
+        self.assertIs(dispatched[0]["store"], False)
+        self.assertNotIn("tools", dispatched[0])
+        self.assertIn("Authority: Draft", dispatched[0]["input"][0]["content"])
 
     def test_openai_sse_is_normalized_and_malformed_input_fails(self):
         lines = [
