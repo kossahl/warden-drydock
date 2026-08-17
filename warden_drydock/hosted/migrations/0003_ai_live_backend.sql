@@ -62,4 +62,12 @@ CREATE TABLE hosted_live_capture (
     UNIQUE (session_id, device_id, operation_id)
 );
 
+CREATE TABLE hosted_live_receipt (
+    session_id text NOT NULL REFERENCES hosted_live_session(session_id),
+    device_id text NOT NULL,
+    operation_id text NOT NULL,
+    payload_digest char(64) NOT NULL,
+    PRIMARY KEY (session_id, device_id, operation_id)
+);
+
 COMMIT;

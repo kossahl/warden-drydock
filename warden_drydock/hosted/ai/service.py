@@ -61,31 +61,30 @@ class GroundedAIService:
             return existing
         record = GenerationRecord(request)
         # The persistence boundary is completed before provider dispatch.
-        with self.repository.transaction():
-            self.repository.begin_generation(record)
+        self.repository.begin_generation(record)
         self.repository.dispatch_log.append(generation_id)
         self._append(record, "start")
-        terminal_seen = False
+        pending_terminal: tuple[str, str | None] | None = None
         try:
             for event_type, fragment in self.provider.stream(request):
                 if event_type not in {"delta", "usage", "completion", "failure"}:
                     raise ProviderUnavailable("provider stream capability rejected")
-                if terminal_seen:
-                    terminal = record.events[-1]
-                    record.events[-1] = StreamEvent(terminal.sequence, "failure", retryable=False)
+                if pending_terminal is not None:
                     raise ProviderUnavailable("provider emitted events after terminal state")
-                self._append(record, event_type, fragment)
+                if event_type in {"completion", "failure"}:
+                    pending_terminal = (event_type, fragment)
+                    continue
                 if event_type == "delta" and fragment:
                     record.terminal_content += fragment
-                if event_type in {"completion", "failure"}:
-                    terminal_seen = True
-                    record.terminal_status = "complete" if event_type == "completion" else "failed"
-            if record.terminal_status is None:
+                self._append(record, event_type, fragment)
+            if pending_terminal is not None:
+                self._append(record, pending_terminal[0], pending_terminal[1])
+                record.terminal_status = "complete" if pending_terminal[0] == "completion" else "failed"
+            else:
                 self._append(record, "failure", retryable=True)
                 record.terminal_status = "failed"
         except ProviderUnavailable:
-            if not terminal_seen:
-                self._append(record, "failure", retryable=True)
+            self._append(record, "failure", retryable=pending_terminal is None)
             record.terminal_status = "failed"
         self.repository.save_generation(record)
         return record
@@ -94,6 +93,6 @@ class GroundedAIService:
     def resume(record: GenerationRecord, after_sequence: int) -> tuple[StreamEvent, ...]:
         return tuple(event for event in record.events if event.sequence > after_sequence)
 
-    @staticmethod
-    def _append(record: GenerationRecord, event_type: str, fragment: str | None = None, *, retryable: bool | None = None) -> None:
+    def _append(self, record: GenerationRecord, event_type: str, fragment: str | None = None, *, retryable: bool | None = None) -> None:
         record.events.append(StreamEvent(len(record.events) + 1, event_type, fragment, retryable))
+        self.repository.save_generation(record)

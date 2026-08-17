@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+import tempfile
 import unittest
 
 from warden_drydock.hosted.ai.live import LiveSessionService, StaleController, StaleWorkflow
@@ -8,7 +10,9 @@ from warden_drydock.hosted.ai.models import Action, CaptureType
 from warden_drydock.hosted.ai.provider import OpenAIResponsesAdapter, ProviderUnavailable
 from warden_drydock.hosted.ai.repository import InMemoryAIRepository
 from warden_drydock.hosted.ai.retrieval import DeterministicSourceSelector
+from warden_drydock.hosted.ai.retrieval import EngineSourceLoader
 from warden_drydock.hosted.ai.service import ConsentRequired, GroundedAIService
+from warden_drydock.hosted.engine import DeterministicEngine, InitializeRequest, Status, WorkspaceRegistry
 
 
 @dataclass(frozen=True)
@@ -48,6 +52,24 @@ class FakeSourceLoader:
     def load(self, campaign_id, revision_id, prompt):
         self.calls.append((campaign_id, revision_id, prompt))
         return tuple(self.records)
+
+
+class ObservingProvider(FakeProvider):
+    def __init__(self, repository):
+        super().__init__()
+        self.repository = repository
+
+    def stream(self, request):
+        self.calls.append(request)
+        self.assert_persisted(request.generation_id, 1)
+        yield "delta", "Draft"
+        self.assert_persisted(request.generation_id, 2)
+        yield "completion", None
+
+    def assert_persisted(self, generation_id, count):
+        record = self.repository.get_generation(generation_id)
+        if record is None or len(record.events) != count:
+            raise AssertionError("stream event was not persisted incrementally")
 
 
 class GroundedAIServiceTests(unittest.TestCase):
@@ -126,6 +148,12 @@ class GroundedAIServiceTests(unittest.TestCase):
         self.assertEqual("complete", record.terminal_status)
         self.assertTrue(record.terminal_content.startswith("Authority: Draft"))
 
+    def test_stream_events_are_persisted_before_next_provider_event(self):
+        self.service.provider = ObservingProvider(self.repository)
+        self.service.record_consent(explicit=True)
+        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
+        self.assertEqual("complete", record.terminal_status)
+
     def test_provider_outage_creates_failure_without_mutation(self):
         self.service.provider = FakeProvider(available=False)
         self.service.record_consent(explicit=True)
@@ -188,6 +216,10 @@ class LiveSessionServiceTests(unittest.TestCase):
             self.live.capture("session_one", "controller_one", 1, self.session.workflow_version,
                 event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1,
                 capture_type=CaptureType.CONFIRMED_FACT, text="Different")
+        with self.assertRaises(ValueError):
+            self.live.capture("session_one", "controller_one", 1, self.session.workflow_version,
+                event_id="changed_event", device_id="device_one", operation_id="operation_one", device_order=2,
+                capture_type=CaptureType.CONFIRMED_FACT, text="Door opened")
         self.assertGreater(self.session.workflow_version, version)
 
     def test_stale_controller_and_workflow_fail_safely(self):
@@ -204,7 +236,7 @@ class LiveSessionServiceTests(unittest.TestCase):
 
     def test_provider_outage_does_not_block_typed_capture_or_end(self):
         self.assertEqual("accepted", self.capture())
-        ended = self.live.end("session_one", "controller_one", 1, self.session.workflow_version)
+        ended = self.live.end("session_one", "controller_one", 1, self.session.workflow_version, device_id="device_one", operation_id="end_one")
         self.assertEqual("ended_review_pending", ended.mode)
         self.assertEqual("revision_one", ended.base_revision)
 
@@ -218,9 +250,28 @@ class LiveSessionServiceTests(unittest.TestCase):
     def test_only_one_active_session_and_no_capture_after_end(self):
         with self.assertRaises(ValueError):
             self.live.start("session_two", "campaign_one", "revision_one", "controller_two")
-        self.live.end("session_one", "controller_one", 1, self.session.workflow_version)
+        self.live.end("session_one", "controller_one", 1, self.session.workflow_version, device_id="device_one", operation_id="end_one")
         with self.assertRaises(StaleWorkflow):
             self.live.capture("session_one", "controller_one", 1, self.session.workflow_version, event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1, capture_type=CaptureType.CONFIRMED_FACT, text="Fact")
+        replay = self.live.end("session_one", "controller_one", 1, 1, device_id="device_one", operation_id="end_one")
+        self.assertEqual("ended_review_pending", replay.mode)
+        with self.assertRaises(StaleWorkflow):
+            self.live.end("session_one", "controller_one", 1, self.session.workflow_version, device_id="device_one", operation_id="end_two")
+
+
+class EngineSourceLoaderTests(unittest.TestCase):
+    def test_natural_language_actions_retrieve_through_real_engine(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = WorkspaceRegistry(Path(directory))
+            engine = DeterministicEngine(registry)
+            handle = registry.allocate()
+            result = engine.initialize(InitializeRequest("command_initialize", handle, "Engine Test"))
+            self.assertEqual(Status.STAGED, result.status)
+            loader = EngineSourceLoader(engine, lambda campaign, revision: handle)
+            for prompt in ("What is the campaign called?", "Check the campaign name", "Generate a campaign introduction"):
+                with self.subTest(prompt=prompt):
+                    records = loader.load("campaign_one", "revision_one", prompt)
+                    self.assertIn("campaign-main", [item.subject_id for item in records])
 
 
 if __name__ == "__main__":

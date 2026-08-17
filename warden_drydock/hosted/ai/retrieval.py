@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import re
 
 from .models import SourceEnvelope, SourceExcerpt
 from warden_drydock.hosted.engine.models import RetrievalKind, RetrievalRequest, Status
@@ -15,15 +16,22 @@ class EngineSourceLoader:
 
     def load(self, campaign_id: str, revision_id: str, prompt: str) -> tuple[object, ...]:
         handle = self.workspace_for_revision(campaign_id, revision_id)
-        result = self.engine.retrieve(RetrievalRequest(
-            command_id="retrieval_" + __import__("hashlib").sha256(f"{campaign_id}:{revision_id}:{prompt}".encode()).hexdigest()[:16],
-            workspace_handle=handle,
-            kind=RetrievalKind.FIND,
-            subject_id=prompt,
-        ))
-        if result.result.status is not Status.STAGED:
+        tokens = sorted(set(re.findall(r"[a-z0-9-]{3,}", prompt.casefold())))
+        if not tokens:
             raise ValueError("retrieval_consistency_failure")
-        return result.records
+        records: dict[str, object] = {}
+        for index, token in enumerate(tokens[:20], 1):
+            result = self.engine.retrieve(RetrievalRequest(
+                command_id="retrieval_" + __import__("hashlib").sha256(f"{campaign_id}:{revision_id}:{index}:{token}".encode()).hexdigest()[:16],
+                workspace_handle=handle,
+                kind=RetrievalKind.FIND,
+                subject_id=token,
+            ))
+            if result.result.status is not Status.STAGED:
+                raise ValueError("retrieval_consistency_failure")
+            for record in result.records:
+                records[record.subject_id] = record
+        return tuple(records[key] for key in sorted(records))
 
 
 class DeterministicSourceSelector:

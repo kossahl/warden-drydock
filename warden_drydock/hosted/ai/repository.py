@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 import json
+import uuid
 from typing import Iterator
 
 from .models import Action, Capture, CaptureType, GenerationRecord, GenerationRequest, LiveSession, ProviderConsent, SourceEnvelope, SourceExcerpt, StreamEvent
@@ -65,6 +66,9 @@ class InMemoryAIRepository:
                 raise ValueError("stale_controller_epoch")
         self.sessions[session.session_id] = session
 
+    def update_reported_head(self, session_id: str, revision_id: str) -> None:
+        self.sessions[session_id].reported_head_revision = revision_id
+
 
 class PostgresAIRepository:
     """PostgreSQL implementation of the same provider/live repository contract."""
@@ -90,9 +94,13 @@ class PostgresAIRepository:
 
     def set_consent(self, consent: ProviderConsent) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT credential_revision_fingerprint,adapter_version,endpoint_id,region,storage_mode,retrieval_policy_version,notice_digest,revoked_at IS NULL FROM hosted_provider_consent WHERE revoked_at IS NULL ORDER BY consented_at DESC LIMIT 1")
+            row = cursor.fetchone()
+            if row is not None and ProviderConsent(*row) == consent:
+                return
             cursor.execute("UPDATE hosted_provider_consent SET revoked_at=now() WHERE revoked_at IS NULL")
             cursor.execute("INSERT INTO hosted_provider_consent(consent_id,credential_revision_fingerprint,adapter_version,endpoint_id,region,storage_mode,retrieval_policy_version,notice_digest) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)",
-                ("consent_" + __import__("hashlib").sha256((consent.notice_digest + consent.credential_revision_fingerprint).encode()).hexdigest()[:24], consent.credential_revision_fingerprint, consent.adapter_version, consent.endpoint_id, consent.region, consent.storage_mode, consent.retrieval_policy_version, consent.notice_digest))
+                ("consent_" + uuid.uuid4().hex[:24], consent.credential_revision_fingerprint, consent.adapter_version, consent.endpoint_id, consent.region, consent.storage_mode, consent.retrieval_policy_version, consent.notice_digest))
 
     @staticmethod
     def _envelope(value: dict) -> SourceEnvelope:
@@ -126,7 +134,13 @@ class PostgresAIRepository:
     def save_generation(self, record: GenerationRecord) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             for event in record.events:
-                cursor.execute("INSERT INTO hosted_ai_stream_event(generation_id,sequence,event_type,payload) VALUES(%s,%s,%s,%s::jsonb) ON CONFLICT DO NOTHING", (record.request.generation_id, event.sequence, event.event_type, json.dumps({"draft_fragment": event.draft_fragment, "retryable": event.retryable})))
+                payload = {"draft_fragment": event.draft_fragment, "retryable": event.retryable}
+                cursor.execute("INSERT INTO hosted_ai_stream_event(generation_id,sequence,event_type,payload) VALUES(%s,%s,%s,%s::jsonb) ON CONFLICT DO NOTHING", (record.request.generation_id, event.sequence, event.event_type, json.dumps(payload)))
+                if cursor.rowcount == 0:
+                    cursor.execute("SELECT event_type,payload FROM hosted_ai_stream_event WHERE generation_id=%s AND sequence=%s", (record.request.generation_id, event.sequence))
+                    stored = cursor.fetchone()
+                    if stored is None or stored[0] != event.event_type or stored[1] != payload:
+                        raise ValueError("stream_sequence_conflict")
             cursor.execute("UPDATE hosted_ai_generation SET status=%s,terminal_draft=%s WHERE generation_id=%s", (record.terminal_status or "pending", record.terminal_content or None, record.request.generation_id))
 
     def active_session(self, campaign_id: str) -> LiveSession | None:
@@ -146,7 +160,8 @@ class PostgresAIRepository:
             for item in cursor.fetchall():
                 capture = Capture(item[0], item[1], item[2], item[3], CaptureType(item[4]), item[5], item[6])
                 session.captures.append(capture)
-                session.receipts[(capture.device_id, capture.operation_id)] = capture.payload_digest
+            cursor.execute("SELECT device_id,operation_id,payload_digest FROM hosted_live_receipt WHERE session_id=%s", (session_id,))
+            session.receipts = {(item[0], item[1]): item[2] for item in cursor.fetchall()}
             return session
 
     def create_session(self, session: LiveSession) -> None:
@@ -168,3 +183,16 @@ class PostgresAIRepository:
                 raise ValueError("stale_workflow_version")
             for item in session.captures:
                 cursor.execute("INSERT INTO hosted_live_capture(session_id,event_id,device_id,operation_id,device_order,capture_type,payload_digest,content) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", (session.session_id, item.event_id, item.device_id, item.operation_id, item.device_order, item.capture_type.value, item.payload_digest, item.text))
+            for (device_id, operation_id), payload_digest in session.receipts.items():
+                cursor.execute("INSERT INTO hosted_live_receipt(session_id,device_id,operation_id,payload_digest) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING", (session.session_id, device_id, operation_id, payload_digest))
+                if cursor.rowcount == 0:
+                    cursor.execute("SELECT payload_digest FROM hosted_live_receipt WHERE session_id=%s AND device_id=%s AND operation_id=%s", (session.session_id, device_id, operation_id))
+                    row = cursor.fetchone()
+                    if row is None or row[0] != payload_digest:
+                        raise ValueError("idempotency_digest_conflict")
+
+    def update_reported_head(self, session_id: str, revision_id: str) -> None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("UPDATE hosted_live_session SET reported_head_revision=%s WHERE session_id=%s", (revision_id, session_id))
+            if cursor.rowcount != 1:
+                raise KeyError(session_id)

@@ -41,8 +41,8 @@ class LiveSessionService:
     def observe(self, session_id: str, *, reported_head_revision: str | None = None) -> LiveSession:
         session = self.repository.get_session(session_id)
         if reported_head_revision:
+            self.repository.update_reported_head(session_id, reported_head_revision)
             session.reported_head_revision = reported_head_revision
-            self.repository.save_session(session)
         return session
 
     def takeover(self, session_id: str, controller_id: str, expected_epoch: int, expected_workflow_version: int) -> LiveSession:
@@ -67,7 +67,7 @@ class LiveSessionService:
             raise StaleWorkflow("stale_workflow_version")
         if session.workflow_version != expected_workflow_version:
             raise StaleWorkflow("stale_workflow_version")
-        digest = canonical_digest({"capture_type": capture_type.value, "text": text})
+        digest = canonical_digest({"base_revision": session.base_revision, "capture_type": capture_type.value, "device_order": device_order, "event_id": event_id, "text": text})
         if device_order < 1 or not text:
             raise ValueError("unsafe_binding")
         key = (device_id, operation_id)
@@ -88,12 +88,21 @@ class LiveSessionService:
         session = self.repository.get_session(session_id)
         return tuple(item for item in session.captures if item.capture_type is CaptureType.CONFIRMED_FACT)
 
-    def end(self, session_id: str, controller_id: str, controller_epoch: int, expected_workflow_version: int) -> LiveSession:
+    def end(self, session_id: str, controller_id: str, controller_epoch: int, expected_workflow_version: int, *, device_id: str, operation_id: str) -> LiveSession:
         session = self.repository.get_session(session_id)
+        digest = canonical_digest({"base_revision": session.base_revision, "event_type": "end_intent", "operation_id": operation_id})
+        prior = session.receipts.get((device_id, operation_id))
+        if prior is not None:
+            if prior != digest:
+                raise ValueError("idempotency_digest_conflict")
+            return session
         self._require_controller(session, controller_id, controller_epoch)
+        if session.mode != "active":
+            raise StaleWorkflow("stale_workflow_version")
         if session.workflow_version != expected_workflow_version:
             raise StaleWorkflow("stale_workflow_version")
         session.mode = "ended_review_pending"
+        session.receipts[(device_id, operation_id)] = digest
         session.workflow_version += 1
         self.repository.save_session(session, expected_workflow_version=expected_workflow_version, expected_epoch=controller_epoch)
         return session
