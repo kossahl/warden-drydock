@@ -36,18 +36,9 @@ class OpenAIResponsesAdapter:
         self.max_output_tokens = max_output_tokens
 
     def verify(self) -> bool:
-        key = os.environ.get("OPENAI_API_KEY")
-        if not key:
-            return False
-        request = urllib.request.Request(
-            f"https://api.openai.com/v1/models/{self.model}",
-            headers={"Authorization": f"Bearer {key}"},
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=15) as response:
-                return response.status == 200
-        except (urllib.error.URLError, TimeoutError):
-            return False
+        # Capability is established by the first authorized Responses request;
+        # Models API read permission is neither required nor probed here.
+        return bool(os.environ.get("OPENAI_API_KEY"))
 
     def credential_revision_fingerprint(self) -> str:
         key = os.environ.get("OPENAI_API_KEY")

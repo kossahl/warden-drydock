@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import io
+import json
+import os
 from pathlib import Path
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
+import urllib.error
 
 from warden_drydock.hosted.ai.live import LiveSessionService, StaleController, StaleWorkflow
 from warden_drydock.hosted.ai.models import Action, CaptureType
@@ -90,6 +95,78 @@ class GroundedAIServiceTests(unittest.TestCase):
         self.service.record_consent(explicit=True)
         self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         self.assertEqual(["generation_one"], self.repository.dispatch_log)
+
+    def test_openai_consent_is_local_and_start_dispatches_one_responses_request(self):
+        repository = InMemoryAIRepository()
+        dispatched = []
+
+        def transport(payload):
+            dispatched.append(payload)
+            return iter((("completion", None),))
+
+        provider = OpenAIResponsesAdapter(transport, max_output_tokens=512)
+        service = GroundedAIService(repository, DeterministicSourceSelector(), provider, self.loader)
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "synthetic-key"}, clear=True):
+            with patch("warden_drydock.hosted.ai.provider.urllib.request.urlopen") as urlopen:
+                service.record_consent(explicit=True)
+                record = service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
+                urlopen.assert_not_called()
+        self.assertEqual("complete", record.terminal_status)
+        self.assertEqual(1, len(dispatched))
+        self.assertEqual(512, dispatched[0]["max_output_tokens"])
+        self.assertEqual(["generation_one"], repository.dispatch_log)
+
+    def test_openai_missing_credential_prevents_consent_and_dispatch(self):
+        repository = InMemoryAIRepository()
+        dispatched = []
+        provider = OpenAIResponsesAdapter(lambda payload: dispatched.append(payload))
+        service = GroundedAIService(repository, DeterministicSourceSelector(), provider, self.loader)
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(ConsentRequired):
+                service.record_consent(explicit=True)
+            with self.assertRaises(ConsentRequired):
+                service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
+        self.assertEqual([], dispatched)
+        self.assertEqual([], repository.dispatch_log)
+
+    def test_openai_responses_access_and_transport_errors_persist_sanitized_failure(self):
+        failures = (
+            urllib.error.HTTPError(
+                "https://api.openai.com/v1/responses",
+                code,
+                "Rejected",
+                {},
+                io.BytesIO(b"synthetic-key campaign-secret provider-body"),
+            )
+            for code in (401, 403)
+        )
+        failures = (*failures, urllib.error.URLError("transport campaign-secret"))
+        for index, failure in enumerate(failures):
+            with self.subTest(failure=type(failure).__name__, code=getattr(failure, "code", None)):
+                repository = InMemoryAIRepository()
+                provider = OpenAIResponsesAdapter(max_output_tokens=512)
+                service = GroundedAIService(repository, DeterministicSourceSelector(), provider, self.loader)
+                with patch.dict(os.environ, {"OPENAI_API_KEY": "synthetic-key"}, clear=True):
+                    with patch("warden_drydock.hosted.ai.provider.urllib.request.urlopen", side_effect=failure) as urlopen:
+                        service.record_consent(explicit=True)
+                        record = service.start(
+                            f"generation_{index}", "campaign_one", "revision_one", Action.ASK, "campaign-secret"
+                        )
+                        self.assertEqual(1, urlopen.call_count)
+                        sent_request = urlopen.call_args.args[0]
+                        self.assertEqual("https://api.openai.com/v1/responses", sent_request.full_url)
+                        self.assertEqual("POST", sent_request.get_method())
+                        self.assertEqual(512, json.loads(sent_request.data)["max_output_tokens"])
+                self.assertEqual("failed", record.terminal_status)
+                self.assertEqual("", record.terminal_content)
+                self.assertEqual(["start", "failure"], [event.event_type for event in record.events])
+                persisted = repr(record.events)
+                self.assertNotIn("synthetic-key", persisted)
+                self.assertNotIn("campaign-secret", persisted)
+                self.assertNotIn("provider-body", persisted)
+                self.assertEqual([f"generation_{index}"], repository.dispatch_log)
+                if isinstance(failure, urllib.error.HTTPError):
+                    failure.close()
 
     def test_retrieval_is_identical_and_persisted_before_dispatch(self):
         self.service.record_consent(explicit=True)
