@@ -198,6 +198,7 @@ class GroundedAIServiceTests(unittest.TestCase):
         self.assertEqual(512, payload["max_output_tokens"])
         self.assertIs(payload["store"], False)
         self.assertNotIn("tools", payload)
+        self.assertEqual("developer", payload["input"][0]["role"])
         self.assertIn("Authority: Draft", payload["input"][0]["content"])
 
     def test_openai_stream_sends_finite_output_cap_to_transport(self):
@@ -215,6 +216,7 @@ class GroundedAIServiceTests(unittest.TestCase):
         self.assertEqual("gpt-5.6-luna", dispatched[0]["model"])
         self.assertIs(dispatched[0]["store"], False)
         self.assertNotIn("tools", dispatched[0])
+        self.assertEqual("developer", dispatched[0]["input"][0]["role"])
         self.assertIn("Authority: Draft", dispatched[0]["input"][0]["content"])
 
     def test_openai_sse_is_normalized_and_malformed_input_fails(self):
