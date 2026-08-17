@@ -107,6 +107,7 @@ class PostgresAIRepository:
 
     def set_consent(self, consent: ProviderConsent) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended('hosted_provider_consent', 0))")
             cursor.execute("SELECT credential_revision_fingerprint,adapter_version,endpoint_id,region,storage_mode,retrieval_policy_version,notice_digest,revoked_at IS NULL FROM hosted_provider_consent WHERE revoked_at IS NULL ORDER BY consented_at DESC LIMIT 1")
             row = cursor.fetchone()
             if row is not None and ProviderConsent(*row) == consent:

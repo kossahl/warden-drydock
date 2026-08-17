@@ -12,6 +12,8 @@ CREATE TABLE hosted_provider_consent (
     consented_at timestamptz NOT NULL DEFAULT now(),
     revoked_at timestamptz
 );
+CREATE UNIQUE INDEX hosted_provider_one_current_consent_idx
+    ON hosted_provider_consent((true)) WHERE revoked_at IS NULL;
 
 CREATE TABLE hosted_ai_generation (
     generation_id text PRIMARY KEY,

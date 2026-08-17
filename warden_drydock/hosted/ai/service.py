@@ -15,24 +15,35 @@ class GroundedAIService:
         self.provider = provider
         self.source_loader = source_loader
         self._enabled = True
+        self.endpoint_id = "responses_api"
+        self.region = "provider_default"
+        self.storage_mode = "no_training"
+        self.retrieval_policy_version = 1
+        self.notice = "minimal deterministic excerpts"
 
     def record_consent(self, *, explicit: bool, notice: str = "minimal deterministic excerpts", endpoint_id: str = "responses_api", region: str = "provider_default") -> ProviderConsent:
         if not explicit:
             raise ConsentRequired("explicit data-transfer consent is required")
         if not self.provider.verify():
             raise ConsentRequired("provider verification is required before consent")
-        consent = ProviderConsent(
-            credential_revision_fingerprint=self.provider.credential_revision_fingerprint(),
-            adapter_version=self.provider.adapter_version,
-            endpoint_id=endpoint_id,
-            region=region,
-            storage_mode="no_training",
-            retrieval_policy_version=1,
-            notice_digest=canonical_digest({"notice": notice}),
-            current=True,
-        )
+        self.notice = notice
+        self.endpoint_id = endpoint_id
+        self.region = region
+        consent = self._current_consent_identity()
         self.repository.set_consent(consent)
         return consent
+
+    def _current_consent_identity(self) -> ProviderConsent:
+        return ProviderConsent(
+            credential_revision_fingerprint=self.provider.credential_revision_fingerprint(),
+            adapter_version=self.provider.adapter_version,
+            endpoint_id=self.endpoint_id,
+            region=self.region,
+            storage_mode=self.storage_mode,
+            retrieval_policy_version=self.retrieval_policy_version,
+            notice_digest=canonical_digest({"notice": self.notice}),
+            current=True,
+        )
 
     def disable(self) -> None:
         self._enabled = False
@@ -41,7 +52,7 @@ class GroundedAIService:
         if not self._enabled:
             raise ProviderUnavailable("provider feature is disabled")
         consent = self.repository.consent()
-        if consent is None or not consent.current or not self.provider.verify() or consent.credential_revision_fingerprint != self.provider.credential_revision_fingerprint():
+        if consent is None or not consent.current or not self.provider.verify() or consent != self._current_consent_identity():
             raise ConsentRequired("provider verification and current consent are required")
         if session_id is not None:
             session = self.repository.get_session(session_id)

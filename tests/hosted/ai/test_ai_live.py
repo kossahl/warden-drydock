@@ -131,6 +131,24 @@ class GroundedAIServiceTests(unittest.TestCase):
         with self.assertRaises(ConsentRequired):
             self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
 
+    def test_every_material_consent_identity_change_requires_renewal(self):
+        changes = (
+            ("adapter_version", "provider", "2.0.0"),
+            ("endpoint_id", "service", "alternate_endpoint"),
+            ("region", "service", "alternate_region"),
+            ("storage_mode", "service", "provider_default"),
+            ("retrieval_policy_version", "service", 2),
+            ("notice", "service", "changed handling notice"),
+        )
+        for field, target_name, changed in changes:
+            with self.subTest(field=field):
+                self.setUp()
+                self.service.record_consent(explicit=True)
+                target = self.provider if target_name == "provider" else self.service
+                setattr(target, field, changed)
+                with self.assertRaises(ConsentRequired):
+                    self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
+
     def test_live_generation_forces_base_revision_and_confirmed_facts(self):
         live = LiveSessionService(self.repository)
         session = live.start("session_one", "campaign_one", "revision_one", "controller_one")
