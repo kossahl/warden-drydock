@@ -25,3 +25,6 @@ class Proposals(unittest.TestCase):
  def test_stage_exception_recovers_draft_and_claim_is_single_winner(self):
   item=self.draft(); self.s._stage=lambda p: (_ for _ in ()).throw(RuntimeError('stage')); self.assertEqual(ProposalStatus.DRAFT,self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest).status)
   self.assertIsNotNone(self.repo.claim(item)); self.assertIsNone(self.repo.claim(item))
+ def test_head_failure_recovers_and_conflict_can_rebase(self):
+  item=self.draft(); self.s._head=lambda _: (_ for _ in ()).throw(RuntimeError('head')); self.assertEqual(ProposalStatus.DRAFT,self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest).status)
+  self.s._head=lambda _:'rev_other'; conflict=self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest); corrected=self.s.correct(conflict,(ExactTextChange('change_three','record_one','a'*64,'# Four'),),base_revision='rev_other'); self.assertEqual((2,'rev_other',ProposalStatus.DRAFT),(corrected.version,corrected.base_revision,corrected.status))

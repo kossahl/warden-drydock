@@ -57,11 +57,12 @@ class ProposalService:
         self.repository.add(item)
         return item
 
-    def correct(self, version, changes):
-        if version.status is not ProposalStatus.DRAFT:
-            raise ValueError("only draft versions can be corrected")
+    def correct(self, version, changes, *, base_revision=None):
+        version = self.repository.items[(version.proposal_id, version.version)]
+        if version.status not in (ProposalStatus.DRAFT, ProposalStatus.CONFLICT):
+            raise ValueError("only draft or conflicted versions can be corrected")
         self.repository.replace_status(version, ProposalStatus.REJECTED)
-        return self.draft(version.proposal_id, version.campaign_id, version.base_revision, changes)
+        return self.draft(version.proposal_id, version.campaign_id, base_revision or version.base_revision, changes)
 
     def reject(self, version):
         if version.status is ProposalStatus.REJECTED:
@@ -76,7 +77,11 @@ class ProposalService:
         version = self.repository.claim(version)
         if version is None:
             raise ValueError("only the current draft version can be approved")
-        if self._head(version.campaign_id) != version.base_revision:
+        try:
+            head = self._head(version.campaign_id)
+        except Exception:
+            return self.repository.replace_status(version, ProposalStatus.DRAFT)
+        if head != version.base_revision:
             return self.repository.replace_status(version, ProposalStatus.CONFLICT)
         try:
             staged = self._stage(version)
