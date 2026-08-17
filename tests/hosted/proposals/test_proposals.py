@@ -21,7 +21,7 @@ class Proposals(unittest.TestCase):
   item=self.draft(); self.s._publish=lambda p,x: (_ for _ in ()).throw(RuntimeError('crash')); self.assertEqual(ProposalStatus.QUARANTINED,self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest).status)
  def test_invalid_stage_and_second_approval_never_publish(self):
   item=self.draft(); self.s._stage=lambda p:type('Stage',(),{'status':Status.INVALID})(); self.assertEqual(ProposalStatus.DRAFT,self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest).status); self.assertEqual([],self.published)
-  self.s._stage=lambda p:type('Stage',(),{'status':Status.STAGED})(); self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest); self.assertRaises(ValueError,self.s.approve,item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest)
+  self.s._stage=lambda p:type('Stage',(),{'status':Status.STAGED})(); first=self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest); self.assertEqual(first,self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest))
  def test_stage_exception_recovers_draft_and_claim_is_single_winner(self):
   item=self.draft(); self.s._stage=lambda p: (_ for _ in ()).throw(RuntimeError('stage')); self.assertEqual(ProposalStatus.DRAFT,self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest).status)
   self.assertIsNotNone(self.repo.claim(item)); self.assertIsNone(self.repo.claim(item))

@@ -70,9 +70,12 @@ class ProposalService:
         return version
 
     def approve(self, version, *, diff_digest, base_revision, payload_digest):
-        if (diff_digest, base_revision, payload_digest) != (version.diff_digest, version.base_revision, version.payload_digest):
+        current = self.repository.get(version.proposal_id, version.version) if hasattr(self.repository, "get") else self.repository.items[(version.proposal_id, version.version)]
+        if (diff_digest, base_revision, payload_digest) != (current.diff_digest, current.base_revision, current.payload_digest):
             raise ValueError("approval binding mismatch")
-        version = self.repository.claim(version)
+        if current.status is ProposalStatus.PUBLISHED:
+            return current
+        version = self.repository.claim(current)
         if version is None:
             raise ValueError("only the current draft version can be approved")
         try:
@@ -94,12 +97,24 @@ class ProposalService:
         except Exception:
             # The immutable intent may be reconciled later; never replay blindly.
             return self.repository.replace_status(version, ProposalStatus.QUARANTINED)
-        return self.repository.replace_status(version, ProposalStatus.PUBLISHED if result is not None else ProposalStatus.APPROVED)
+        status = ProposalStatus.PUBLISHED if result is not None else ProposalStatus.APPROVED
+        if hasattr(self.repository, "finalize"):
+            return self.repository.finalize(version, status, result)
+        return self.repository.replace_status(version, status)
+
+    def reconcile(self, version, result):
+        current = self.repository.get(version.proposal_id, version.version)
+        if current.status is ProposalStatus.PUBLISHED:
+            return current
+        if current.status not in (ProposalStatus.APPROVING, ProposalStatus.APPROVED, ProposalStatus.QUARANTINED):
+            raise ValueError("proposal is not reconcilable")
+        return self.repository.finalize(current, ProposalStatus.PUBLISHED, result)
 
 
 class InMemoryProposalRepository:
     def __init__(self): self.items = {}; self.audit = []; self._lock = threading.Lock()
     def next_version(self, proposal_id): return 1 + max((v.version for v in self.items.values() if v.proposal_id == proposal_id), default=0)
+    def get(self, proposal_id, version): return self.items[(proposal_id, version)]
     def add(self, item): self.items[(item.proposal_id, item.version)] = item; self.audit.append((item.proposal_id, item.version, item.status.value))
     def replace_status(self, item, status):
         current = self.items[(item.proposal_id, item.version)]
