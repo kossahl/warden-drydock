@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import json
 
 from warden_drydock.hosted.engine.models import ChangeKind, ExactTextChange
+from warden_drydock.hosted.revisions.models import SnapshotManifest
 
 from .service import ProposalStatus, ProposalVersion
 
@@ -134,15 +135,18 @@ class PostgresProposalRepository:
 
     @staticmethod
     def _link(result):
+        if not isinstance(result, SnapshotManifest):
+            raise ValueError("publication linkage requires a snapshot manifest")
         intent_id = getattr(result, "publication_intent_token", None)
         revision_id = getattr(result, "revision_id", None)
         result_digest = getattr(result, "tree_digest", None)
-        if isinstance(result, str):
-            revision_id = result
         return intent_id, revision_id, result_digest
 
     def finalize(self, item, status, result=None):
-        intent_id, revision_id, result_digest = self._link(result)
+        if result is None and status is ProposalStatus.APPROVED:
+            intent_id, revision_id, result_digest = (None, None, None)
+        else:
+            intent_id, revision_id, result_digest = self._link(result)
         with self._transaction() as connection, connection.cursor() as cursor:
             cursor.execute("UPDATE hosted_proposal_version SET status=%s,publication_intent_token=COALESCE(publication_intent_token,%s),published_revision_id=COALESCE(published_revision_id,%s),result_digest=COALESCE(result_digest,%s) WHERE proposal_id=%s AND version=%s AND status IN ('approving','approved','quarantined') RETURNING proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status",
                 (status.value, intent_id, revision_id, result_digest, item.proposal_id, item.version))

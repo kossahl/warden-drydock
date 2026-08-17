@@ -2,11 +2,15 @@ import unittest
 from warden_drydock.hosted.engine.models import ExactTextChange, Status
 from warden_drydock.hosted.proposals.service import InMemoryProposalRepository, ProposalService, ProposalStatus
 from warden_drydock.hosted.revisions.models import StaleHeadError
+from warden_drydock.hosted.revisions.models import FileHash, SnapshotManifest
+
+def manifest(item, revision="revision_two"):
+ return SnapshotManifest(item.campaign_id,revision,item.base_revision,2,"b"*64,(FileHash("record.md","c"*64),),"0.3.0","1.0.0","d"*64,item.diff_digest,"token_publish")
 
 class Proposals(unittest.TestCase):
  def setUp(self):
   self.repo=InMemoryProposalRepository(); self.head='rev_one'; self.published=[]
-  self.s=ProposalService(self.repo, head=lambda _:self.head, stage=lambda p:type('Stage',(),{'status':Status.STAGED})(), publish=lambda p,x:self.published.append((p,x)) or 'revision_two')
+  self.s=ProposalService(self.repo, head=lambda _:self.head, stage=lambda p:type('Stage',(),{'status':Status.STAGED})(), publish=lambda p,x:self.published.append((p,x)) or manifest(p), verify_publication=lambda value:value)
  def draft(self): return self.s.draft('proposal_one','campaign_one','rev_one',(ExactTextChange('change_one','record_one','a'*64,'# Two'),))
  def test_correction_retires_old_and_binding_is_exact(self):
   old=self.draft(); new=self.s.correct(old,(ExactTextChange('change_two','record_one','a'*64,'# Three'),))

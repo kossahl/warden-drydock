@@ -7,7 +7,7 @@ import json
 import threading
 
 from warden_drydock.hosted.engine.models import ExactTextChange, Status, exact_diff_digest
-from warden_drydock.hosted.revisions.models import StaleHeadError
+from warden_drydock.hosted.revisions.models import SnapshotManifest, StaleHeadError
 
 
 class ProposalConflict(RuntimeError):
@@ -45,8 +45,19 @@ def _payload_digest(changes: tuple[ExactTextChange, ...]) -> str:
 
 class ProposalService:
     """Small immutable proposal state machine; authority remains with publisher."""
-    def __init__(self, repository, *, head, stage, publish) -> None:
+    def __init__(self, repository, *, head, stage, publish, verify_publication=None) -> None:
         self.repository, self._head, self._stage, self._publish = repository, head, stage, publish
+        self._verify_publication = verify_publication
+
+    @staticmethod
+    def _bind_manifest(version, result):
+        if not isinstance(result, SnapshotManifest):
+            raise ValueError("publication result is not a verified snapshot manifest")
+        if (result.campaign_id, result.parent_revision, result.change_digest) != (
+            version.campaign_id, version.base_revision, version.diff_digest
+        ):
+            raise ValueError("publication result binding mismatch")
+        return result
 
     def draft(self, proposal_id, campaign_id, base_revision, changes):
         changes = tuple(changes)
@@ -97,6 +108,11 @@ class ProposalService:
         except Exception:
             # The immutable intent may be reconciled later; never replay blindly.
             return self.repository.replace_status(version, ProposalStatus.QUARANTINED)
+        if result is not None:
+            try:
+                self._bind_manifest(version, result)
+            except ValueError:
+                return self.repository.replace_status(version, ProposalStatus.QUARANTINED)
         status = ProposalStatus.PUBLISHED if result is not None else ProposalStatus.APPROVED
         if hasattr(self.repository, "finalize"):
             return self.repository.finalize(version, status, result)
@@ -108,7 +124,13 @@ class ProposalService:
             return current
         if current.status not in (ProposalStatus.APPROVING, ProposalStatus.APPROVED, ProposalStatus.QUARANTINED):
             raise ValueError("proposal is not reconcilable")
-        return self.repository.finalize(current, ProposalStatus.PUBLISHED, result)
+        manifest = self._bind_manifest(current, result)
+        if self._verify_publication is None:
+            raise ValueError("publication verifier is required for reconciliation")
+        verified = self._verify_publication(manifest)
+        if verified != manifest:
+            raise ValueError("publication snapshot verification failed")
+        return self.repository.finalize(current, ProposalStatus.PUBLISHED, manifest)
 
 
 class InMemoryProposalRepository:

@@ -8,6 +8,7 @@ import uuid
 from warden_drydock.hosted.engine.models import ExactTextChange, Status
 from warden_drydock.hosted.proposals import PostgresProposalRepository
 from warden_drydock.hosted.proposals.service import ProposalService, ProposalStatus
+from warden_drydock.hosted.revisions.models import FileHash, SnapshotManifest
 
 
 DATABASE_URL = os.environ.get("DRYDOCK_TEST_DATABASE_URL")
@@ -28,7 +29,8 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
             self.repository,
             head=lambda _: "revision_one",
             stage=lambda _: type("Stage", (), {"status": Status.STAGED})(),
-            publish=lambda item, _: self.publish_calls.append(item.proposal_id) or "revision_two",
+            publish=lambda item, _: self.publish_calls.append(item.proposal_id) or self.manifest(item),
+            verify_publication=lambda value: value,
         )
 
     def tearDown(self):
@@ -46,6 +48,12 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
     def binding(item):
         return dict(diff_digest=item.diff_digest, base_revision=item.base_revision,
                     payload_digest=item.payload_digest)
+
+    @staticmethod
+    def manifest(item, revision="revision_two"):
+        return SnapshotManifest(item.campaign_id, revision, item.base_revision, 2,
+            "b" * 64, (FileHash("record.md", "c" * 64),), "0.3.0", "1.0.0",
+            "d" * 64, item.diff_digest, "token_publish")
 
     def race(self, *operations):
         barrier = threading.Barrier(len(operations))
@@ -110,9 +118,21 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
         item = self.draft("reconcile")
         claimed = self.repository.claim(item)
         quarantined = self.repository.replace_status(claimed, ProposalStatus.QUARANTINED)
-        published = self.service.reconcile(quarantined, "revision_reconciled")
+        published = self.service.reconcile(quarantined, self.manifest(item, "revision_reconciled"))
         self.assertEqual(ProposalStatus.PUBLISHED, published.status)
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("SELECT published_revision_id FROM hosted_proposal_version WHERE proposal_id=%s AND version=1", (item.proposal_id,))
             self.assertEqual(("revision_reconciled",), cursor.fetchone())
         self.assertEqual(ProposalStatus.PUBLISHED, PostgresProposalRepository(self.connect).get(item.proposal_id, 1).status)
+
+    def test_reconciliation_rejects_unverified_or_mismatched_manifest(self):
+        item = self.draft("bad_reconcile")
+        quarantined = self.repository.replace_status(self.repository.claim(item), ProposalStatus.QUARANTINED)
+        with self.assertRaises(ValueError):
+            self.service.reconcile(quarantined, "private/path")
+        wrong = SnapshotManifest("campaign_other", "revision_other", item.base_revision, 2,
+            "b" * 64, (FileHash("record.md", "c" * 64),), "0.3.0", "1.0.0",
+            "d" * 64, item.diff_digest, "token_publish")
+        with self.assertRaises(ValueError):
+            self.service.reconcile(quarantined, wrong)
+        self.assertEqual(ProposalStatus.QUARANTINED, self.repository.get(item.proposal_id, 1).status)
