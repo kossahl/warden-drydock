@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 import hashlib
 import json
+import threading
 
 from warden_drydock.hosted.engine.models import ExactTextChange, Status, exact_diff_digest
 from warden_drydock.hosted.revisions.models import StaleHeadError
@@ -77,7 +78,10 @@ class ProposalService:
             raise ValueError("only the current draft version can be approved")
         if self._head(version.campaign_id) != version.base_revision:
             return self.repository.replace_status(version, ProposalStatus.CONFLICT)
-        staged = self._stage(version)
+        try:
+            staged = self._stage(version)
+        except Exception:
+            return self.repository.replace_status(version, ProposalStatus.DRAFT)
         if getattr(staged, "status", None) is not Status.STAGED:
             return self.repository.replace_status(version, ProposalStatus.DRAFT)
         try:
@@ -91,7 +95,7 @@ class ProposalService:
 
 
 class InMemoryProposalRepository:
-    def __init__(self): self.items = {}; self.audit = []
+    def __init__(self): self.items = {}; self.audit = []; self._lock = threading.Lock()
     def next_version(self, proposal_id): return 1 + max((v.version for v in self.items.values() if v.proposal_id == proposal_id), default=0)
     def add(self, item): self.items[(item.proposal_id, item.version)] = item; self.audit.append((item.proposal_id, item.version, item.status.value))
     def replace_status(self, item, status):
@@ -100,6 +104,10 @@ class InMemoryProposalRepository:
         updated = replace(current, status=status); self.items[(item.proposal_id, item.version)] = updated
         self.audit.append((item.proposal_id, item.version, status.value)); return updated
     def claim(self, item):
-        current = self.items[(item.proposal_id, item.version)]
-        if current.status is not ProposalStatus.DRAFT: return None
-        return self.replace_status(current, ProposalStatus.APPROVING)
+        with self._lock:
+            current = self.items[(item.proposal_id, item.version)]
+            if current.status is not ProposalStatus.DRAFT: return None
+            updated = replace(current, status=ProposalStatus.APPROVING)
+            self.items[(item.proposal_id, item.version)] = updated
+            self.audit.append((item.proposal_id, item.version, updated.status.value))
+            return updated
