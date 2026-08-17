@@ -143,7 +143,8 @@ package registry.
 The repository also contains the implemented Hosted MVP foundation: accepted
 hosted ADRs, versioned executable contracts, a typed deterministic engine
 facade, immutable revision/projection persistence, the frontend foundation, and
-the hardened two-service Compose operations baseline. See
+the hardened two-service Compose operations baseline, and backend-only grounded
+AI/live workflow services for the personal pilot. See
 [`docs/hosted-operations.md`](docs/hosted-operations.md) for runtime and recovery
-instructions. Provider integration and the complete API service remain future
-work packages.
+instructions. HTTP API routing and the complete browser vertical slice remain
+future work packages.
