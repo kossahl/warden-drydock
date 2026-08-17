@@ -58,11 +58,10 @@ class ProposalService:
         return item
 
     def correct(self, version, changes, *, base_revision=None):
-        version = self.repository.items[(version.proposal_id, version.version)]
-        if version.status not in (ProposalStatus.DRAFT, ProposalStatus.CONFLICT):
+        corrected = self.repository.correct(version, tuple(changes), base_revision)
+        if corrected is None:
             raise ValueError("only draft or conflicted versions can be corrected")
-        self.repository.replace_status(version, ProposalStatus.REJECTED)
-        return self.draft(version.proposal_id, version.campaign_id, base_revision or version.base_revision, changes)
+        return corrected
 
     def reject(self, version):
         version = self.repository.reject(version)
@@ -124,3 +123,15 @@ class InMemoryProposalRepository:
             self.items[(item.proposal_id, item.version)] = updated
             self.audit.append((item.proposal_id, item.version, updated.status.value))
             return updated
+    def correct(self, item, changes, base_revision):
+        with self._lock:
+            current = self.items[(item.proposal_id, item.version)]
+            if current.status not in (ProposalStatus.DRAFT, ProposalStatus.CONFLICT): return None
+            if not changes or len({c.change_id for c in changes}) != len(changes): raise ValueError("proposal changes must be non-empty and uniquely identified")
+            retired = replace(current, status=ProposalStatus.REJECTED)
+            version = 1 + max((v.version for v in self.items.values() if v.proposal_id == item.proposal_id), default=0)
+            corrected = ProposalVersion(item.proposal_id, version, item.campaign_id, base_revision or current.base_revision, changes, exact_diff_digest(changes), _payload_digest(changes))
+            self.items[(item.proposal_id, item.version)] = retired
+            self.items[(item.proposal_id, version)] = corrected
+            self.audit.extend(((item.proposal_id, item.version, retired.status.value), (item.proposal_id, version, corrected.status.value)))
+            return corrected
