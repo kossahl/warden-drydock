@@ -14,9 +14,14 @@ another adapter instance. Configuration alone does not authorize or perform a
 live provider request; the approved smoke remains an explicit operator action.
 
 Provider configuration and explicit current data-transfer consent gate
-generation. Provider failures persist a terminal failure without changing
-campaign snapshots. Stream disconnect is not cancellation and never authorizes
-mutation; clients can resume from the last observed sequence.
+generation. Configuration readiness checks only for a local credential and does
+not call the Models API or require Models-read permission. The first authorized,
+bounded Responses request is the capability and access check; no separate
+inference probe is sent. Authentication, authorization, and transport failures
+persist a sanitized terminal failure without provider bodies, credentials, or
+campaign content and without changing campaign snapshots. Stream disconnect is
+not cancellation and never authorizes mutation; clients can resume from the
+last observed sequence.
 
 Live sessions retain their starting `base_revision` even when the reported head
 advances. Confirmed table facts may augment grounding; unresolved questions are

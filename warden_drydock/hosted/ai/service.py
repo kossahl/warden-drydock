@@ -25,7 +25,7 @@ class GroundedAIService:
         if not explicit:
             raise ConsentRequired("explicit data-transfer consent is required")
         if not self.provider.verify():
-            raise ConsentRequired("provider verification is required before consent")
+            raise ConsentRequired("provider credential configuration is required before consent")
         self.notice = notice
         self.endpoint_id = endpoint_id
         self.region = region
@@ -53,7 +53,7 @@ class GroundedAIService:
             raise ProviderUnavailable("provider feature is disabled")
         consent = self.repository.consent()
         if consent is None or not consent.current or not self.provider.verify() or consent != self._current_consent_identity():
-            raise ConsentRequired("provider verification and current consent are required")
+            raise ConsentRequired("provider credential configuration and current consent are required")
         if session_id is not None:
             session = self.repository.get_session(session_id)
             if session.campaign_id != campaign_id or session.mode != "active":
