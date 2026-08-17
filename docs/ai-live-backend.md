@@ -6,10 +6,12 @@ a pinned source envelope and digest before provider dispatch. The OpenAI adapter
 uses only `gpt-5.6-luna`, reads `OPENAI_API_KEY` from the process environment,
 sets `store: false`, exposes no hosted tools, and normalizes provider output into
 ordered Draft events. Every Responses API request has a provider-native hard
-limit of 512 output tokens. This conservative fixed pilot limit bounds short
-Ask, Check, and Generate Drafts; it does not authorize or perform a live
-provider request. The separately approved live smoke test remains an explicit
-operator action.
+output limit: normal personal-pilot adapters default to 2,048 output tokens,
+while the separately authorized live smoke uses an explicitly configured
+512-token adapter instance. Limits must be finite positive integers within the
+model's supported output bound. A smoke instance does not change the default or
+another adapter instance. Configuration alone does not authorize or perform a
+live provider request; the approved smoke remains an explicit operator action.
 
 Provider configuration and explicit current data-transfer consent gate
 generation. Provider failures persist a terminal failure without changing

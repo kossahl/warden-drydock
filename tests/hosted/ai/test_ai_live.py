@@ -195,13 +195,13 @@ class GroundedAIServiceTests(unittest.TestCase):
         record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         payload = OpenAIResponsesAdapter(lambda _: ()).build_payload(record.request)
         self.assertEqual("gpt-5.6-luna", payload["model"])
-        self.assertEqual(512, payload["max_output_tokens"])
+        self.assertEqual(2048, payload["max_output_tokens"])
         self.assertIs(payload["store"], False)
         self.assertNotIn("tools", payload)
         self.assertEqual("developer", payload["input"][0]["role"])
         self.assertIn("Authority: Draft", payload["input"][0]["content"])
 
-    def test_openai_stream_sends_finite_output_cap_to_transport(self):
+    def test_openai_stream_sends_explicit_smoke_cap_to_transport(self):
         self.service.record_consent(explicit=True)
         record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         dispatched = []
@@ -210,14 +210,25 @@ class GroundedAIServiceTests(unittest.TestCase):
             dispatched.append(payload)
             return iter(())
 
-        list(OpenAIResponsesAdapter(transport).stream(record.request))
+        default_adapter = OpenAIResponsesAdapter(lambda _: ())
+        smoke_adapter = OpenAIResponsesAdapter(transport, max_output_tokens=512)
+        other_adapter = OpenAIResponsesAdapter(lambda _: ())
+        list(smoke_adapter.stream(record.request))
         self.assertEqual(1, len(dispatched))
         self.assertEqual(512, dispatched[0]["max_output_tokens"])
+        self.assertEqual(2048, default_adapter.build_payload(record.request)["max_output_tokens"])
+        self.assertEqual(2048, other_adapter.build_payload(record.request)["max_output_tokens"])
+        self.assertEqual(2048, OpenAIResponsesAdapter.default_max_output_tokens)
         self.assertEqual("gpt-5.6-luna", dispatched[0]["model"])
         self.assertIs(dispatched[0]["store"], False)
         self.assertNotIn("tools", dispatched[0])
         self.assertEqual("developer", dispatched[0]["input"][0]["role"])
         self.assertIn("Authority: Draft", dispatched[0]["input"][0]["content"])
+
+    def test_openai_output_cap_rejects_unbounded_or_invalid_values(self):
+        for value in (None, True, 0, -1, 1.5, 128_001):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                OpenAIResponsesAdapter(lambda _: (), max_output_tokens=value)
 
     def test_openai_sse_is_normalized_and_malformed_input_fails(self):
         lines = [
