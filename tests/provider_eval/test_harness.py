@@ -7,7 +7,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from tools.provider_eval.fixture import BASE_REVISION, ENVELOPES, TOOL_SCHEMAS, build_manifest, canonical_json, envelope_digest
+from tools.provider_eval.fixture import BASE_REVISION, ENVELOPES, TOOL_SCHEMAS, build_manifest, canonical_json, envelope_digest, sha256
 from tools.provider_eval.harness import (
     Budget,
     CANDIDATES,
@@ -27,7 +27,7 @@ from tools.provider_eval.harness import (
     wire_schema,
 )
 from tools.provider_eval import cli
-from tools.provider_eval.report import build_evidence
+from tools.provider_eval.report import build_evidence, render_markdown
 
 
 class FixtureTests(unittest.TestCase):
@@ -245,6 +245,26 @@ class ReportTests(unittest.TestCase):
             [entry["task_id"] for entry in evidence["fixture_manifest"]["envelopes"]],
         )
         self.assertNotIn("[REDACTED]", json.dumps(evidence["fixture_manifest"]))
+
+    def test_product_decision_is_distinct_from_immutable_evaluation_conclusion(self):
+        local = {
+            "seed": 41,
+            "fixture_manifest": {},
+            "actual_spend_usd": 0.0,
+            "worst_case_reserved_usd": 0.0,
+            "results": [],
+        }
+        evidence = build_evidence(local)
+        self.assertEqual("tradeoff requires Warden priority decision; no provider/model selected", evidence["decision"])
+        self.assertEqual("gpt-5.6-luna", evidence["post_evaluation_product_decision"]["selected_model"])
+        self.assertFalse(evidence["post_evaluation_product_decision"]["public_mvp_provider_selected"])
+        measured = dict(evidence)
+        digest = measured.pop("evidence_sha256")
+        measured.pop("post_evaluation_product_decision")
+        self.assertEqual(digest, sha256(canonical_json(measured)))
+        markdown = render_markdown(evidence)
+        self.assertIn("## Product decision for the personal pilot", markdown)
+        self.assertIn("## Public MVP revisit", markdown)
 
 
 if __name__ == "__main__":

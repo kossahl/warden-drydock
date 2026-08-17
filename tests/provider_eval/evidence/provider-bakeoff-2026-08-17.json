@@ -118,6 +118,14 @@
     ],
     "openai_pricing": "https://developers.openai.com/api/docs/pricing"
   },
+  "post_evaluation_product_decision": {
+    "basis": "passed every hard gate, was sufficient for the prototype, had similar measured p50 latency to Terra, and cost about 9.3 times less in this run",
+    "decision_date": "2026-08-17",
+    "decision_maker": "Warden",
+    "public_mvp_provider_selected": false,
+    "scope": "local personal Windows prototype/pilot",
+    "selected_model": "gpt-5.6-luna"
+  },
   "runs": [
     {
       "actual_cost_usd": 0.005946,
