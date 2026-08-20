@@ -31,5 +31,6 @@ mutations. Provider availability is independent of typed Capture.
 
 Recovery can disable new provider and live entrypoints while retaining persisted
 source envelopes, Drafts, sessions, and captures for inspection and later
-resumption. HTTP routing and device-storage technology remain owned by their
-downstream work packages.
+resumption. The local HTTP proposal slice now routes grounded Ask start,
+event resumption, and terminal inspection against this backend. Device-storage
+technology and the broader Live Cockpit remain owned by downstream work.

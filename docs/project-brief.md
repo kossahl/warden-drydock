@@ -70,11 +70,11 @@ detected and require an explicit `--apply` flag.
 
 ## Current implementation boundary
 
-- The browser and hosted HTTP API remain incomplete. Provider-neutral grounded
-  generation and live workflow application services are implemented for the
-  personal pilot, but are not yet wired into the browser vertical slice. The
-  committed Compose baseline remains an operations foundation, not a claim that
-  the full vertical slice is available.
+- The browser and hosted HTTP API implement one focused local proposal slice:
+  deterministic campaign creation, revision-bound grounded Ask and sources,
+  server-owned proposal construction/correction/rejection, exact approval, and
+  validated-revision opening. The full Campaign Atlas, Live Cockpit, and other
+  hosted product surfaces remain incomplete.
 - Notion integration.
 - Obsidian as a required dependency.
 - Git submodules between framework and campaigns.
