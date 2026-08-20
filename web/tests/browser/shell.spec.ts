@@ -1,21 +1,23 @@
 import { expect, test } from "@playwright/test";
 
-test("nested campaign route reloads through the static fallback", async ({ page }) => {
-  await page.goto("/campaigns/campaign_alpha/atlas");
-  await expect(page.getByRole("heading", { level: 1, name: "Campaign Atlas" })).toBeVisible();
+test("nested route reloads through the static fallback", async ({ page }) => {
+  await page.goto("/campaigns/campaign_alpha/records/campaign-main");
+  await expect(page.getByRole("heading", { level: 1, name: "Create a campaign" })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("heading", { level: 1, name: "Campaign Atlas" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Create a campaign" })).toBeVisible();
 });
 
-test("shell remains usable at 320 CSS pixels", async ({ page }) => {
+test("campaign creation remains keyboard usable at 320 CSS pixels", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 720 });
-  await page.goto("/campaigns/campaign_alpha/atlas");
-  await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
-  await expect(page.getByText("Viewed revision 12 · Head")).toBeVisible();
+  await page.goto("/");
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("link", { name: "Skip to main content" })).toBeFocused();
+  await expect(page.getByLabel("Campaign name")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create campaign" })).toBeVisible();
 });
 
 test("API paths never receive the SPA fallback", async ({ request }) => {
-  for (const path of ["/api", "/api?probe=fallback", "/api/v1/campaigns"]) {
+  for (const path of ["/api", "/api?probe=fallback", "/api/v1/campaigns", "/api/v1/not-a-route"]) {
     const response = await request.get(path, { headers: { Accept: "text/html" } });
     expect(response.status()).toBe(404);
   }
