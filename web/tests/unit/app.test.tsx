@@ -49,6 +49,15 @@ describe("proposal browser slice", () => {
     await screen.findByText("Provider: Consent required");
 
     cleanup();
+    const unavailable: ProviderReadiness = { ...readiness, provider_available: false, consent_current: false, ai_available: false };
+    render(<App api={fakeApi({ readiness: vi.fn(async () => unavailable) })} />);
+    await screen.findByText("Provider: Unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
+    await screen.findByRole("heading", { level: 1, name: "Synthetic Campaign" });
+    expect(screen.queryByRole("button", { name: "Allow grounded AI" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask grounded question" })).toBeDisabled();
+
+    cleanup();
     render(<App api={fakeApi()} />);
     await screen.findByText("Provider: Ready");
   });

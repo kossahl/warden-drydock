@@ -13,6 +13,7 @@ from http.server import ThreadingHTTPServer
 from unittest import mock
 
 from warden_drydock.hosted.http.application import HTTPFailure, SliceApplication, SyntheticProvider
+from warden_drydock.hosted.ai.provider import OpenAIResponsesAdapter
 from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input, text_digest
 from warden_drydock.hosted.proposals.service import ProposalStatus
 from warden_drydock.hosted.engine import Status
@@ -105,6 +106,34 @@ class SliceApplicationTests(unittest.TestCase):
         self.assertEqual((201, 200), (first[0], second[0]))
         self.assertEqual(first[1], second[1])
         self.assertEqual(1, len(self.app.campaigns))
+
+    def test_readiness_marks_unusable_file_credential_unavailable_with_stale_consent(self) -> None:
+        secret_root = Path(self.temporary.name) / "provider-secrets"
+        secret_root.mkdir()
+        secret = secret_root / "openai_api_key"
+        secret.write_text("synthetic-credential", encoding="utf-8")
+        dispatches = []
+        self.provider = OpenAIResponsesAdapter(lambda payload: dispatches.append(payload))
+        self.app = SliceApplication(Path(self.temporary.name) / "file-provider", provider=self.provider)
+        with mock.patch.dict(os.environ, {
+            "DRYDOCK_SECRETS": str(secret_root),
+            "OPENAI_API_KEY_FILE": str(secret),
+        }, clear=True):
+            self.consent()
+            secret.write_text(" \n", encoding="utf-8")
+            status, readiness = self.app.provider_readiness()
+        self.assertEqual(200, status)
+        self.assertEqual({
+            "provider_configured": True,
+            "provider_available": False,
+            "consent_current": False,
+            "consent_identity_digest": None,
+            "ai_available": False,
+        }, {key: readiness[key] for key in (
+            "provider_configured", "provider_available", "consent_current",
+            "consent_identity_digest", "ai_available",
+        )})
+        self.assertEqual([], dispatches)
 
     def test_restart_recovers_snapshot_layout_workspaces_and_counter(self) -> None:
         runtime = Path(self.temporary.name) / "private-runtime"

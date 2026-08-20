@@ -380,13 +380,15 @@ class SliceApplication:
         configured = self.provider.verify()
         available = configured
         identity = None
+        current_identity = None
         if configured:
             try:
-                identity = canonical_digest(asdict(self.ai._current_consent_identity()))
+                current_identity = self.ai._current_consent_identity()
+                identity = canonical_digest(asdict(current_identity))
             except ProviderUnavailable:
                 available = False
         consent = self.ai_repository.consent()
-        current = bool(consent and consent.current and configured and consent == self.ai._current_consent_identity())
+        current = bool(consent and consent.current and available and consent == current_identity)
         payload = {
             "contract_name": "provider_readiness_response", "contract_version": 1,
             "provider_configured": configured, "provider_available": available,
