@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import shutil
 import threading
 
@@ -33,6 +34,47 @@ class WorkspaceRegistry:
             path.mkdir()
             self._paths[handle] = path
             return handle
+
+    def recover_existing(self) -> tuple[WorkspaceHandle, ...]:
+        """Register only server-named workspace directories below the private root."""
+        recovered: list[WorkspaceHandle] = []
+        pattern = re.compile(r"^workspace_([0-9]{8})$")
+        with self._lock:
+            for path in sorted(self._root.iterdir()):
+                match = pattern.fullmatch(path.name)
+                if match is None or not path.is_dir() or path.is_symlink():
+                    continue
+                handle = WorkspaceHandle(path.name)
+                self._assert_safe_tree(path)
+                self._paths[handle] = path
+                self._counter = max(self._counter, int(match.group(1)))
+                recovered.append(handle)
+        return tuple(recovered)
+
+    def materialize(self, handle: WorkspaceHandle, source: Path) -> None:
+        """Materialize a verified immutable snapshot as a replaceable private cache."""
+        match = re.fullmatch(r"workspace_([0-9]{8})", handle.value)
+        if match is None:
+            raise ValueError("workspace cache handle is invalid")
+        target = self._root / handle.value
+        with self._lock:
+            if target.exists():
+                self._assert_safe_tree(target)
+                shutil.rmtree(target)
+            temporary = self._root / (handle.value + "_staging")
+            if temporary.exists():
+                self._assert_safe_tree(temporary)
+                shutil.rmtree(temporary)
+            try:
+                shutil.copytree(source, temporary)
+                self._assert_safe_tree(temporary)
+                temporary.replace(target)
+            except Exception:
+                if temporary.exists():
+                    shutil.rmtree(temporary)
+                raise
+            self._paths[handle] = target
+            self._counter = max(self._counter, int(match.group(1)))
 
     def clone(self, source: WorkspaceHandle) -> WorkspaceHandle:
         source_path = self._resolve(source)

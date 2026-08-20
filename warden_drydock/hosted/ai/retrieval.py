@@ -63,6 +63,8 @@ class DeterministicSourceSelector:
         authority_rank = {"table_fact": 0, "canon": 1, "revealed": 2, "preparation": 3}
         for record in records:
             authority = str(getattr(record, "authority", getattr(record, "status", "preparation")))
+            if authority in {"draft", "idea", "unresolved"}:
+                authority = "preparation"
             source_id = str(getattr(record, "source_id", None) or getattr(record, "subject_id"))
             text = str(getattr(record, "text", getattr(record, "content", "")) or "")
             if text:

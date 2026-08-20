@@ -50,10 +50,28 @@ class ComposePolicyTests(unittest.TestCase):
     def test_secrets_are_not_environment_values(self) -> None:
         rendered = json.dumps(self.compose["services"])
         self.assertNotIn("POSTGRES_PASSWORD\"", rendered)
-        self.assertNotIn("PROVIDER_API_KEY", rendered)
+        app = self.compose["services"]["app"]
+        self.assertNotIn("OPENAI_API_KEY", app["environment"])
+        self.assertEqual(
+            "/var/lib/drydock/secrets/openai_api_key",
+            app["environment"]["OPENAI_API_KEY_FILE"],
+        )
+        self.assertIn("provider_secrets:/var/lib/drydock/secrets", app["volumes"])
+        self.assertNotIn("provider_secrets:/var/lib/drydock/secrets", self.compose["services"]["db"]["volumes"])
+        self.assertNotIn("sk-", rendered)
         for service in self.compose["services"].values():
             self.assertEqual(["20000"], service["group_add"])
             self.assertIn("database_secrets:/run/secrets:ro", service["volumes"])
+
+    def test_provider_credential_stays_out_of_image_and_browser_sources(self) -> None:
+        dockerfile = (ROOT / "docker" / "app.Dockerfile").read_text(encoding="utf-8")
+        browser_sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / "web" / "src").rglob("*")
+            if path.is_file()
+        )
+        self.assertNotIn("OPENAI_API_KEY", dockerfile)
+        self.assertNotIn("OPENAI_API_KEY", browser_sources)
         self.assertIn("database_secrets", self.compose["volumes"])
 
 
@@ -66,7 +84,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_migrations_are_ordered_and_outer_transactions_removed(self) -> None:
         files = migration_files(ROOT / "warden_drydock" / "hosted" / "migrations")
-        self.assertEqual(["0001", "0002", "0003", "0004"], [path.name[:4] for path in files])
+        self.assertEqual(["0001", "0002", "0003", "0004", "0005"], [path.name[:4] for path in files])
         for path in files:
             body = migration_body(path)
             self.assertFalse(body.startswith("BEGIN;"))
@@ -74,7 +92,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_readiness_requires_current_ai_live_schema(self) -> None:
         health = (ROOT / "warden_drydock" / "hosted" / "operations" / "health.py").read_text(encoding="utf-8")
-        self.assertIn("version='0004'", health)
+        self.assertIn("version='0005'", health)
         self.assertNotIn("version='0002'", health)
 
     def test_secret_replace_is_atomic_and_metadata_redacted(self) -> None:
@@ -149,6 +167,11 @@ class RuntimeTests(unittest.TestCase):
         initializer = (ROOT / "docker" / "initialize-secrets.ps1").read_text(encoding="utf-8")
         self.assertIn("cmp -s", initializer)
         self.assertIn("440 0:20000", initializer)
+        provider = (ROOT / "docker" / "manage-provider-secret.ps1").read_text(encoding="utf-8")
+        self.assertIn("Read-Host 'OpenAI API key' -AsSecureString", provider)
+        self.assertIn("SecretStore", provider)
+        self.assertIn("OpenAIResponsesAdapter().verify()", provider)
+        self.assertNotIn("OPENAI_API_KEY=", provider)
 
 
 if __name__ == "__main__":

@@ -26,12 +26,18 @@ class ProposalStatus(str, Enum):
 
 
 _PUBLIC_ID = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+_DOMAIN_ID = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 
 
 def _require_public_id(value, field):
     if not isinstance(value, str) or not 3 <= len(value) <= 80 or _PUBLIC_ID.fullmatch(value) is None:
         raise ValueError(f"{field} is not a safe public identifier")
+
+
+def _require_domain_id(value, field):
+    if not isinstance(value, str) or not 3 <= len(value) <= 200 or _DOMAIN_ID.fullmatch(value) is None:
+        raise ValueError(f"{field} is not a safe domain identifier")
 
 
 @dataclass(frozen=True)
@@ -44,6 +50,11 @@ class ProposalVersion:
     diff_digest: str
     payload_digest: str
     status: ProposalStatus = ProposalStatus.DRAFT
+    generation_id: str | None = None
+    source_revision: str | None = None
+    source_set_digest: str | None = None
+    terminal_draft_digest: str | None = None
+    published_revision_id: str | None = None
 
     def __post_init__(self):
         for field, value in (("proposal_id", self.proposal_id),
@@ -54,14 +65,27 @@ class ProposalVersion:
             raise ValueError("proposal version and changes must be non-empty")
         for change in self.changes:
             _require_public_id(change.change_id, "change_id")
-            _require_public_id(change.subject_id, "subject_id")
+            _require_domain_id(change.subject_id, "subject_id")
             if change.record_type is not None:
-                _require_public_id(change.record_type, "record_type")
+                _require_domain_id(change.record_type, "record_type")
             if change.expected_content_digest is not None and _DIGEST.fullmatch(change.expected_content_digest) is None:
                 raise ValueError("expected_content_digest is not a lowercase SHA-256 digest")
         for field, value in (("diff_digest", self.diff_digest), ("payload_digest", self.payload_digest)):
             if _DIGEST.fullmatch(value) is None:
                 raise ValueError(f"{field} is not a lowercase SHA-256 digest")
+        provenance = (self.generation_id, self.source_revision, self.source_set_digest, self.terminal_draft_digest)
+        if any(value is not None for value in provenance):
+            if any(value is None for value in provenance):
+                raise ValueError("proposal provenance must be complete")
+            _require_public_id(self.generation_id, "generation_id")
+            _require_public_id(self.source_revision, "source_revision")
+            if self.source_revision != self.base_revision:
+                raise ValueError("proposal source revision must equal base revision")
+            for field, value in (("source_set_digest", self.source_set_digest), ("terminal_draft_digest", self.terminal_draft_digest)):
+                if _DIGEST.fullmatch(value) is None:
+                    raise ValueError(f"{field} is not a lowercase SHA-256 digest")
+        if self.published_revision_id is not None:
+            _require_public_id(self.published_revision_id, "published_revision_id")
 
 
 def _payload_digest(changes: tuple[ExactTextChange, ...]) -> str:
@@ -71,11 +95,17 @@ def _payload_digest(changes: tuple[ExactTextChange, ...]) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _diff_digest(changes: tuple[ExactTextChange, ...]) -> str:
+    return exact_diff_digest(changes)
+
+
 class ProposalService:
     """Small immutable proposal state machine; authority remains with publisher."""
-    def __init__(self, repository, *, head, stage, publish, verify_publication=None) -> None:
+    def __init__(self, repository, *, head, stage, publish, verify_publication=None,
+                 diff_digest=_diff_digest, payload_digest=_payload_digest) -> None:
         self.repository, self._head, self._stage, self._publish = repository, head, stage, publish
         self._verify_publication = verify_publication
+        self._diff_digest, self._payload_digest = diff_digest, payload_digest
 
     @staticmethod
     def _bind_manifest(version, result):
@@ -87,17 +117,23 @@ class ProposalService:
             raise ValueError("publication result binding mismatch")
         return result
 
-    def draft(self, proposal_id, campaign_id, base_revision, changes):
+    def draft(self, proposal_id, campaign_id, base_revision, changes, *, generation_id=None, source_revision=None, source_set_digest=None, terminal_draft_digest=None):
         changes = tuple(changes)
         if not changes or len({c.change_id for c in changes}) != len(changes):
             raise ValueError("proposal changes must be non-empty and uniquely identified")
         item = ProposalVersion(proposal_id, self.repository.next_version(proposal_id), campaign_id,
-            base_revision, changes, exact_diff_digest(changes), _payload_digest(changes))
+            base_revision, changes, self._diff_digest(changes), self._payload_digest(changes),
+            generation_id=generation_id, source_revision=source_revision,
+            source_set_digest=source_set_digest,
+            terminal_draft_digest=terminal_draft_digest)
         self.repository.add(item)
         return item
 
     def correct(self, version, changes, *, base_revision=None):
-        corrected = self.repository.correct(version, tuple(changes), base_revision)
+        corrected = self.repository.correct(
+            version, tuple(changes), base_revision,
+            diff_digest=self._diff_digest, payload_digest=self._payload_digest,
+        )
         if corrected is None:
             raise ValueError("only draft or conflicted versions can be corrected")
         return corrected
@@ -165,6 +201,8 @@ class InMemoryProposalRepository:
     def __init__(self): self.items = {}; self.audit = []; self._lock = threading.Lock()
     def next_version(self, proposal_id): return 1 + max((v.version for v in self.items.values() if v.proposal_id == proposal_id), default=0)
     def get(self, proposal_id, version): return self.items[(proposal_id, version)]
+    def versions(self, proposal_id):
+        return tuple(sorted((item for item in self.items.values() if item.proposal_id == proposal_id), key=lambda item: item.version))
     def add(self, item): self.items[(item.proposal_id, item.version)] = item; self.audit.append((item.proposal_id, item.version, item.status.value))
     def replace_status(self, item, status):
         current = self.items[(item.proposal_id, item.version)]
@@ -188,15 +226,35 @@ class InMemoryProposalRepository:
             self.items[(item.proposal_id, item.version)] = updated
             self.audit.append((item.proposal_id, item.version, updated.status.value))
             return updated
-    def correct(self, item, changes, base_revision):
+    def correct(self, item, changes, base_revision, *, diff_digest=_diff_digest, payload_digest=_payload_digest):
         with self._lock:
             current = self.items[(item.proposal_id, item.version)]
             if current.status not in (ProposalStatus.DRAFT, ProposalStatus.CONFLICT): return None
             if not changes or len({c.change_id for c in changes}) != len(changes): raise ValueError("proposal changes must be non-empty and uniquely identified")
             retired = replace(current, status=ProposalStatus.REJECTED)
             version = 1 + max((v.version for v in self.items.values() if v.proposal_id == item.proposal_id), default=0)
-            corrected = ProposalVersion(item.proposal_id, version, item.campaign_id, base_revision or current.base_revision, changes, exact_diff_digest(changes), _payload_digest(changes))
+            corrected = ProposalVersion(
+                item.proposal_id, version, item.campaign_id,
+                base_revision or current.base_revision, changes,
+                diff_digest(changes), payload_digest(changes),
+                generation_id=current.generation_id,
+                source_revision=current.source_revision,
+                source_set_digest=current.source_set_digest,
+                terminal_draft_digest=current.terminal_draft_digest,
+            )
             self.items[(item.proposal_id, item.version)] = retired
             self.items[(item.proposal_id, version)] = corrected
             self.audit.extend(((item.proposal_id, item.version, retired.status.value), (item.proposal_id, version, corrected.status.value)))
             return corrected
+
+    def finalize(self, item, status, result=None):
+        revision_id = result.revision_id if isinstance(result, SnapshotManifest) else None
+        current = self.items[(item.proposal_id, item.version)]
+        if current.status is status:
+            if revision_id is not None and current.published_revision_id != revision_id:
+                raise ValueError("proposal_publication_binding_conflict")
+            return current
+        updated = replace(current, status=status, published_revision_id=revision_id or current.published_revision_id)
+        self.items[(item.proposal_id, item.version)] = updated
+        self.audit.append((item.proposal_id, item.version, status.value))
+        return updated

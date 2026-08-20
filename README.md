@@ -146,5 +146,8 @@ facade, immutable revision/projection persistence, the frontend foundation, and
 the hardened two-service Compose operations baseline, and backend-only grounded
 AI/live workflow services for the personal pilot. See
 [`docs/hosted-operations.md`](docs/hosted-operations.md) for runtime and recovery
-instructions. HTTP API routing and the complete browser vertical slice remain
-future work packages.
+instructions. The local browser now includes the focused proposal slice:
+deterministic campaign creation, revision-bound grounded Ask with sources,
+server-constructed proposal review/correction/rejection, exact approval, and
+validated-revision opening. The full Campaign Atlas and Live Cockpit remain
+future work.

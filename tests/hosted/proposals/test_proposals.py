@@ -43,3 +43,10 @@ class Proposals(unittest.TestCase):
   with self.assertRaises(ValueError): self.s.draft(r'C:\private\campaign.md','campaign_one','rev_one',(ExactTextChange('change_one','record_one','a'*64,'x'),))
   with self.assertRaises(ValueError): self.s.draft('proposal_safe','campaign_one','rev_one',(ExactTextChange('../private','record_one','a'*64,'x'),))
   self.assertEqual([],self.repo.audit)
+ def test_generic_service_preserves_ordered_multi_change_proposals(self):
+  changes=(ExactTextChange('change_first','record_one','a'*64,'# First'),
+           ExactTextChange('change_second','record_two','b'*64,'# Second'))
+  item=self.s.draft('proposal_multi','campaign_one','rev_one',changes)
+  self.assertEqual(changes,item.changes)
+  self.assertNotEqual(item.payload_digest,self.s.draft(
+      'proposal_reverse','campaign_one','rev_one',tuple(reversed(changes))).payload_digest)

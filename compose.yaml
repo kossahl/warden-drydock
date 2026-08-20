@@ -30,6 +30,7 @@ services:
       DRYDOCK_SNAPSHOTS: /var/lib/drydock/snapshots
       DRYDOCK_SECRETS: /var/lib/drydock/secrets
       DRYDOCK_STATIC: /app/web/dist
+      OPENAI_API_KEY_FILE: /var/lib/drydock/secrets/openai_api_key
     volumes:
       - snapshots:/var/lib/drydock/snapshots
       - provider_secrets:/var/lib/drydock/secrets

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import io
 import json
 import os
@@ -20,6 +21,7 @@ from warden_drydock.hosted.ai.retrieval import DeterministicSourceSelector
 from warden_drydock.hosted.ai.retrieval import EngineSourceLoader
 from warden_drydock.hosted.ai.service import ConsentRequired, GroundedAIService
 from warden_drydock.hosted.engine import DeterministicEngine, InitializeRequest, Status, WorkspaceRegistry
+from warden_drydock.hosted.operations.secrets import SecretStore
 
 
 @dataclass(frozen=True)
@@ -128,6 +130,56 @@ class GroundedAIServiceTests(unittest.TestCase):
                 service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         self.assertEqual([], dispatched)
         self.assertEqual([], repository.dispatch_log)
+
+    def test_openai_compose_file_secret_loads_and_rotation_invalidates_consent(self):
+        repository = InMemoryAIRepository()
+        dispatched = []
+        provider = OpenAIResponsesAdapter(lambda payload: dispatched.append(payload))
+        service = GroundedAIService(repository, DeterministicSourceSelector(), provider, self.loader)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = SecretStore(root)
+            secret = root / "openai_api_key"
+            store.replace("openai_api_key", b"synthetic-first\n")
+            environment = {
+                "DRYDOCK_SECRETS": str(root),
+                "OPENAI_API_KEY_FILE": str(secret),
+            }
+            with patch.dict(os.environ, environment, clear=True):
+                with patch.object(Path, "read_text", side_effect=AssertionError("presence probe read credential")):
+                    self.assertTrue(provider.verify())
+                self.assertEqual(
+                    hashlib.sha256(b"synthetic-first").hexdigest(),
+                    provider.credential_revision_fingerprint(),
+                )
+                service.record_consent(explicit=True)
+                store.replace("openai_api_key", b"synthetic-second")
+                with self.assertRaises(ConsentRequired):
+                    service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
+        self.assertEqual([], dispatched)
+        self.assertEqual([], repository.dispatch_log)
+
+    def test_openai_file_secret_boundary_fails_closed(self):
+        provider = OpenAIResponsesAdapter(lambda _: ())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            inside = root / "secrets"
+            inside.mkdir()
+            outside.write_text("synthetic", encoding="utf-8")
+            with patch.dict(os.environ, {
+                "DRYDOCK_SECRETS": str(inside),
+                "OPENAI_API_KEY_FILE": str(outside),
+            }, clear=True):
+                self.assertFalse(provider.verify())
+                with self.assertRaises(ProviderUnavailable):
+                    provider.credential_revision_fingerprint()
+            with patch.dict(os.environ, {
+                "OPENAI_API_KEY": "synthetic-env",
+                "DRYDOCK_SECRETS": str(inside),
+                "OPENAI_API_KEY_FILE": str(outside),
+            }, clear=True):
+                self.assertFalse(provider.verify())
 
     def test_openai_responses_access_and_transport_errors_persist_sanitized_failure(self):
         failures = (
