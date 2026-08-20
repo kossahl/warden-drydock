@@ -17,9 +17,11 @@ RUN apt-get update \
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY warden_drydock/ ./warden_drydock/
+RUN pip install --no-cache-dir '.[postgres]'
 COPY --from=web-builder /build/web/dist ./web/dist/
 COPY docker/entrypoint.sh /usr/local/bin/drydock-entrypoint
-RUN chmod 0555 /usr/local/bin/drydock-entrypoint \
+RUN sed -i 's/\r$//' /usr/local/bin/drydock-entrypoint \
+    && chmod 0555 /usr/local/bin/drydock-entrypoint \
     && mkdir -p /var/lib/drydock/snapshots /var/lib/drydock/secrets \
     && chown -R ${APP_UID}:${APP_GID} /var/lib/drydock \
     && chmod 0700 /var/lib/drydock/secrets

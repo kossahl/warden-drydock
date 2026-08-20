@@ -49,6 +49,16 @@ class GroundedAIService:
         self._enabled = False
 
     def start(self, generation_id: str, campaign_id: str, revision_id: str, action: Action, prompt: str, *, session_id: str | None = None) -> GenerationRecord:
+        record, reserved = self.prepare(
+            generation_id, campaign_id, revision_id, action, prompt,
+            session_id=session_id,
+        )
+        if reserved:
+            self.dispatch(record)
+        return record
+
+    def prepare(self, generation_id: str, campaign_id: str, revision_id: str, action: Action, prompt: str, *, session_id: str | None = None) -> tuple[GenerationRecord, bool]:
+        """Persist a pinned source envelope without contacting the provider."""
         if not self._enabled:
             raise ProviderUnavailable("provider feature is disabled")
         consent = self.repository.consent()
@@ -66,9 +76,19 @@ class GroundedAIService:
         envelope = self.selector.select(campaign_id, revision_id, records, session_id=session_id, confirmed_facts=confirmed_facts)
         request = GenerationRequest(generation_id, campaign_id, revision_id, action, prompt, envelope)
         record = GenerationRecord(request)
-        # The persistence boundary is completed before provider dispatch.
         if not self.repository.reserve_generation(record):
-            return self.repository.get_generation(generation_id)
+            return self.repository.get_generation(generation_id), False
+        return record, True
+
+    def dispatch(self, record: GenerationRecord) -> GenerationRecord:
+        """Dispatch one previously reserved generation."""
+        generation_id = record.request.generation_id
+        stored = self.repository.get_generation(generation_id)
+        if stored is None or stored.request != record.request:
+            raise ValueError("unsafe_binding")
+        if stored.events or stored.terminal_status is not None:
+            return stored
+        request = record.request
         self.repository.dispatch_log.append(generation_id)
         self._append(record, "start")
         pending_terminal: tuple[str, str | None] | None = None

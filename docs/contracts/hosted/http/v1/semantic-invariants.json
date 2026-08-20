@@ -1,0 +1,20 @@
+{
+  "contract_name": "hosted_http_semantic_invariants",
+  "contract_version": 1,
+  "mandatory_with_json_schema": true,
+  "rules": [
+    {"id":"http_operation_digest","category":"idempotency_digest_conflict","applies_to":["provider_consent_request","campaign_create_request","proposal_create_request","proposal_correction_request","proposal_rejection_request","proposal_approval_request"]},
+    {"id":"http_content_digests","category":"unsafe_binding","applies_to":["generation_view","proposal_view","proposal_approval_result"]},
+    {"id":"http_source_set_binding","category":"source_digest_conflict","applies_to":["generation_view","proposal_create_request","proposal_view"]},
+    {"id":"http_proposal_digests","category":"proposal_approval_conflict","applies_to":["proposal_view","proposal_approval_request","proposal_approval_result"]},
+    {"id":"http_consent_identity","category":"capability_rejected","applies_to":["provider_consent_request","provider_readiness_response"]},
+    {"id":"http_proposal_provenance","category":"source_digest_conflict","applies_to":["proposal_create_request","proposal_view"]},
+    {"id":"http_single_record_append","category":"proposal_validation_failure","applies_to":["proposal_create_request"]},
+    {"id":"http_correction_binding","category":"proposal_approval_conflict","applies_to":["proposal_correction_request","proposal_rejection_request"]},
+    {"id":"http_approval_equality","category":"proposal_approval_conflict","applies_to":["proposal_approval_request"]},
+    {"id":"http_approval_result","category":"proposal_approval_conflict","applies_to":["proposal_approval_result"]},
+    {"id":"http_path_body_equality","category":"unsafe_binding","applies_to":["ask_start_request","proposal_create_request","proposal_correction_request","proposal_rejection_request","proposal_approval_request"]},
+    {"id":"http_sse_resume","category":"stream_sequence_conflict","applies_to":["generation_event"]},
+    {"id":"http_safe_error","category":"unsafe_binding","applies_to":["error_response","proposal_approval_result"]}
+  ]
+}
