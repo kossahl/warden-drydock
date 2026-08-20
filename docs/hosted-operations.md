@@ -11,20 +11,43 @@ python -c "from warden_drydock.hosted.operations.runtime_guard import check_host
 ```
 
 Copy `docker/secrets/db_password.txt.example` to the ignored
-`docker/secrets/db_password.txt`, replace its content with a long random local
-password, then start the two-service runtime:
+`docker/secrets/db_password.txt` and replace its content with a long random
+local password. Build the application image, initialize the database secret,
+and securely enter the OpenAI credential into the provider-secret volume:
 
 ```powershell
 docker compose config --quiet
 docker compose build app
 ./docker/initialize-secrets.ps1
+./docker/manage-provider-secret.ps1 -Action Set
 docker compose up --build --wait
+./docker/manage-provider-secret.ps1 -Action Verify
 ```
 
 The initialization step copies the database credential into a project-scoped
 Docker volume as `root:20000` with mode `0440`. Both runtime users receive only
 that supplemental read group. This avoids Docker Desktop's Windows file-secret
 mount behavior, which cannot enforce Compose `uid`, `gid`, or `mode` fields.
+
+`manage-provider-secret.ps1` prompts through `Read-Host -AsSecureString` and
+passes the credential over the temporary container's standard input. It never
+places the value in the command line, Compose environment, image, tracked file,
+PostgreSQL, browser, or script output. The container writes it atomically into
+the app-only `provider_secrets` volume through `SecretStore`. The `Verify`
+action checks only whether the running adapter sees a non-empty configured
+credential. It prints no value and performs no provider request.
+
+To rotate the credential, run the `Set` action again. The atomic replacement
+changes the credential fingerprint, so existing consent becomes stale and the
+browser requires explicit consent again. To remove provider access, run:
+
+```powershell
+./docker/manage-provider-secret.ps1 -Action Remove
+```
+
+Removal returns grounded AI to the provider-setup gate. Deterministic campaign
+creation and revision browsing remain available. Provider secrets remain
+excluded from backup and restore.
 
 Only `app` publishes `127.0.0.1:8080`. PostgreSQL is internal-only. Use
 `docker/compose.ipv6.yaml` only after verifying `::1` binding and LAN isolation

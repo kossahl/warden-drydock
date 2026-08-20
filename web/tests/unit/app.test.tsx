@@ -33,6 +33,26 @@ async function createDraftAndProposal(api: SliceApi) {
 }
 
 describe("proposal browser slice", () => {
+  it("distinguishes provider setup, consent, and ready states", async () => {
+    const setupRequired: ProviderReadiness = { ...readiness, provider_configured: false, provider_available: false, consent_current: false, consent_identity_digest: null, ai_available: false };
+    const setupApi = fakeApi({ readiness: vi.fn(async () => setupRequired) });
+    render(<App api={setupApi} />);
+    await screen.findByText("Provider: Setup required");
+    fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
+    await screen.findByRole("heading", { level: 1, name: "Synthetic Campaign" });
+    expect(screen.queryByRole("button", { name: "Allow grounded AI" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask grounded question" })).toBeDisabled();
+
+    cleanup();
+    const consentRequired: ProviderReadiness = { ...readiness, consent_current: false, ai_available: false };
+    render(<App api={fakeApi({ readiness: vi.fn(async () => consentRequired) })} />);
+    await screen.findByText("Provider: Consent required");
+
+    cleanup();
+    render(<App api={fakeApi()} />);
+    await screen.findByText("Provider: Ready");
+  });
+
   it("shows explicit consent and disables campaign creation while it is in flight", async () => {
     let finishCreate!: (value: CampaignRevisionView) => void;
     const notConsented = { ...readiness, consent_current: false, ai_available: false };

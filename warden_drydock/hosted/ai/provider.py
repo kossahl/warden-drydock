@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 import json
 import os
+import pathlib
 import urllib.error
 import urllib.request
 import hashlib
@@ -38,13 +39,54 @@ class OpenAIResponsesAdapter:
     def verify(self) -> bool:
         # Capability is established by the first authorized Responses request;
         # Models API read permission is neither required nor probed here.
-        return bool(os.environ.get("OPENAI_API_KEY"))
+        environment_key = os.environ.get("OPENAI_API_KEY")
+        file_name = os.environ.get("OPENAI_API_KEY_FILE")
+        if environment_key and file_name:
+            return False
+        if environment_key:
+            return bool(environment_key.strip())
+        if not file_name:
+            return False
+        try:
+            path = self._credential_path(file_name)
+            return path.is_file() and path.stat().st_size > 0
+        except (OSError, ProviderUnavailable):
+            return False
 
     def credential_revision_fingerprint(self) -> str:
-        key = os.environ.get("OPENAI_API_KEY")
+        key = self._credential()
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _credential_path(file_name: str) -> pathlib.Path:
+        root_name = os.environ.get("DRYDOCK_SECRETS")
+        if not root_name:
+            raise ProviderUnavailable("provider secret root is not configured")
+        try:
+            root = pathlib.Path(root_name).resolve(strict=True)
+            path = pathlib.Path(file_name).resolve(strict=True)
+            path.relative_to(root)
+        except (OSError, ValueError) as exc:
+            raise ProviderUnavailable("provider credential file is unavailable") from exc
+        return path
+
+    def _credential(self) -> str:
+        environment_key = os.environ.get("OPENAI_API_KEY")
+        file_name = os.environ.get("OPENAI_API_KEY_FILE")
+        if environment_key and file_name:
+            raise ProviderUnavailable("provider credential configuration is ambiguous")
+        if environment_key:
+            key = environment_key.strip()
+        elif file_name:
+            try:
+                key = self._credential_path(file_name).read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeError) as exc:
+                raise ProviderUnavailable("provider credential file is unavailable") from exc
+        else:
+            key = ""
         if not key:
             raise ProviderUnavailable("provider credential is not configured")
-        return hashlib.sha256(key.encode("utf-8")).hexdigest()
+        return key
 
     def stream(self, request: GenerationRequest) -> Iterable[tuple[str, str | None]]:
         payload = self.build_payload(request)
@@ -100,11 +142,8 @@ class OpenAIResponsesAdapter:
             elif kind == "response.failed":
                 yield "failure", None
 
-    @staticmethod
-    def _http_transport(payload: dict) -> Iterable[tuple[str, str | None]]:
-        key = os.environ.get("OPENAI_API_KEY")
-        if not key:
-            raise ProviderUnavailable("provider credential is not configured")
+    def _http_transport(self, payload: dict) -> Iterable[tuple[str, str | None]]:
+        key = self._credential()
         request = urllib.request.Request(
             "https://api.openai.com/v1/responses",
             data=json.dumps(payload).encode("utf-8"),

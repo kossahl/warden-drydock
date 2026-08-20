@@ -116,13 +116,22 @@ export function App({ api = httpSliceApi }: { api?: SliceApi }) {
 
   const currentDraft = generation?.terminal_content ?? streamDraft;
   const disabled = busy !== null;
+  const providerStatus = !readiness
+    ? "Checking"
+    : !readiness.provider_configured
+      ? "Setup required"
+      : !readiness.provider_available
+        ? "Unavailable"
+        : !readiness.consent_current
+          ? "Consent required"
+          : readiness.ai_available ? "Ready" : "Unavailable";
 
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to main content</a>
       <header className="banner">
         <div><p className="eyebrow">Local Warden workspace</p><strong>Warden Drydock</strong></div>
-        <span role="status">Provider: {readiness?.ai_available ? "Ready" : readiness ? "Consent required" : "Checking"}</span>
+        <span role="status">Provider: {providerStatus}</span>
       </header>
       <main id="main-content" tabIndex={-1}>
         {!campaign ? (
@@ -146,7 +155,7 @@ export function App({ api = httpSliceApi }: { api?: SliceApi }) {
             <p className="revision-id">Source revision <code>{record.revision_id}</code></p>
             <section className="card canon" aria-labelledby="record-heading"><div className="section-title"><h2 id="record-heading">Revision record</h2><AuthorityBadge authority={record.authority} /></div><pre>{record.content}</pre></section>
 
-            {!readiness?.consent_current && (
+            {readiness?.provider_configured && readiness.provider_available && !readiness.consent_current && (
               <section className="card consent" aria-labelledby="consent-heading"><h2 id="consent-heading">Grounded AI consent</h2><p>AI use is optional. Generated text stays Draft until you approve an exact proposal.</p><button type="button" disabled={disabled || !readiness?.provider_available} onClick={grantConsent}>{busy === "consent" ? "Recording consent…" : "Allow grounded AI"}</button></section>
             )}
 
