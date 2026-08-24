@@ -3,6 +3,44 @@ import atlasExamples from "../../../docs/contracts/hosted/http/atlas/v1/examples
 import atlasSchema from "../../../docs/contracts/hosted/http/atlas/v1/atlas.schema.json";
 import { campaigns, detail, fullHistory, neighborhood, overview, records, workflow } from "../fixtures/atlas";
 
+type SchemaNode = {
+  $ref?: string;
+  oneOf?: SchemaNode[];
+  type?: string | string[];
+  const?: unknown;
+  enum?: unknown[];
+  pattern?: string;
+  required?: string[];
+  properties?: Record<string, SchemaNode>;
+  additionalProperties?: boolean;
+  items?: SchemaNode;
+};
+const schemaRoot = atlasSchema as unknown as { $defs: Record<string, SchemaNode> };
+
+function validateSchema(value: unknown, node: SchemaNode, path = "$."): void {
+  if (node.$ref) return validateSchema(value, schemaRoot.$defs[node.$ref.split("/").at(-1)!], path);
+  if (node.oneOf) {
+    const matches = node.oneOf.filter((candidate) => { try { validateSchema(value, candidate, path); return true; } catch { return false; } });
+    if (matches.length !== 1) throw new Error(`${path} matched ${matches.length} oneOf branches`);
+    return;
+  }
+  if (node.const !== undefined && value !== node.const) throw new Error(`${path} does not equal its const`);
+  if (node.enum && !node.enum.includes(value)) throw new Error(`${path} is outside its enum`);
+  const types = typeof node.type === "string" ? [node.type] : node.type;
+  if (types) {
+    const actual = value === null ? "null" : Array.isArray(value) ? "array" : Number.isInteger(value) ? "integer" : typeof value;
+    if (!types.includes(actual) && !(actual === "integer" && types.includes("number"))) throw new Error(`${path} expected ${types.join("|")} but received ${actual}`);
+  }
+  if (node.pattern && typeof value === "string" && !new RegExp(node.pattern).test(value)) throw new Error(`${path} does not match ${node.pattern}`);
+  if (node.properties && value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const object = value as Record<string, unknown>;
+    for (const required of node.required ?? []) if (!(required in object)) throw new Error(`${path}${required} is required`);
+    if (node.additionalProperties === false) for (const key of Object.keys(object)) if (!(key in node.properties)) throw new Error(`${path}${key} is not allowed`);
+    for (const [key, child] of Object.entries(node.properties)) if (key in object) validateSchema(object[key], child, `${path}${key}.`);
+  }
+  if (node.items && Array.isArray(value)) value.forEach((item, index) => validateSchema(item, node.items!, `${path}${index}.`));
+}
+
 const atlasExample = {
   contract_name: "campaign_atlas",
   contract_version: 1,
@@ -49,12 +87,12 @@ describe("hosted contract v1 parity", () => {
     } as const;
     const examples = new Map(atlasExamples.examples.map((example) => [example.contract_name, example]));
     for (const [contractName, [definitionName, typedFixture]] of Object.entries(consumed)) {
-      const definition = atlasSchema.$defs[definitionName as keyof typeof atlasSchema.$defs] as { additionalProperties?: boolean; required?: string[] };
+      const definition = schemaRoot.$defs[definitionName];
       const committed = examples.get(contractName);
       expect(committed, `${contractName} committed example`).toBeDefined();
       expect(definition.additionalProperties).toBe(false);
-      expect(Object.keys(committed!).sort()).toEqual([...definition.required!].sort());
-      expect(Object.keys(typedFixture).sort()).toEqual([...definition.required!].sort());
+      expect(() => validateSchema(committed, definition)).not.toThrow();
+      expect(() => validateSchema(typedFixture, definition)).not.toThrow();
     }
   });
 });

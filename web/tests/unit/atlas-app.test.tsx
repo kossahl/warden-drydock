@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "../../src/App";
 import type { AtlasApi } from "../../src/api/atlasClient";
 import { ApiError } from "../../src/api/client";
@@ -16,6 +16,11 @@ function fakeAtlas(overrides: Partial<AtlasApi> = {}): AtlasApi {
     workflow: vi.fn(async () => workflow),
     ...overrides,
   };
+}
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((finish) => { resolve = finish; });
+  return { promise, resolve };
 }
 
 describe("Campaign Atlas browser experience", () => {
@@ -86,5 +91,89 @@ describe("Campaign Atlas browser experience", () => {
     render(<App atlasApi={fakeAtlas()} providerReadiness={async () => readinessUnavailable} />);
     fireEvent.click(await screen.findByRole("link", { name: "Warden Drydock proposal workspace" }));
     await waitFor(() => expect(document.querySelector("#main-content")).toHaveFocus());
+  });
+
+  it("does not issue an Atlas read until the exact historical revision binding resolves", async () => {
+    const pending = deferred<{ revision_id: string; ordinal: number; tree_digest: string }>();
+    const readOverview = vi.fn(async () => overview);
+    const api = fakeAtlas({ resolveRevision: vi.fn(async () => pending.promise), overview: readOverview });
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas?revision=revision_two");
+    render(<App atlasApi={api} providerReadiness={async () => readinessUnavailable} />);
+    const recent = await screen.findByRole("heading", { name: "Most recent approved revisions" });
+    await within(recent.closest("section")!).findAllByRole("listitem");
+    readOverview.mockClear();
+    fireEvent.click(screen.getByRole("link", { name: "revision_5" }));
+    expect(await screen.findByRole("heading", { name: "Resolving revision" })).toBeVisible();
+    expect(readOverview).not.toHaveBeenCalled();
+    await act(async () => pending.resolve({ revision_id: "revision_5", ordinal: 5, tree_digest: "5".repeat(64) }));
+    await waitFor(() => expect(readOverview).toHaveBeenCalledWith("campaign_atlas", expect.objectContaining({ revision_id: "revision_5", revision_ordinal: 5 })));
+  });
+
+  it("offers recoverable states for unknown campaign, revision, and record without echoing unsafe identifiers", async () => {
+    window.history.replaceState(null, "", "/campaigns/private-campaign?revision=revision_two");
+    const { unmount } = render(<App atlasApi={fakeAtlas()} providerReadiness={async () => readinessUnavailable} />);
+    expect(await screen.findByRole("heading", { name: "Campaign unavailable" })).toBeVisible();
+    expect(screen.queryByText("private-campaign")).not.toBeInTheDocument();
+    unmount();
+
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas?revision=missing_revision");
+    const revisionApi = fakeAtlas({ resolveRevision: vi.fn(async () => { throw new ApiError(404, "not_found"); }) });
+    const second = render(<App atlasApi={revisionApi} providerReadiness={async () => readinessUnavailable} />);
+    expect(await screen.findByRole("heading", { name: "Revision unavailable" })).toBeVisible();
+    expect(screen.queryByText("missing_revision")).not.toBeInTheDocument();
+    second.unmount();
+
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/private-record?revision=revision_two");
+    const recordApi = fakeAtlas({ record: vi.fn(async () => { throw new ApiError(404, "not_found"); }) });
+    render(<App atlasApi={recordApi} providerReadiness={async () => readinessUnavailable} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("requested Atlas view was not found");
+    expect(screen.queryByText("private-record")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["rebuild_required", "must be rebuilt"],
+    ["integrity_blocked", "Snapshot integrity verification blocks"],
+  ] as const)("blocks campaign-list recovery state %s", async (recoveryState, message) => {
+    const collection = { ...campaigns, campaigns: [{ ...campaigns.campaigns[0], recovery_state: recoveryState }] };
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas?revision=revision_two");
+    render(<App atlasApi={fakeAtlas({ campaigns: vi.fn(async () => collection) })} providerReadiness={async () => readinessUnavailable} />);
+    expect(await screen.findByRole("heading", { name: "Campaign view unavailable" })).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent(message);
+  });
+
+  it("distinguishes an empty revision from filters with no matches", async () => {
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records?revision=revision_two");
+    const empty = { ...records, total: 0, items: [], facets: { record_types: [], authorities: [], statuses: [] } };
+    const first = render(<App atlasApi={fakeAtlas({ records: vi.fn(async () => empty) })} providerReadiness={async () => readinessUnavailable} />);
+    expect(await screen.findByText("No records are stored in this revision.")).toBeVisible();
+    first.unmount();
+    const noMatches = { ...records, total: 0, items: [] };
+    render(<App atlasApi={fakeAtlas({ records: vi.fn(async () => noMatches) })} providerReadiness={async () => readinessUnavailable} />);
+    expect(await screen.findByText("No records match this search and filter combination.")).toBeVisible();
+  });
+
+  it("activates server cursors, clears them on filters, and keeps prior results while loading", async () => {
+    const pending = deferred<typeof records>();
+    const filtered = deferred<typeof records>();
+    let calls = 0;
+    const api = fakeAtlas({ records: vi.fn(async () => { calls += 1; return calls === 1 ? records : calls === 2 ? pending.promise : filtered.promise; }) });
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records?revision=revision_two");
+    render(<App atlasApi={api} providerReadiness={async () => readinessUnavailable} />);
+    await screen.findByText("2 matching records.");
+    fireEvent.click(screen.getByRole("link", { name: "Next" }));
+    expect(window.location.search).toContain("cursor=cursor_next");
+    expect(screen.getByRole("link", { name: "Station Keeper" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Records" }).closest("section")).toHaveAttribute("aria-busy", "true");
+    await act(async () => pending.resolve({ ...records, previous_cursor: "cursor_previous", next_cursor: null }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Records" }).closest("section")).toHaveAttribute("aria-busy", "false"));
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "npc" } });
+    expect(window.location.search).not.toContain("cursor=");
+  });
+
+  it("links removed records to the supplied parent revision", async () => {
+    const removed = { ...fullHistory, entries: [{ ...fullHistory.entries[0], changes: [{ ...fullHistory.entries[0].changes[0], change_kind: "removed" as const, link_revision_id: "revision_one", after_content_digest: null, after_status: null, to_authority: null }], affected_records: [{ record_id: "record-one", link_revision_id: "revision_one" }] }] };
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/history?revision=revision_two");
+    render(<App atlasApi={fakeAtlas({ history: vi.fn(async () => removed) })} providerReadiness={async () => readinessUnavailable} />);
+    expect(await screen.findByRole("link", { name: "Removed record record-one" })).toHaveAttribute("href", expect.stringContaining("revision=revision_one"));
   });
 });

@@ -241,8 +241,13 @@ export function AtlasApp({ api, readiness, location, navigate }: { api: AtlasApi
   const campaign = campaigns.value?.campaigns.find((item) => item.campaign_id === route.campaignId) ?? null;
   const requestedRevision = route.revisionId ?? campaign?.head_revision.revision_id ?? null;
   const knownRevision = campaign && requestedRevision === campaign.head_revision.revision_id ? campaign.head_revision : campaign?.projected_revision?.revision_id === requestedRevision ? campaign.projected_revision : null;
-  const resolved = useResource(() => campaign && requestedRevision && !knownRevision ? api.resolveRevision(campaign.campaign_id, requestedRevision) : Promise.resolve(knownRevision!), [api, campaign?.campaign_id, requestedRevision, knownRevision?.revision_id]);
-  const viewed = knownRevision ?? resolved.value;
+  const revisionKey = campaign && requestedRevision ? `${campaign.campaign_id}\u0000${requestedRevision}` : null;
+  const resolveHistorical = campaign && requestedRevision && !knownRevision && revisionKey
+    ? () => api.resolveRevision(campaign.campaign_id, requestedRevision).then((revision) => ({ key: revisionKey, revision }))
+    : null;
+  const resolved = useResource(resolveHistorical, [api, campaign?.campaign_id, requestedRevision, revisionKey]);
+  const resolvedRevision = resolved.value?.key === revisionKey ? resolved.value.revision : null;
+  const viewed = knownRevision ?? resolvedRevision;
 
   useEffect(() => setIntegrityError(null), [route.campaignId, requestedRevision]);
   useEffect(() => {
