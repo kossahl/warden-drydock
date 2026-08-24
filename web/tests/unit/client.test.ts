@@ -1,3 +1,4 @@
+import { atlasHistoryUrl, atlasOverviewUrl, atlasRecordsUrl } from "../../src/api/atlasClient";
 import { ContractClient, frontendCapabilities, type ContractTransport } from "../../src/api/client";
 import type { ContractEnvelope, OperationRequest } from "../../src/contracts/v1";
 
@@ -53,5 +54,33 @@ describe("typed contract client authority boundary", () => {
     await new ContractClient(transport).submit(request);
     expect(submit).toHaveBeenCalledWith(request, undefined);
     expect(JSON.stringify(request)).not.toMatch(/filesystem|database|shell|provider_invoke|promote/);
+  });
+});
+
+describe("Campaign Atlas GET serialization", () => {
+  const revision = { revision_id: "revision two", revision_ordinal: 12, tree_digest: "a".repeat(64) };
+
+  it("serializes the complete revision binding in canonical order", () => {
+    expect(atlasOverviewUrl("campaign/atlas", revision)).toBe(`/campaigns/campaign%2Fatlas/atlas/overview?revision_id=revision+two&revision_ordinal=12&tree_digest=${"a".repeat(64)}`);
+  });
+
+  it("uses repeated encoded filter keys, limit 50, and the supplied cursor", () => {
+    const url = atlasRecordsUrl("campaign_atlas", { ...revision, q: "station & ship", types: ["npc", "capital ship"], authorities: ["canon", "preparation"], statuses: ["canon", "accepted"], cursor: "next/+=" });
+    const parsed = new URL(url, "http://drydock.local");
+    expect(parsed.searchParams.getAll("type")).toEqual(["npc", "capital ship"]);
+    expect(parsed.searchParams.getAll("authority")).toEqual(["canon", "preparation"]);
+    expect(parsed.searchParams.getAll("status")).toEqual(["canon", "accepted"]);
+    expect(parsed.searchParams.get("q")).toBe("station & ship");
+    expect(parsed.searchParams.get("limit")).toBe("50");
+    expect(parsed.searchParams.get("cursor")).toBe("next/+=");
+    expect(url).toContain("q=station+%26+ship");
+    expect(url).toContain("type=capital+ship");
+    expect(url).toContain("cursor=next%2F%2B%3D");
+    expect(url).not.toContain(",");
+  });
+
+  it("serializes newest-first history without crawling pages", () => {
+    const url = atlasHistoryUrl("campaign_atlas", { ...revision, subject_record_id: "record/one", limit: 5, cursor: "older page", direction: "backward" });
+    expect(url).toBe(`/campaigns/campaign_atlas/atlas/history?revision_id=revision+two&revision_ordinal=12&tree_digest=${"a".repeat(64)}&subject_record_id=record%2Fone&limit=5&cursor=older+page&direction=backward`);
   });
 });

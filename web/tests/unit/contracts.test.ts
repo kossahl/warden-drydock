@@ -1,4 +1,7 @@
 import type { CampaignAtlas } from "../../src/contracts/v1";
+import atlasExamples from "../../../docs/contracts/hosted/http/atlas/v1/examples.json";
+import atlasSchema from "../../../docs/contracts/hosted/http/atlas/v1/atlas.schema.json";
+import { campaigns, detail, fullHistory, neighborhood, overview, records, workflow } from "../fixtures/atlas";
 
 const atlasExample = {
   contract_name: "campaign_atlas",
@@ -32,5 +35,26 @@ describe("hosted contract v1 parity", () => {
     expect(atlasExample.backlinks).toHaveLength(1);
     expect(atlasExample.history).toHaveLength(1);
     expect(atlasExample.comparison.changes).toHaveLength(1);
+  });
+
+  it("keeps every consumed Atlas response fixture aligned with the committed closed examples", () => {
+    const consumed = {
+      atlas_campaign_collection: ["campaign_collection", campaigns],
+      atlas_overview: ["overview", overview],
+      atlas_record_library_result: ["record_library_result", records],
+      atlas_record_detail: ["record_detail", detail],
+      atlas_depth_1_neighborhood: ["neighborhood", neighborhood],
+      atlas_approved_history_collection: ["history_collection", fullHistory],
+      atlas_workflow_summary: ["workflow_summary", workflow],
+    } as const;
+    const examples = new Map(atlasExamples.examples.map((example) => [example.contract_name, example]));
+    for (const [contractName, [definitionName, typedFixture]] of Object.entries(consumed)) {
+      const definition = atlasSchema.$defs[definitionName as keyof typeof atlasSchema.$defs] as { additionalProperties?: boolean; required?: string[] };
+      const committed = examples.get(contractName);
+      expect(committed, `${contractName} committed example`).toBeDefined();
+      expect(definition.additionalProperties).toBe(false);
+      expect(Object.keys(committed!).sort()).toEqual([...definition.required!].sort());
+      expect(Object.keys(typedFixture).sort()).toEqual([...definition.required!].sort());
+    }
   });
 });

@@ -240,8 +240,9 @@ describe("proposal browser slice", () => {
     expect(reject.mock.calls[0][1]).toBe(reject.mock.calls[1][1]);
   });
 
-  it("does not advertise deferred product capabilities", () => {
+  it("does not advertise deferred product capabilities", async () => {
     render(<App api={fakeApi()} />);
+    await screen.findByText("Provider: Ready");
     for (const label of ["Import", "Export", "Player", "Billing", "VTT", "Audio"]) expect(screen.queryByRole("button", { name: label })).not.toBeInTheDocument();
   });
 });

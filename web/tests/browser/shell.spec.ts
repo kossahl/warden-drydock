@@ -1,10 +1,12 @@
 import { expect, test } from "@playwright/test";
+import { installAtlasApi } from "./atlas-api";
 
 test("nested route reloads through the static fallback", async ({ page }) => {
-  await page.goto("/campaigns/campaign_alpha/records/campaign-main");
-  await expect(page.getByRole("heading", { level: 1, name: "Create a campaign" })).toBeVisible();
+  await installAtlasApi(page);
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await expect(page.getByRole("heading", { level: 1, name: "Station Keeper" })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("heading", { level: 1, name: "Create a campaign" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Station Keeper" })).toBeVisible();
 });
 
 test("campaign creation remains keyboard usable at 320 CSS pixels", async ({ page }) => {
