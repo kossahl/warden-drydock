@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
 import json
+import re
 
 
 def canonical_digest(value: object) -> str:
@@ -78,6 +79,20 @@ class GenerationRequest:
     action: Action
     prompt: str
     envelope: SourceEnvelope
+    focus_record_id: str | None = None
+    focus_content_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.focus_record_id is None) != (self.focus_content_digest is None):
+            raise ValueError("generation focus binding must be complete or absent")
+        if self.focus_record_id is not None:
+            if (
+                not 1 <= len(self.focus_record_id) <= 80
+                or re.fullmatch(r"[a-z0-9][a-z0-9-]*", self.focus_record_id) is None
+                or re.fullmatch(r"[a-f0-9]{64}", self.focus_content_digest or "")
+                is None
+            ):
+                raise ValueError("generation focus binding is invalid")
 
 
 @dataclass(frozen=True)

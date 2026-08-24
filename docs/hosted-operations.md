@@ -58,7 +58,7 @@ on the target host. Do not add a database port or attach `db` to `egress`.
 Startup obtains a PostgreSQL advisory transaction lock and applies each
 packaged migration exactly once. A failed migration rolls back and prevents
 `app` startup. `/health/live` reports process health. `/health/ready` requires
-the expected schema record plus readable and writable snapshot/secret volumes.
+the expected `0006` schema record plus readable and writable snapshot/secret volumes.
 Provider failure is intentionally outside base readiness so deterministic
 Capture can remain available.
 
