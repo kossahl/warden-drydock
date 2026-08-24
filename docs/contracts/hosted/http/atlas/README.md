@@ -1,13 +1,33 @@
 # Campaign Atlas HTTP contract family
 
 `v1/index.json` is the entry point for the closed Campaign Atlas read contract.
-It is separate from both accepted hosted v1 packages. Existing contract names,
-versions, schemas, examples, and routes keep their original meaning.
+It is separate from the transport-neutral hosted contracts and the general
+hosted HTTP package. The v1 correction adds canonical GET serialization and
+history direction without changing the projection query algorithms.
 
 The package pins campaign discovery, overview, record library, detail,
-depth-1 relationships, approved history, workflow summaries, contextual AI
-focus, and deterministic cursor semantics. It defines routes for later backend
-work but implements no handler.
+depth-1 relationships, approved history, workflow summaries, and deterministic
+cursor semantics. It defines routes for later backend work but implements no
+handler. General hosted HTTP v2 owns campaign and record generation context;
+Atlas exposes no separate generation request, response, or route.
+
+## GET query serialization
+
+Atlas reads use the canonical flat query parameters declared in
+`v1/routes.json`. Each revision-bound read requires `revision_id`,
+`revision_ordinal`, and `tree_digest`. Record filters repeat `type`, `authority`,
+or `status`; comma-packed aliases are invalid. Paginated reads require an
+explicit `limit` from 1 through 100. History accepts `direction=forward` or
+`direction=backward`; omission means `forward`.
+
+The parser rejects unknown parameters, duplicate singleton parameters,
+malformed percent encoding, empty required values, aliases, invalid enums and
+integers, and cursor reuse under another query binding. It canonicalizes each
+repeated filter to sorted unique values before constructing the logical query.
+
+Workflow HTTP is summary-only in this package. `atlas_workflow_summary` returns
+persisted counts and the active session binding. It never returns proposal,
+Draft, table-fact, or unresolved-question content.
 
 ## Projection and authority boundary
 

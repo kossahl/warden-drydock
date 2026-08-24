@@ -12,8 +12,8 @@ runs only a stock JSON Schema validator has not validated a hosted contract.
 The executable golden vectors in `tests/hosted/contracts` bind each rule to a
 stable failure category.
 
-All public payloads declare `contract_name` and `contract_version`. Version 1
-is the only accepted version. Schemas use JSON Schema Draft 2020-12, reject
+All transport-neutral payloads declare `contract_name` and `contract_version`.
+Their accepted version remains 1. Schemas use JSON Schema Draft 2020-12, reject
 unknown object properties, and contain no endpoint, database, provider, device
 storage, import, or export design.
 
@@ -26,6 +26,7 @@ See [compatibility.md](compatibility.md) for evolution rules and
 [authority-redaction.md](authority-redaction.md) for authority and safe-output
 requirements.
 
-The accepted v1 package remains unchanged. Campaign Atlas adds a separate
-closed HTTP package at [`http/atlas/v1/index.json`](http/atlas/v1/index.json),
-discovered alongside HTTP v1 through [`http/index.json`](http/index.json).
+The transport-neutral v1 package remains unchanged. The HTTP registry at
+[`http/index.json`](http/index.json) lists the complete active HTTP package set:
+general hosted HTTP v2 and Campaign Atlas HTTP v1. General hosted HTTP v1 stays
+at its stable path for historical traceability but is no longer active.
