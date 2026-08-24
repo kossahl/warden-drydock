@@ -114,7 +114,7 @@ class AtlasContractTests(unittest.TestCase):
                 self.assertEqual([], list(validator.iter_errors(instance)))
                 validate_semantics(instance)
                 names.append(instance["contract_name"])
-        self.assertEqual(10, len(names))
+        self.assertEqual(12, len(names))
         self.assertEqual(len(names), len(set(names)))
 
     def test_routes_pin_all_atlas_read_destinations_without_handlers(self) -> None:
@@ -134,6 +134,13 @@ class AtlasContractTests(unittest.TestCase):
         )
         self.assertTrue(
             all("invalid_cursor_binding" in json.dumps(item) for item in routes["routes"] if item["id"] in {"atlas_record_library", "atlas_neighborhood", "atlas_approved_history"})
+        )
+        by_id = {item["id"]: item for item in routes["routes"]}
+        self.assertEqual(
+            "atlas_depth_1_neighborhood_query", by_id["atlas_neighborhood"]["request"]
+        )
+        self.assertEqual(
+            "atlas_approved_history_query", by_id["atlas_approved_history"]["request"]
         )
 
     def test_semantic_rules_pin_algorithms_and_boundaries(self) -> None:

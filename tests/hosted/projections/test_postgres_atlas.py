@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import uuid
 
+from warden_drydock.hosted.projections.atlas_models import ApprovedHistoryQuery
 from warden_drydock.hosted.projections.atlas_rebuild import AtlasProjectionRebuilder
 from warden_drydock.hosted.projections.atlas_repository import (
     AtlasQueryService,
@@ -118,8 +119,10 @@ class PostgresAtlasIntegrationTests(unittest.TestCase):
             tuple(
                 item.ordinal
                 for item in AtlasQueryService(restarted).approved_history(
-                    self.campaign_id, "revision_two"
-                )
+                    ApprovedHistoryQuery(
+                        self.campaign_id, "revision_two", second.tree_digest
+                    )
+                ).entries
             ),
         )
 

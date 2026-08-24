@@ -347,11 +347,62 @@ class RecordLibraryResult:
 
 
 @dataclass(frozen=True)
+class NeighborhoodQuery:
+    campaign_id: str
+    revision_id: str
+    tree_digest: str
+    focus_record_id: str
+    limit: int = 50
+    cursor: str | None = None
+
+    def __post_init__(self) -> None:
+        require_public_id(self.campaign_id, "campaign_id")
+        require_public_id(self.revision_id, "revision_id")
+        require_digest(self.tree_digest, "tree_digest")
+        require_domain_id(self.focus_record_id, "focus_record_id")
+        if not 1 <= self.limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if self.cursor is not None and len(self.cursor) > 4096:
+            raise ValueError("cursor is too long")
+
+
+@dataclass(frozen=True)
 class AtlasNeighborhood:
+    query: NeighborhoodQuery
     focus: AtlasRecord
     neighbors: tuple[AtlasRecord, ...]
     edges: tuple[AtlasEdge, ...]
     total_edges: int
+    next_cursor: str | None
+    previous_cursor: str | None
+
+
+@dataclass(frozen=True)
+class ApprovedHistoryQuery:
+    campaign_id: str
+    revision_id: str
+    tree_digest: str
+    subject_record_id: str | None = None
+    limit: int = 50
+    cursor: str | None = None
+
+    def __post_init__(self) -> None:
+        require_public_id(self.campaign_id, "campaign_id")
+        require_public_id(self.revision_id, "revision_id")
+        require_digest(self.tree_digest, "tree_digest")
+        if self.subject_record_id is not None:
+            require_domain_id(self.subject_record_id, "subject_record_id")
+        if not 1 <= self.limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if self.cursor is not None and len(self.cursor) > 4096:
+            raise ValueError("cursor is too long")
+
+
+@dataclass(frozen=True)
+class ApprovedHistoryResult:
+    query: ApprovedHistoryQuery
+    entries: tuple[AtlasHistoryEntry, ...]
+    total: int
     next_cursor: str | None
     previous_cursor: str | None
 

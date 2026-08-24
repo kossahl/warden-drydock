@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .atlas_models import (
+    ApprovedHistoryResult,
     AtlasHistoryEntry,
     AtlasNeighborhood,
     AtlasProjectionBundle,
@@ -189,6 +190,8 @@ def neighborhood_contract(
         "contract_version": 1,
         "binding": revision_binding(viewed, head),
         "depth": 1,
+        "limit": value.query.limit,
+        "sort": "source_occurrence_edge",
         "focus": record_summary(value.focus),
         "neighbors": [record_summary(item) for item in value.neighbors],
         "edges": [
@@ -249,24 +252,24 @@ def _history_entry(
 
 
 def approved_history_contract(
-    entries: tuple[AtlasHistoryEntry, ...],
+    result: ApprovedHistoryResult,
     viewed: AtlasProjectionBundle,
     head: AtlasProjectionBundle,
     bundle_by_revision: dict[str, AtlasProjectionBundle],
-    *,
-    subject_record_id: str | None = None,
 ) -> dict[str, object]:
     return {
         "contract_name": "atlas_approved_history_collection",
         "contract_version": 1,
         "binding": revision_binding(viewed, head),
-        "subject_record_id": subject_record_id,
-        "total": len(entries),
+        "subject_record_id": result.query.subject_record_id,
+        "limit": result.query.limit,
+        "sort": "revision_ordinal",
+        "total": result.total,
         "entries": [
-            _history_entry(item, bundle_by_revision) for item in entries
+            _history_entry(item, bundle_by_revision) for item in result.entries
         ],
-        "next_cursor": None,
-        "previous_cursor": None,
+        "next_cursor": result.next_cursor,
+        "previous_cursor": result.previous_cursor,
     }
 
 

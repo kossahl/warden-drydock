@@ -7,8 +7,11 @@ import tempfile
 import unittest
 
 from warden_drydock.hosted.projections.atlas_models import (
+    ApprovedHistoryQuery,
     Authority,
+    AtlasHistoryEntry,
     HistoryChangeKind,
+    NeighborhoodQuery,
     RecordLibraryQuery,
     StatusKind,
     content_digest,
@@ -33,6 +36,8 @@ from warden_drydock.hosted.revisions import (
     PublicationIntent,
     PublicationKind,
     RevisionService,
+    SnapshotIntegrityError,
+    SnapshotLineageError,
     canonicalize_tree,
 )
 
@@ -173,6 +178,43 @@ class AtlasProjectionTests(AtlasFixture):
             ).rebuild(first)
         self.assertEqual(original, failing.get(original.campaign_id, original.revision_id))
 
+    def test_rebuild_rejects_all_unsafe_bindings_before_replacement(self) -> None:
+        first, _ = self.two_revisions()
+        rebuilder = AtlasProjectionRebuilder(
+            self.store, self.projections, self.workflow
+        )
+        original = rebuilder.rebuild(first)
+
+        rejected = (
+            replace(first, campaign_id="campaign_other"),
+            replace(first, revision_id="revision_other"),
+            replace(first, tree_digest="0" * 64),
+            replace(first, change_digest="0" * 64),
+        )
+        for manifest in rejected:
+            with self.subTest(manifest=manifest):
+                with self.assertRaises(
+                    (FileNotFoundError, SnapshotIntegrityError, SnapshotLineageError)
+                ):
+                    rebuilder.rebuild(manifest)
+                self.assertEqual(
+                    original,
+                    self.projections.get("campaign_atlas", "revision_one"),
+                )
+
+        with self.assertRaisesRegex(ValueError, "safe public identifier"):
+            replace(first, campaign_id="../private")
+        self.assertEqual(
+            original, self.projections.get("campaign_atlas", "revision_one")
+        )
+
+        self.workflow.quarantine_intent("intent_1")
+        with self.assertRaisesRegex(SnapshotLineageError, "ineligible revision"):
+            rebuilder.rebuild(first)
+        self.assertEqual(
+            original, self.projections.get("campaign_atlas", "revision_one")
+        )
+
     def test_empty_system_recovery_rebuilds_verified_revisions_in_order(self) -> None:
         self.two_revisions()
         recovered = InMemoryAtlasProjectionRepository()
@@ -185,8 +227,10 @@ class AtlasProjectionTests(AtlasFixture):
             tuple(
                 item.ordinal
                 for item in AtlasQueryService(recovered).approved_history(
-                    "campaign_atlas", "revision_two"
-                )
+                    ApprovedHistoryQuery(
+                        "campaign_atlas", "revision_two", bundles[-1].tree_digest
+                    )
+                ).entries
             ),
         )
 
@@ -205,13 +249,30 @@ class AtlasProjectionTests(AtlasFixture):
         self.assertEqual(StatusKind.MISSING, by_id["record-009"].raw_status.kind)
         self.assertEqual(2, len(bundle.edges))
         self.assertEqual(2, len({item.edge_id for item in bundle.edges}))
-        neighborhood = AtlasQueryService(self.projections).neighborhood(
-            "campaign_atlas", "revision_one", "record-002"
+        service = AtlasQueryService(self.projections)
+        neighborhood_query = NeighborhoodQuery(
+            "campaign_atlas", "revision_one", bundle.tree_digest, "record-002"
         )
+        neighborhood = service.neighborhood(neighborhood_query)
         self.assertEqual(
             {item.edge_id for item in bundle.edges},
             {item.edge_id for item in neighborhood.edges},
         )
+        first_edge = service.neighborhood(replace(neighborhood_query, limit=1))
+        self.assertIsNotNone(first_edge.next_cursor)
+        second_edge = service.neighborhood(
+            replace(neighborhood_query, limit=1, cursor=first_edge.next_cursor)
+        )
+        self.assertEqual(1, len(second_edge.edges))
+        with self.assertRaisesRegex(ValueError, "invalid_cursor_binding"):
+            service.neighborhood(
+                replace(
+                    neighborhood_query,
+                    focus_record_id="record-001",
+                    limit=1,
+                    cursor=first_edge.next_cursor,
+                )
+            )
 
     def test_content_digest_normalizes_all_line_endings(self) -> None:
         expected = content_digest("one\ntwo\n")
@@ -281,15 +342,20 @@ class AtlasProjectionTests(AtlasFixture):
         rebuilder.rebuild(first)
         second_bundle = rebuilder.rebuild(second)
         history = AtlasQueryService(self.projections).approved_history(
-            "campaign_atlas", "revision_two"
+            ApprovedHistoryQuery(
+                "campaign_atlas", "revision_two", second_bundle.tree_digest
+            )
         )
-        self.assertEqual((1, 2), tuple(item.ordinal for item in history))
-        self.assertEqual(("proposal_one", 1), (history[1].proposal_id, history[1].proposal_version))
+        self.assertEqual((1, 2), tuple(item.ordinal for item in history.entries))
+        self.assertEqual(("proposal_one", 1), (history.entries[1].proposal_id, history.entries[1].proposal_version))
         removed = AtlasQueryService(self.projections).approved_history(
-            "campaign_atlas", "revision_two", subject_record_id="record-003"
+            ApprovedHistoryQuery(
+                "campaign_atlas", "revision_two", second_bundle.tree_digest,
+                subject_record_id="record-003",
+            )
         )
-        self.assertEqual(2, removed[-1].ordinal)
-        change = removed[-1].changes[0]
+        self.assertEqual(2, removed.entries[-1].ordinal)
+        change = removed.entries[-1].changes[0]
         self.assertEqual(HistoryChangeKind.REMOVED, change.change_kind)
         self.assertEqual("revision_one", change.link_revision_id)
         kinds = {
@@ -298,7 +364,70 @@ class AtlasProjectionTests(AtlasFixture):
             if item.record_id == "record-001"
         }
         self.assertIn(HistoryChangeKind.AUTHORITY_TRANSITION, kinds)
-        self.assertNotIn("audit", {item.change_kind.value for item in history[1].changes})
+        self.assertNotIn("audit", {item.change_kind.value for item in history.entries[1].changes})
+
+    def test_approved_history_pages_more_than_one_hundred_revisions(self) -> None:
+        first, _ = self.two_revisions()
+        template = AtlasProjectionRebuilder(
+            self.store, self.projections, self.workflow
+        ).rebuild(first)
+        repository = InMemoryAtlasProjectionRepository()
+        for ordinal in range(1, 102):
+            revision_id = f"revision_{ordinal:03d}"
+            parent_revision_id = (
+                None if ordinal == 1 else f"revision_{ordinal - 1:03d}"
+            )
+            tree_digest = f"{ordinal:064x}"
+            history_entry = AtlasHistoryEntry(
+                revision_id=revision_id,
+                parent_revision_id=parent_revision_id,
+                ordinal=ordinal,
+                tree_digest=tree_digest,
+                change_digest=f"{ordinal + 1024:064x}",
+                changes=(),
+            )
+            repository.replace(
+                replace(
+                    template,
+                    revision_id=revision_id,
+                    parent_revision_id=parent_revision_id,
+                    ordinal=ordinal,
+                    tree_digest=tree_digest,
+                    edges=(),
+                    history_entry=history_entry,
+                    projection_digest=f"{ordinal + 2048:064x}",
+                )
+            )
+        service = AtlasQueryService(repository)
+        query = ApprovedHistoryQuery(
+            "campaign_atlas", "revision_101", f"{101:064x}"
+        )
+        first_page = service.approved_history(query)
+        self.assertEqual(101, first_page.total)
+        self.assertEqual(
+            tuple(range(1, 51)), tuple(item.ordinal for item in first_page.entries)
+        )
+        second_page = service.approved_history(
+            replace(query, cursor=first_page.next_cursor)
+        )
+        self.assertEqual(
+            tuple(range(51, 101)), tuple(item.ordinal for item in second_page.entries)
+        )
+        final_page = service.approved_history(
+            replace(query, cursor=second_page.next_cursor)
+        )
+        self.assertEqual((101,), tuple(item.ordinal for item in final_page.entries))
+        self.assertIsNone(final_page.next_cursor)
+        self.assertEqual(
+            second_page.entries,
+            service.approved_history(
+                replace(query, cursor=final_page.previous_cursor)
+            ).entries,
+        )
+        with self.assertRaisesRegex(ValueError, "invalid_cursor_binding"):
+            service.approved_history(
+                replace(query, subject_record_id="record-001", cursor=first_page.next_cursor)
+            )
 
     def test_generation_focus_pair_is_closed_and_nullable(self) -> None:
         envelope = SourceEnvelope("campaign_atlas", "revision_one", ())
@@ -355,12 +484,21 @@ class AtlasProjectionTests(AtlasFixture):
                 second_bundle,
             ),
             neighborhood_contract(
-                service.neighborhood("campaign_atlas", "revision_one", "record-001"),
+                service.neighborhood(
+                    NeighborhoodQuery(
+                        "campaign_atlas", "revision_one", first_bundle.tree_digest,
+                        "record-001",
+                    )
+                ),
                 first_bundle,
                 second_bundle,
             ),
             approved_history_contract(
-                service.approved_history("campaign_atlas", "revision_two"),
+                service.approved_history(
+                    ApprovedHistoryQuery(
+                        "campaign_atlas", "revision_two", second_bundle.tree_digest
+                    )
+                ),
                 second_bundle,
                 second_bundle,
                 {"revision_one": first_bundle, "revision_two": second_bundle},
