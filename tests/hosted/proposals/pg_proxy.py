@@ -2,11 +2,16 @@
 import socket
 import socketserver
 import threading
+import os
+
+
+UPSTREAM_HOST = os.environ.get("DRYDOCK_TEST_DB_HOST", "db")
+UPSTREAM_PORT = int(os.environ.get("DRYDOCK_TEST_DB_PORT", "5432"))
 
 
 class Handler(socketserver.BaseRequestHandler):
     def handle(self):
-        upstream = socket.create_connection(("db", 5432))
+        upstream = socket.create_connection((UPSTREAM_HOST, UPSTREAM_PORT))
 
         def copy(source, target):
             while data := source.recv(65536):

@@ -48,16 +48,17 @@ class GroundedAIService:
     def disable(self) -> None:
         self._enabled = False
 
-    def start(self, generation_id: str, campaign_id: str, revision_id: str, action: Action, prompt: str, *, session_id: str | None = None) -> GenerationRecord:
+    def start(self, generation_id: str, campaign_id: str, revision_id: str, action: Action, prompt: str, *, session_id: str | None = None, focus_record_id: str | None = None, focus_content_digest: str | None = None) -> GenerationRecord:
         record, reserved = self.prepare(
             generation_id, campaign_id, revision_id, action, prompt,
-            session_id=session_id,
+            session_id=session_id, focus_record_id=focus_record_id,
+            focus_content_digest=focus_content_digest,
         )
         if reserved:
             self.dispatch(record)
         return record
 
-    def prepare(self, generation_id: str, campaign_id: str, revision_id: str, action: Action, prompt: str, *, session_id: str | None = None) -> tuple[GenerationRecord, bool]:
+    def prepare(self, generation_id: str, campaign_id: str, revision_id: str, action: Action, prompt: str, *, session_id: str | None = None, focus_record_id: str | None = None, focus_content_digest: str | None = None) -> tuple[GenerationRecord, bool]:
         """Persist a pinned source envelope without contacting the provider."""
         if not self._enabled:
             raise ProviderUnavailable("provider feature is disabled")
@@ -74,7 +75,10 @@ class GroundedAIService:
             confirmed_facts = ()
         records = self.source_loader.load(campaign_id, revision_id, prompt)
         envelope = self.selector.select(campaign_id, revision_id, records, session_id=session_id, confirmed_facts=confirmed_facts)
-        request = GenerationRequest(generation_id, campaign_id, revision_id, action, prompt, envelope)
+        request = GenerationRequest(
+            generation_id, campaign_id, revision_id, action, prompt, envelope,
+            focus_record_id, focus_content_digest,
+        )
         record = GenerationRecord(request)
         if not self.repository.reserve_generation(record):
             return self.repository.get_generation(generation_id), False

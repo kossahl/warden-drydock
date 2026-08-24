@@ -1,0 +1,8 @@
+{
+  "contract_name": "hosted_http_contract_packages",
+  "contract_version": 1,
+  "packages": [
+    {"name": "hosted_http_v1", "index": "v1/index.json"},
+    {"name": "hosted_atlas_http_v1", "index": "atlas/v1/index.json"}
+  ]
+}

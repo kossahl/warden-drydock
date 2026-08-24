@@ -1,0 +1,375 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from pathlib import Path
+import json
+import tempfile
+import unittest
+
+from warden_drydock.hosted.projections.atlas_models import (
+    Authority,
+    HistoryChangeKind,
+    RecordLibraryQuery,
+    StatusKind,
+    content_digest,
+    decode_cursor,
+)
+from warden_drydock.hosted.ai.models import Action, GenerationRequest, SourceEnvelope
+from warden_drydock.hosted.projections.atlas_rebuild import AtlasProjectionRebuilder
+from warden_drydock.hosted.projections.atlas_repository import (
+    AtlasQueryService,
+    InMemoryAtlasProjectionRepository,
+)
+from warden_drydock.hosted.projections.atlas_contracts import (
+    approved_history_contract,
+    neighborhood_contract,
+    record_detail_contract,
+    record_library_contract,
+)
+from jsonschema import Draft202012Validator
+from warden_drydock.hosted.revisions import (
+    FileSnapshotStore,
+    InMemoryWorkflowRepository,
+    PublicationIntent,
+    PublicationKind,
+    RevisionService,
+    canonicalize_tree,
+)
+
+
+class AtlasFixture(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        self.source = root / "source"
+        self.source.mkdir()
+        (self.source / ".drydock.json").write_text(
+            '{"campaign_name":"Synthetic Atlas","adapter":"mothership"}\n',
+            encoding="utf-8",
+        )
+        self.store = FileSnapshotStore(root / "store")
+        self.workflow = InMemoryWorkflowRepository()
+        self.revisions = RevisionService(self.store, self.workflow)
+        self.projections = InMemoryAtlasProjectionRepository()
+
+    def write_record(
+        self,
+        record_id: str,
+        *,
+        name: str | None = None,
+        status: str | None = "draft",
+        summary: str | None = None,
+        connections: tuple[str, ...] = (),
+        line_ending: str = "\n",
+    ) -> None:
+        frontmatter = ["---", f"id: {record_id}", "type: npc", f'name: "{name or record_id}"']
+        if status is not None:
+            frontmatter.append(f"status: {status}")
+        body = frontmatter + ["---", "", "# Record", "", "## Summary", "", summary or f"Summary for {record_id}.", "", "## Connections", ""]
+        body.extend(connections or ("<!-- None. -->",))
+        body.append("")
+        (self.source / f"{record_id}.md").write_bytes(
+            line_ending.join(body).encode("utf-8")
+        )
+
+    def publish(
+        self,
+        revision_id: str,
+        ordinal: int,
+        parent: str | None,
+        *,
+        proposal: bool = False,
+    ):
+        intent = PublicationIntent(
+            f"intent_{ordinal}",
+            f"token_{ordinal}",
+            PublicationKind.APPROVAL if proposal else PublicationKind.CREATION,
+            "campaign_atlas",
+            revision_id,
+            parent,
+            ordinal,
+            canonicalize_tree(self.source)[1],
+            f"{ordinal:x}" * 64,
+        )
+        return self.revisions.publish(
+            self.source,
+            intent,
+            framework_version="0.3.0",
+            adapter_version="1.0.0",
+            validation_contract_digest="f" * 64,
+        )
+
+    def two_revisions(self):
+        statuses = [
+            "idea",
+            "draft",
+            "review",
+            "canon",
+            "revealed",
+            "archived",
+            "accepted",
+            "legacy-status",
+            None,
+        ]
+        duplicate = (
+            "- `knows` → [[record-002|Two]] (`current`) — First occurrence.",
+            "- `knows` → [[record-002|Two]] (`current`) — Duplicate occurrence.",
+        )
+        for index in range(1, 61):
+            self.write_record(
+                f"record-{index:03d}",
+                name="Äther" if index == 10 else None,
+                status=statuses[(index - 1) % len(statuses)],
+                connections=duplicate if index == 1 else (),
+            )
+        first = self.publish("revision_one", 1, None)
+        (self.source / "record-003.md").unlink()
+        self.write_record(
+            "record-001",
+            status="canon",
+            summary="Changed summary.",
+            connections=duplicate,
+        )
+        self.write_record("record-061", status="revealed")
+        second = self.publish("revision_two", 2, first.revision_id, proposal=True)
+        return first, second
+
+
+class AtlasProjectionTests(AtlasFixture):
+    def test_two_revisions_survive_head_advance_without_leakage(self) -> None:
+        first, second = self.two_revisions()
+        rebuilder = AtlasProjectionRebuilder(
+            self.store, self.projections, self.workflow
+        )
+        first_bundle = rebuilder.rebuild(first)
+        second_bundle = rebuilder.rebuild(second)
+        self.assertEqual("revision_two", self.workflow.head("campaign_atlas"))
+        self.assertEqual(60, len(first_bundle.records))
+        self.assertEqual(60, len(second_bundle.records))
+        self.assertIn("record-003", {item.record_id for item in first_bundle.records})
+        self.assertNotIn("record-003", {item.record_id for item in second_bundle.records})
+        self.assertNotIn("record-061", {item.record_id for item in first_bundle.records})
+        self.assertIn("record-061", {item.record_id for item in second_bundle.records})
+        self.assertEqual(first_bundle, self.projections.get("campaign_atlas", "revision_one"))
+
+    def test_repeated_rebuild_is_identical_and_failure_preserves_previous(self) -> None:
+        first, _ = self.two_revisions()
+        rebuilder = AtlasProjectionRebuilder(
+            self.store, self.projections, self.workflow
+        )
+        original = rebuilder.rebuild(first)
+        self.assertEqual(original, rebuilder.rebuild(first))
+
+        class FailingRepository(InMemoryAtlasProjectionRepository):
+            def replace(self, bundle):
+                raise RuntimeError("forced replacement failure")
+
+        failing = FailingRepository()
+        failing.bundles[(original.campaign_id, original.revision_id)] = original
+        with self.assertRaisesRegex(RuntimeError, "forced replacement"):
+            AtlasProjectionRebuilder(
+                self.store, failing, self.workflow
+            ).rebuild(first)
+        self.assertEqual(original, failing.get(original.campaign_id, original.revision_id))
+
+    def test_empty_system_recovery_rebuilds_verified_revisions_in_order(self) -> None:
+        self.two_revisions()
+        recovered = InMemoryAtlasProjectionRepository()
+        bundles = AtlasProjectionRebuilder(
+            self.store, recovered, self.workflow
+        ).rebuild_inventory("campaign_atlas")
+        self.assertEqual((1, 2), tuple(item.ordinal for item in bundles))
+        self.assertEqual(
+            (1, 2),
+            tuple(
+                item.ordinal
+                for item in AtlasQueryService(recovered).approved_history(
+                    "campaign_atlas", "revision_two"
+                )
+            ),
+        )
+
+    def test_status_authority_digest_edges_and_backlinks(self) -> None:
+        first, second = self.two_revisions()
+        rebuilder = AtlasProjectionRebuilder(
+            self.store, self.projections, self.workflow
+        )
+        bundle = rebuilder.rebuild(first)
+        rebuilder.rebuild(second)
+        by_id = {item.record_id: item for item in bundle.records}
+        self.assertEqual(Authority.CANON, by_id["record-004"].authority)
+        self.assertEqual(Authority.REVEALED, by_id["record-005"].authority)
+        self.assertEqual(Authority.PREPARATION, by_id["record-007"].authority)
+        self.assertEqual(StatusKind.UNKNOWN, by_id["record-008"].raw_status.kind)
+        self.assertEqual(StatusKind.MISSING, by_id["record-009"].raw_status.kind)
+        self.assertEqual(2, len(bundle.edges))
+        self.assertEqual(2, len({item.edge_id for item in bundle.edges}))
+        neighborhood = AtlasQueryService(self.projections).neighborhood(
+            "campaign_atlas", "revision_one", "record-002"
+        )
+        self.assertEqual(
+            {item.edge_id for item in bundle.edges},
+            {item.edge_id for item in neighborhood.edges},
+        )
+
+    def test_content_digest_normalizes_all_line_endings(self) -> None:
+        expected = content_digest("one\ntwo\n")
+        self.assertEqual(expected, content_digest("one\r\ntwo\r\n"))
+        self.assertEqual(expected, content_digest("one\rtwo\r"))
+
+    def test_search_filters_facets_ordering_and_cursor_binding(self) -> None:
+        first, second = self.two_revisions()
+        rebuilder = AtlasProjectionRebuilder(
+            self.store, self.projections, self.workflow
+        )
+        bundle = rebuilder.rebuild(first)
+        rebuilder.rebuild(second)
+        service = AtlasQueryService(self.projections)
+        query = RecordLibraryQuery(
+            "campaign_atlas", "revision_one", bundle.tree_digest
+        )
+        first_page = service.record_library(query)
+        self.assertEqual(60, first_page.total)
+        self.assertEqual(50, len(first_page.items))
+        self.assertEqual("record-001", first_page.items[0].record_id)
+        second_page = service.record_library(
+            replace(query, cursor=first_page.next_cursor)
+        )
+        self.assertEqual(10, len(second_page.items))
+        self.assertEqual("record-051", second_page.items[0].record_id)
+        back = service.record_library(
+            replace(query, cursor=second_page.previous_cursor)
+        )
+        self.assertEqual(first_page.items, back.items)
+        self.assertEqual(60, sum(item.count for item in first_page.type_facets))
+        self.assertEqual(60, sum(item.count for item in first_page.status_facets))
+
+        searched = service.record_library(replace(query, query="äTHER"))
+        self.assertEqual(("record-010",), tuple(item.record_id for item in searched.items))
+        canon = service.record_library(
+            replace(query, authorities=(Authority.CANON,), statuses=("canon",))
+        )
+        self.assertTrue(canon.items)
+        self.assertTrue(all(item.authority is Authority.CANON for item in canon.items))
+
+        with self.assertRaisesRegex(ValueError, "invalid_cursor_binding"):
+            service.record_library(
+                replace(query, query="changed", cursor=first_page.next_cursor)
+            )
+        second_bundle = self.projections.get("campaign_atlas", "revision_two")
+        with self.assertRaisesRegex(ValueError, "invalid_cursor_binding"):
+            service.record_library(
+                RecordLibraryQuery(
+                    "campaign_atlas", "revision_two", second_bundle.tree_digest,
+                    cursor=first_page.next_cursor,
+                )
+            )
+        decoded = decode_cursor(first_page.next_cursor)
+        self.assertEqual("revision_one", decoded["revision_id"])
+
+    def test_approved_history_is_ordinal_subject_filtered_and_links_removal(self) -> None:
+        first, second = self.two_revisions()
+        rebuilder = AtlasProjectionRebuilder(
+            self.store,
+            self.projections,
+            self.workflow,
+            proposal_provenance=lambda campaign, revision: (
+                ("proposal_one", 1) if revision == "revision_two" else None
+            ),
+        )
+        rebuilder.rebuild(first)
+        second_bundle = rebuilder.rebuild(second)
+        history = AtlasQueryService(self.projections).approved_history(
+            "campaign_atlas", "revision_two"
+        )
+        self.assertEqual((1, 2), tuple(item.ordinal for item in history))
+        self.assertEqual(("proposal_one", 1), (history[1].proposal_id, history[1].proposal_version))
+        removed = AtlasQueryService(self.projections).approved_history(
+            "campaign_atlas", "revision_two", subject_record_id="record-003"
+        )
+        self.assertEqual(2, removed[-1].ordinal)
+        change = removed[-1].changes[0]
+        self.assertEqual(HistoryChangeKind.REMOVED, change.change_kind)
+        self.assertEqual("revision_one", change.link_revision_id)
+        kinds = {
+            item.change_kind
+            for item in second_bundle.history_entry.changes
+            if item.record_id == "record-001"
+        }
+        self.assertIn(HistoryChangeKind.AUTHORITY_TRANSITION, kinds)
+        self.assertNotIn("audit", {item.change_kind.value for item in history[1].changes})
+
+    def test_generation_focus_pair_is_closed_and_nullable(self) -> None:
+        envelope = SourceEnvelope("campaign_atlas", "revision_one", ())
+        GenerationRequest(
+            "generation_one", "campaign_atlas", "revision_one", Action.ASK,
+            "Synthetic prompt", envelope,
+        )
+        GenerationRequest(
+            "generation_two", "campaign_atlas", "revision_one", Action.ASK,
+            "Synthetic prompt", envelope, "record-one", "a" * 64,
+        )
+        with self.assertRaisesRegex(ValueError, "complete or absent"):
+            GenerationRequest(
+                "generation_three", "campaign_atlas", "revision_one", Action.ASK,
+                "Synthetic prompt", envelope, "record-one", None,
+            )
+
+    def test_migration_is_additive_revision_keyed_and_keeps_database_internal(self) -> None:
+        root = Path(__file__).resolve().parents[3]
+        migration = (root / "warden_drydock" / "hosted" / "migrations" / "0006_atlas_projection.sql").read_text(encoding="utf-8")
+        for table in (
+            "hosted_atlas_projection_checkpoint", "hosted_atlas_record",
+            "hosted_atlas_edge", "hosted_atlas_history_entry",
+            "hosted_atlas_history_change",
+        ):
+            self.assertIn(f"CREATE TABLE {table}", migration)
+        self.assertIn("PRIMARY KEY (campaign_id, revision_id)", migration)
+        self.assertIn("focus_record_id", migration)
+        self.assertNotIn("DROP TABLE", migration)
+        compose = (root / "compose.yaml").read_text(encoding="utf-8")
+        db_service = compose.split("  db:", 1)[1].split("networks:", 1)[0]
+        self.assertNotIn("ports:", db_service)
+
+    def test_contract_facing_models_validate_without_reconstructing_semantics(self) -> None:
+        first, second = self.two_revisions()
+        rebuilder = AtlasProjectionRebuilder(
+            self.store, self.projections, self.workflow
+        )
+        first_bundle = rebuilder.rebuild(first)
+        second_bundle = rebuilder.rebuild(second)
+        service = AtlasQueryService(self.projections)
+        schema_path = Path(__file__).resolve().parents[3] / "docs" / "contracts" / "hosted" / "http" / "atlas" / "v1" / "atlas.schema.json"
+        validator = Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
+        query = RecordLibraryQuery(
+            "campaign_atlas", "revision_one", first_bundle.tree_digest
+        )
+        payloads = [
+            record_library_contract(
+                service.record_library(query), first_bundle, second_bundle
+            ),
+            record_detail_contract(
+                service.record_detail("campaign_atlas", "revision_one", "record-001"),
+                first_bundle,
+                second_bundle,
+            ),
+            neighborhood_contract(
+                service.neighborhood("campaign_atlas", "revision_one", "record-001"),
+                first_bundle,
+                second_bundle,
+            ),
+            approved_history_contract(
+                service.approved_history("campaign_atlas", "revision_two"),
+                second_bundle,
+                second_bundle,
+                {"revision_one": first_bundle, "revision_two": second_bundle},
+            ),
+        ]
+        for payload in payloads:
+            with self.subTest(contract=payload["contract_name"]):
+                self.assertEqual([], list(validator.iter_errors(payload)))
+
+
+if __name__ == "__main__":
+    unittest.main()

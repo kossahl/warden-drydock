@@ -84,7 +84,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_migrations_are_ordered_and_outer_transactions_removed(self) -> None:
         files = migration_files(ROOT / "warden_drydock" / "hosted" / "migrations")
-        self.assertEqual(["0001", "0002", "0003", "0004", "0005"], [path.name[:4] for path in files])
+        self.assertEqual(["0001", "0002", "0003", "0004", "0005", "0006"], [path.name[:4] for path in files])
         for path in files:
             body = migration_body(path)
             self.assertFalse(body.startswith("BEGIN;"))
@@ -92,7 +92,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_readiness_requires_current_ai_live_schema(self) -> None:
         health = (ROOT / "warden_drydock" / "hosted" / "operations" / "health.py").read_text(encoding="utf-8")
-        self.assertIn("version='0005'", health)
+        self.assertIn("version='0006'", health)
         self.assertNotIn("version='0002'", health)
 
     def test_secret_replace_is_atomic_and_metadata_redacted(self) -> None:

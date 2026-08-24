@@ -1,0 +1,16 @@
+{
+  "contract_name": "hosted_atlas_http_contract_index",
+  "contract_version": 1,
+  "schema": "atlas.schema.json",
+  "routes": "routes.json",
+  "examples": "examples.json",
+  "semantic_invariants": "semantic-invariants.json",
+  "negative_fixtures": [
+    "negative/cursor-rebinding.json",
+    "negative/head-switch.json",
+    "negative/status-authority.json",
+    "negative/focus-pair.json",
+    "negative/edge-identity.json"
+  ],
+  "compatibility": "Separate closed family. It does not mutate hosted transport-neutral v1 or hosted HTTP v1."
+}

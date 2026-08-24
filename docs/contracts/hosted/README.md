@@ -25,3 +25,7 @@ or silently change retrieval or live-session grounding.
 See [compatibility.md](compatibility.md) for evolution rules and
 [authority-redaction.md](authority-redaction.md) for authority and safe-output
 requirements.
+
+The accepted v1 package remains unchanged. Campaign Atlas adds a separate
+closed HTTP package at [`http/atlas/v1/index.json`](http/atlas/v1/index.json),
+discovered alongside HTTP v1 through [`http/index.json`](http/index.json).

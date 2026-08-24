@@ -1,0 +1,22 @@
+{
+  "contract_name": "hosted_atlas_http_semantic_invariants",
+  "contract_version": 1,
+  "mandatory_with_json_schema": true,
+  "rules": [
+    {"id":"atlas_revision_binding","category":"unsafe_binding","applies_to":["atlas_campaign_collection","atlas_overview","atlas_record_library_query","atlas_record_library_result","atlas_record_detail","atlas_depth_1_neighborhood","atlas_approved_history_collection","atlas_workflow_summary","atlas_contextual_generation"]},
+    {"id":"atlas_status_authority","category":"unsafe_binding","applies_to":["atlas_overview","atlas_record_library_result","atlas_record_detail","atlas_depth_1_neighborhood"]},
+    {"id":"atlas_content_digest","category":"unsafe_binding","applies_to":["atlas_record_detail","atlas_contextual_generation"]},
+    {"id":"atlas_cursor_binding","category":"invalid_cursor_binding","applies_to":["atlas_deterministic_cursor","atlas_record_library_result","atlas_depth_1_neighborhood","atlas_approved_history_collection"]},
+    {"id":"atlas_edge_occurrence_identity","category":"unsafe_binding","applies_to":["atlas_depth_1_neighborhood"]},
+    {"id":"atlas_approved_history","category":"unsafe_binding","applies_to":["atlas_approved_history_collection"]},
+    {"id":"atlas_generation_focus","category":"unsafe_binding","applies_to":["atlas_contextual_generation"]}
+  ],
+  "algorithms": {
+    "content_digest": "SHA-256 over exact returned UTF-8 content after CRLF and bare CR normalization to LF. It is distinct from snapshot file-byte digests.",
+    "authority": "known canon maps to canon; known revealed maps to revealed; every other known, missing, or unknown raw status maps to preparation. accepted remains preparation.",
+    "edge_occurrence": "occurrence_order is one-based successful parse order within the source record. edge_id is 'edge_' plus lowercase SHA-256 of canonical JSON {occurrence_order,revision_id,source_record_id}. Canonical JSON uses UTF-8, sorted keys, no insignificant whitespace. Backlinks return the identical complete edge object.",
+    "cursor": "Encode {binding,digest,version} as unpadded base64url UTF-8 canonical JSON. version is 1. digest is lowercase SHA-256 over canonical JSON of binding. Binding includes campaign_id, revision_id, tree_digest, normalized query, sorted filters, limit, sort, direction, and boundary. Validate encoding, closed envelope, version, digest, safe identifiers, complete binding equality, then boundary existence. The digest detects corruption and binding changes; it is not authorization.",
+    "record_search": "Unicode casefold substring across record_id, name, Summary, and normalized full content. Query, type, authority, and status filters combine with AND. Sort is record_id ascending. Facets count the complete viewed revision and do not change with active query or filters.",
+    "history": "Creation is ordinal 1 against an empty parent. Entries sort by ordinal. Changes sort by record_id then added, removed, content_changed, metadata_changed, authority_transition. Removed records link to the verified parent revision; added and retained records link to the changed revision. Only verified snapshot comparisons enter approved history. Workflow, audit, table-fact, Draft, and proposal-lifecycle events never enter it."
+  }
+}

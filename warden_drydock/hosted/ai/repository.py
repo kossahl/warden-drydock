@@ -123,12 +123,12 @@ class PostgresAIRepository:
 
     def get_generation(self, generation_id: str) -> GenerationRecord | None:
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT campaign_id,revision_id,action,prompt,source_envelope,status,terminal_draft FROM hosted_ai_generation WHERE generation_id=%s", (generation_id,))
+            cursor.execute("SELECT campaign_id,revision_id,action,prompt,source_envelope,status,terminal_draft,focus_record_id,focus_content_digest FROM hosted_ai_generation WHERE generation_id=%s", (generation_id,))
             row = cursor.fetchone()
             if not row:
                 return None
             envelope = self._envelope(row[4])
-            record = GenerationRecord(GenerationRequest(generation_id, row[0], row[1], Action(row[2]), row[3], envelope), terminal_status=None if row[5] == "pending" else row[5], terminal_content=row[6] or "")
+            record = GenerationRecord(GenerationRequest(generation_id, row[0], row[1], Action(row[2]), row[3], envelope, row[7], row[8]), terminal_status=None if row[5] == "pending" else row[5], terminal_content=row[6] or "")
             cursor.execute("SELECT sequence,event_type,payload FROM hosted_ai_stream_event WHERE generation_id=%s ORDER BY sequence", (generation_id,))
             record.events = [StreamEvent(item[0], item[1], item[2].get("draft_fragment"), item[2].get("retryable")) for item in cursor.fetchall()]
             return record
@@ -136,11 +136,28 @@ class PostgresAIRepository:
     def reserve_generation(self, record: GenerationRecord) -> bool:
         request = record.request
         envelope = request.envelope
-        request_digest = __import__("hashlib").sha256(json.dumps({"action": request.action.value, "campaign_id": request.campaign_id, "prompt": request.prompt, "revision_id": request.revision_id, "session_id": envelope.session_id, "source_set_digest": envelope.source_set_digest}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        request_binding = {
+            "action": request.action.value,
+            "campaign_id": request.campaign_id,
+            "prompt": request.prompt,
+            "revision_id": request.revision_id,
+            "session_id": envelope.session_id,
+            "source_set_digest": envelope.source_set_digest,
+        }
+        if request.focus_record_id is not None:
+            request_binding.update(
+                focus_record_id=request.focus_record_id,
+                focus_content_digest=request.focus_content_digest,
+            )
+        request_digest = __import__("hashlib").sha256(
+            json.dumps(
+                request_binding, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
         encoded = {"campaign_id": envelope.campaign_id, "revision_id": envelope.revision_id, "session_id": envelope.session_id, "retrieval_policy_version": envelope.retrieval_policy_version, "excerpts": [item.__dict__ for item in envelope.excerpts]}
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("INSERT INTO hosted_ai_generation(generation_id,campaign_id,revision_id,session_id,action,prompt,request_digest,source_set_digest,source_envelope,status) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'pending') ON CONFLICT(generation_id) DO NOTHING",
-                (request.generation_id, request.campaign_id, request.revision_id, envelope.session_id, request.action.value, request.prompt, request_digest, envelope.source_set_digest, json.dumps(encoded)))
+            cursor.execute("INSERT INTO hosted_ai_generation(generation_id,campaign_id,revision_id,session_id,action,prompt,request_digest,source_set_digest,source_envelope,status,focus_record_id,focus_content_digest) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'pending',%s,%s) ON CONFLICT(generation_id) DO NOTHING",
+                (request.generation_id, request.campaign_id, request.revision_id, envelope.session_id, request.action.value, request.prompt, request_digest, envelope.source_set_digest, json.dumps(encoded), request.focus_record_id, request.focus_content_digest))
             if cursor.rowcount == 0:
                 cursor.execute("SELECT request_digest FROM hosted_ai_generation WHERE generation_id=%s", (request.generation_id,))
                 if cursor.fetchone() != (request_digest,):
