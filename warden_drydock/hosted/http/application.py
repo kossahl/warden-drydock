@@ -32,8 +32,9 @@ from warden_drydock.hosted.projections import (
     record_library_contract, workflow_summary_contract,
 )
 from warden_drydock.hosted.revisions import (
-    FileSnapshotStore, InMemoryWorkflowRepository, PublicationIntent,
-    PublicationKind, RevisionService, SnapshotManifest, canonicalize_tree,
+    FileSnapshotStore, InMemoryWorkflowRepository, IntentStatus,
+    PublicationIntent, PublicationIntentError, PublicationKind, RevisionService,
+    SnapshotManifest, StaleHeadError, canonicalize_tree,
 )
 from warden_drydock.standalone import frontmatter
 
@@ -175,6 +176,7 @@ class SliceApplication:
         self._lock = threading.RLock()
         self._dispatch_lock = threading.RLock()
         self._dispatching: set[str] = set()
+        self._recover_pending_atlas_publications()
         self._recover_state()
         self._recover_atlas()
         self._abandoned_claims = set(self.receipts.recover_pending())
@@ -231,6 +233,88 @@ class SliceApplication:
                 workspaces[manifest.revision_id] = handle
             recovered[campaign_id] = CampaignState(campaign_id, campaign_name, "mothership", revisions, workspaces)
         self.campaigns = recovered
+
+    def _delete_pending_atlas_projection(self, manifest: SnapshotManifest) -> None:
+        try:
+            self.atlas_repository.delete(manifest.campaign_id, manifest.revision_id)
+        except Exception:
+            # Atlas reads independently require finalized campaign inventory.
+            pass
+
+    def _discard_pending_publication(self, manifest: SnapshotManifest) -> None:
+        self.revisions.store.discard_unpublished_snapshot(manifest)
+        self._delete_pending_atlas_projection(manifest)
+
+    def _quarantine_invalid_pending_publication(
+        self, manifest: SnapshotManifest, intent: PublicationIntent
+    ) -> None:
+        self.revisions.store.quarantine_snapshot(
+            manifest.tree_digest, manifest.campaign_id, manifest.revision_id,
+            "pending Atlas publication failed integrity verification",
+        )
+        self.workflow.quarantine_intent(intent.intent_id)
+        self._delete_pending_atlas_projection(manifest)
+
+    def _recover_pending_atlas_publications(self) -> None:
+        """Resolve the snapshot/projection-before-head crash window deterministically."""
+        for manifest in self.revisions.store.inventory():
+            matches = self.workflow.matching_intents(
+                manifest.publication_intent_token
+            )
+            if len(matches) != 1 or matches[0].status is not IntentStatus.PENDING:
+                continue
+            intent = matches[0]
+            try:
+                candidate = self.atlas_repository.get(
+                    manifest.campaign_id, manifest.revision_id
+                )
+            except KeyError:
+                self._discard_pending_publication(manifest)
+                continue
+            try:
+                provenance = (
+                    candidate.history_entry.proposal_id,
+                    candidate.history_entry.proposal_version,
+                )
+                if provenance == (None, None):
+                    if intent.kind is not PublicationKind.CREATION:
+                        raise ValueError("pending approval projection lacks provenance")
+                else:
+                    proposal_id, proposal_version = provenance
+                    proposal = self.proposal_repository.get(
+                        proposal_id, proposal_version
+                    )
+                    if (
+                        intent.kind is not PublicationKind.APPROVAL
+                        or proposal is None
+                        or proposal.status not in {
+                            ProposalStatus.APPROVING,
+                            ProposalStatus.APPROVED,
+                            ProposalStatus.QUARANTINED,
+                        }
+                        or proposal.campaign_id != manifest.campaign_id
+                        or proposal.base_revision != manifest.parent_revision
+                        or proposal.diff_digest != manifest.change_digest
+                        or manifest.publication_intent_token
+                        != self._id("token", proposal_id, proposal_version)
+                    ):
+                        raise ValueError("pending approval provenance is invalid")
+                    self._atlas_provenance_overrides[manifest.revision_id] = (
+                        proposal_id, proposal_version
+                    )
+                try:
+                    expected = self.atlas_rebuilder.build(
+                        manifest, allow_pending_target=True
+                    )
+                finally:
+                    self._atlas_provenance_overrides.pop(manifest.revision_id, None)
+                if expected != candidate:
+                    raise ValueError("pending Atlas projection binding mismatch")
+                self.revisions.reconcile_manifest(manifest)
+            except (KeyError, ValueError):
+                self._quarantine_invalid_pending_publication(manifest, intent)
+            except (PublicationIntentError, StaleHeadError):
+                self._delete_pending_atlas_projection(manifest)
 
     def _atlas_provenance(self, campaign_id: str, revision_id: str):
         override = self._atlas_provenance_overrides.get(revision_id)

@@ -590,6 +590,68 @@ class SliceApplicationTests(unittest.TestCase):
         self.assertEqual((200, "published", True), (status, result["outcome"], result["exact_replay"]))
         self.assertEqual(revision_count, len(restarted.revisions.store.inventory()))
 
+    def test_restart_finalizes_exact_pending_atlas_publication_with_provenance(self) -> None:
+        proposal = self.proposal()
+        request = self.approval(proposal, key="idem_pending_atlas_crash")
+        with mock.patch.object(
+            self.app.workflow, "finalize_head", side_effect=SystemExit("crash")
+        ):
+            with self.assertRaises(SystemExit):
+                self.app.approve_proposal("proposal_alpha", 1, request)
+        self.assertEqual(proposal["base_revision"], self.app.workflow.head("campaign_alpha"))
+        self.assertEqual(2, len(self.app.revisions.store.inventory()))
+        self.assertEqual(2, len(self.app.atlas_repository.list("campaign_alpha")))
+        restarted = SliceApplication(
+            Path(self.temporary.name), provider=self.provider,
+            receipts=self.app.receipts, workflow_repository=self.app.workflow,
+            ai_repository=self.app.ai_repository,
+            proposal_repository=self.app.proposal_repository,
+            atlas_repository=self.app.atlas_repository,
+        )
+        new_head = restarted.workflow.head("campaign_alpha")
+        self.assertNotEqual(proposal["base_revision"], new_head)
+        candidate = restarted.atlas_repository.get("campaign_alpha", new_head)
+        self.assertEqual(("proposal_alpha", 1), (
+            candidate.history_entry.proposal_id,
+            candidate.history_entry.proposal_version,
+        ))
+        status, replay = restarted.approve_proposal(
+            "proposal_alpha", 1, deepcopy(request)
+        )
+        self.assertEqual((200, True, new_head), (
+            status, replay["exact_replay"],
+            replay["published_revision"]["revision_id"],
+        ))
+        self.assertEqual(2, len(restarted.revisions.store.inventory()))
+        self.assertEqual(2, len(restarted.atlas_repository.list("campaign_alpha")))
+
+    def test_restart_clears_unprojected_pending_snapshot_and_exact_retry_succeeds(self) -> None:
+        proposal = self.proposal()
+        request = self.approval(proposal, key="idem_pre_projection_crash")
+        with mock.patch.object(
+            self.app.atlas_rebuilder, "rebuild_pending", side_effect=SystemExit("crash")
+        ):
+            with self.assertRaises(SystemExit):
+                self.app.approve_proposal("proposal_alpha", 1, request)
+        self.assertEqual(2, len(self.app.revisions.store.inventory()))
+        restarted = SliceApplication(
+            Path(self.temporary.name), provider=self.provider,
+            receipts=self.app.receipts, workflow_repository=self.app.workflow,
+            ai_repository=self.app.ai_repository,
+            proposal_repository=self.app.proposal_repository,
+            atlas_repository=self.app.atlas_repository,
+        )
+        self.assertEqual(proposal["base_revision"], restarted.workflow.head("campaign_alpha"))
+        self.assertEqual(1, len(restarted.revisions.store.inventory()))
+        self.assertEqual(1, len(restarted.atlas_repository.list("campaign_alpha")))
+        status, replay = restarted.approve_proposal(
+            "proposal_alpha", 1, deepcopy(request)
+        )
+        self.assertEqual((200, False), (status, replay["exact_replay"]))
+        self.assertNotEqual(
+            proposal["base_revision"], restarted.workflow.head("campaign_alpha")
+        )
+
     def test_approval_restart_after_domain_claim_before_publication_resumes_once(self) -> None:
         proposal = self.proposal()
         request = self.approval(proposal, key="idem_domain_claim_crash")
