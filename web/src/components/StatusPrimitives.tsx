@@ -1,4 +1,4 @@
-import type { Authority, DraftProvenance, RevisionRef, SaveSyncState } from "../contracts/v1";
+import type { Authority, DraftProvenance, RevisionRef, SaveSyncState } from "../contracts/v2";
 
 const authorityLabels: Record<Authority | "draft" | "proposal", string> = {
   preparation: "Preparation",

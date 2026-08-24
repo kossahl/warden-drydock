@@ -17,10 +17,15 @@ test("campaign creation remains keyboard usable at 320 CSS pixels", async ({ pag
 });
 
 test("API paths never receive the SPA fallback", async ({ request }) => {
-  for (const path of ["/api", "/api?probe=fallback", "/api/v1/campaigns", "/api/v1/not-a-route"]) {
+  for (const path of ["/api", "/api?probe=fallback", "/api/v1/not-a-route"]) {
     const response = await request.get(path, { headers: { Accept: "text/html" } });
     expect(response.status()).toBe(404);
   }
+
+  const campaigns = await request.get("/api/v1/campaigns", { headers: { Accept: "text/html" } });
+  expect(campaigns.status()).toBe(200);
+  expect(campaigns.headers()["content-type"]).toContain("application/json");
+  expect((await campaigns.json()).contract_name).toBe("atlas_campaign_collection");
 });
 
 test("production static artifact exposes no frontend dependency tree", async ({ request }) => {
