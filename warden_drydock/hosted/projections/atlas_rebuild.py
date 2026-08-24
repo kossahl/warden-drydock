@@ -5,6 +5,7 @@ import json
 
 from warden_drydock.standalone import _section_lines, frontmatter, parse_connections
 from warden_drydock.hosted.revisions.models import (
+    IntentStatus,
     SnapshotLineageError,
     SnapshotManifest,
 )
@@ -45,7 +46,9 @@ class AtlasProjectionRebuilder:
         self.proposal_provenance = proposal_provenance or (lambda _campaign, _revision: None)
         self.projection_version = projection_version
 
-    def _lineage_through(self, target: SnapshotManifest) -> tuple[SnapshotManifest, ...]:
+    def _lineage_through(
+        self, target: SnapshotManifest, *, allow_pending_target: bool = False
+    ) -> tuple[SnapshotManifest, ...]:
         verified_target = self.store.verify(
             target.tree_digest, target.campaign_id, target.revision_id
         )
@@ -69,7 +72,22 @@ class AtlasProjectionRebuilder:
                 raise SnapshotLineageError(
                     "projection inventory is not a unique linear lineage through target"
                 )
-            if not self.workflow_repository.publication_eligible(manifest):
+            eligible = self.workflow_repository.publication_eligible(manifest)
+            if not eligible and allow_pending_target and manifest == target:
+                matches = self.workflow_repository.matching_intents(
+                    manifest.publication_intent_token
+                )
+                eligible = (
+                    len(matches) == 1
+                    and matches[0].status is IntentStatus.PENDING
+                    and matches[0].campaign_id == manifest.campaign_id
+                    and matches[0].revision_id == manifest.revision_id
+                    and matches[0].parent_revision == manifest.parent_revision
+                    and matches[0].ordinal == manifest.ordinal
+                    and matches[0].tree_digest == manifest.tree_digest
+                    and matches[0].change_digest == manifest.change_digest
+                )
+            if not eligible:
                 raise SnapshotLineageError(
                     "projection inventory contains an ineligible revision"
                 )
@@ -296,8 +314,12 @@ class AtlasProjectionRebuilder:
             "tree_digest": tree_digest,
         }
 
-    def build(self, manifest: SnapshotManifest) -> AtlasProjectionBundle:
-        lineage = self._lineage_through(manifest)
+    def build(
+        self, manifest: SnapshotManifest, *, allow_pending_target: bool = False
+    ) -> AtlasProjectionBundle:
+        lineage = self._lineage_through(
+            manifest, allow_pending_target=allow_pending_target
+        )
         campaign_name, adapter_id, records, edges = self._parse_records(manifest)
         parent_records: tuple[AtlasRecord, ...] = ()
         if len(lineage) > 1:
@@ -348,6 +370,12 @@ class AtlasProjectionRebuilder:
 
     def rebuild(self, manifest: SnapshotManifest) -> AtlasProjectionBundle:
         bundle = self.build(manifest)
+        self.repository.replace(bundle)
+        return bundle
+
+    def rebuild_pending(self, manifest: SnapshotManifest) -> AtlasProjectionBundle:
+        """Persist a candidate projection before the publication head CAS."""
+        bundle = self.build(manifest, allow_pending_target=True)
         self.repository.replace(bundle)
         return bundle
 

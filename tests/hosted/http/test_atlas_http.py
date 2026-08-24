@@ -2,14 +2,23 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+import json
+import os
 import tempfile
+import threading
 import unittest
+import urllib.error
+import urllib.parse
+import urllib.request
+from http.server import ThreadingHTTPServer
 
 from warden_drydock.hosted.http.application import HTTPFailure, SliceApplication, SyntheticProvider
 from warden_drydock.hosted.ai.models import LiveSession
 from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input
 from warden_drydock.hosted.http.query import parse_flat_query, require_int, serialize_flat_query
+from warden_drydock.hosted.operations.server import Handler
 from warden_drydock.hosted.http.repository import InMemoryHTTPRepository, ReceiptConflict
+from warden_drydock.hosted.projections import encode_cursor
 from warden_drydock.hosted.operations.server import _ROUTES
 
 
@@ -153,6 +162,154 @@ class AtlasApplicationTests(unittest.TestCase):
         self.assertEqual((422, "invalid_revision_binding"), (
             caught.exception.status, caught.exception.payload["error"]["code"],
         ))
+
+    def test_unsafe_path_bindings_are_rejected_before_lookup(self) -> None:
+        created = self.create()
+        viewed = created["viewed_revision"]
+        for campaign_id, revision_id in (
+            ("../private", viewed["revision_id"]),
+            ("campaign_atlas", "../private"),
+        ):
+            with self.subTest(campaign_id=campaign_id, revision_id=revision_id), self.assertRaises(HTTPFailure) as caught:
+                self.app.atlas_overview(
+                    campaign_id, revision_id, viewed["ordinal"], viewed["tree_digest"]
+                )
+            self.assertEqual((422, "unsafe_binding"), (
+                caught.exception.status, caught.exception.payload["error"]["category"],
+            ))
+
+    def test_static_query_and_cursor_failures_do_not_disclose_campaign_existence(self) -> None:
+        created = self.create()
+        viewed = created["viewed_revision"]
+        invalid_cursor = encode_cursor({
+            "kind": "record_library", "campaign_id": "campaign_other",
+            "revision_id": viewed["revision_id"], "tree_digest": viewed["tree_digest"],
+            "normalized_query": "", "record_types": [], "authorities": [],
+            "statuses": [], "limit": 50, "sort": "record_id",
+            "direction": "forward", "boundary_record_id": "campaign-main",
+        })
+        for campaign_id in ("campaign_atlas", "campaign_missing"):
+            with self.subTest(kind="enum", campaign_id=campaign_id), self.assertRaises(HTTPFailure) as caught:
+                self.app.atlas_record_library(
+                    campaign_id, viewed["revision_id"], viewed["ordinal"],
+                    viewed["tree_digest"], query="", record_types=(),
+                    authorities=("private",), statuses=(), limit=50, cursor=None,
+                )
+            self.assertEqual((422, "invalid_query_binding"), (
+                caught.exception.status, caught.exception.payload["error"]["code"],
+            ))
+            with self.subTest(kind="cursor", campaign_id=campaign_id), self.assertRaises(HTTPFailure) as caught:
+                self.app.atlas_record_library(
+                    campaign_id, viewed["revision_id"], viewed["ordinal"],
+                    viewed["tree_digest"], query="", record_types=(),
+                    authorities=(), statuses=(), limit=50, cursor=invalid_cursor,
+                )
+            self.assertEqual((422, "invalid_cursor_binding"), (
+                caught.exception.status, caught.exception.payload["error"]["code"],
+            ))
+            with self.subTest(kind="neighborhood_cursor", campaign_id=campaign_id), self.assertRaises(HTTPFailure) as caught:
+                self.app.atlas_neighborhood(
+                    campaign_id, "campaign-main", viewed["revision_id"],
+                    viewed["ordinal"], viewed["tree_digest"], depth=1,
+                    limit=50, cursor="malformed",
+                )
+            self.assertEqual((422, "invalid_cursor_binding"), (
+                caught.exception.status, caught.exception.payload["error"]["code"],
+            ))
+            with self.subTest(kind="history_cursor", campaign_id=campaign_id), self.assertRaises(HTTPFailure) as caught:
+                self.app.atlas_history(
+                    campaign_id, viewed["revision_id"], viewed["ordinal"],
+                    viewed["tree_digest"], subject_record_id=None, limit=50,
+                    cursor="malformed", direction="forward",
+                )
+            self.assertEqual((422, "invalid_cursor_binding"), (
+                caught.exception.status, caught.exception.payload["error"]["code"],
+            ))
+
+    def test_removed_atlas_generation_contract_is_not_exported(self) -> None:
+        import warden_drydock.hosted.projections as projections
+
+        self.assertFalse(hasattr(projections, "contextual_generation_contract"))
+
+    def test_real_handler_maps_every_atlas_get_and_rejects_ambiguous_queries(self) -> None:
+        created = self.create()
+        viewed = created["viewed_revision"]
+        Handler.application = self.app
+        static = Path(self.temporary.name) / "static"
+        static.mkdir()
+        (static / "index.html").write_text("ok", encoding="utf-8")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        prior_hosts = os.environ.get("DRYDOCK_ALLOWED_HOSTS")
+        prior_static = os.environ.get("DRYDOCK_STATIC")
+        os.environ["DRYDOCK_ALLOWED_HOSTS"] = f"127.0.0.1:{server.server_port}"
+        os.environ["DRYDOCK_STATIC"] = str(static)
+        thread.start()
+
+        def cleanup() -> None:
+            server.shutdown()
+            thread.join(5)
+            server.server_close()
+            Handler.application = None
+            if prior_hosts is None:
+                os.environ.pop("DRYDOCK_ALLOWED_HOSTS", None)
+            else:
+                os.environ["DRYDOCK_ALLOWED_HOSTS"] = prior_hosts
+            if prior_static is None:
+                os.environ.pop("DRYDOCK_STATIC", None)
+            else:
+                os.environ["DRYDOCK_STATIC"] = prior_static
+
+        self.addCleanup(cleanup)
+        base = f"http://127.0.0.1:{server.server_port}/api/v1"
+        binding = urllib.parse.urlencode({
+            "revision_id": viewed["revision_id"],
+            "revision_ordinal": viewed["ordinal"],
+            "tree_digest": viewed["tree_digest"],
+        })
+        routes = (
+            ("/campaigns", "atlas_campaign_collection"),
+            (f"/campaigns/campaign_atlas/atlas/overview?{binding}", "atlas_overview"),
+            (f"/campaigns/campaign_atlas/atlas/records?{binding}&limit=50", "atlas_record_library_result"),
+            (f"/campaigns/campaign_atlas/atlas/records/campaign-main?{binding}", "atlas_record_detail"),
+            (f"/campaigns/campaign_atlas/atlas/records/campaign-main/neighborhood?{binding}&depth=1&limit=50", "atlas_depth_1_neighborhood"),
+            (f"/campaigns/campaign_atlas/atlas/history?{binding}&limit=50", "atlas_approved_history_collection"),
+            (f"/campaigns/campaign_atlas/atlas/workflow-summary?{binding}", "atlas_workflow_summary"),
+        )
+        for route, contract_name in routes:
+            with self.subTest(route=route), urllib.request.urlopen(base + route) as response:
+                payload = json.load(response)
+                self.assertEqual((200, contract_name), (response.status, payload["contract_name"]))
+                self.assertNotIn("items", payload if contract_name == "atlas_workflow_summary" else {})
+
+        invalid = (
+            f"/campaigns/campaign_atlas/atlas/overview?{binding}&unknown=x",
+            f"/campaigns/campaign_atlas/atlas/overview?{binding}&revision_id=revision_other",
+            "/campaigns/campaign_atlas/atlas/overview?revision_id=%GG",
+            f"/campaigns/campaign_atlas/atlas/records?{binding}",
+        )
+        for route in invalid:
+            with self.subTest(invalid=route), self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(base + route)
+            self.assertEqual(422, caught.exception.code)
+            self.assertEqual("unsafe_binding", json.load(caught.exception)["error"]["category"])
+            caught.exception.close()
+
+        cursor = encode_cursor({
+            "kind": "record_library", "campaign_id": "campaign_other",
+            "revision_id": viewed["revision_id"], "tree_digest": viewed["tree_digest"],
+            "normalized_query": "", "record_types": [], "authorities": [],
+            "statuses": [], "limit": 50, "sort": "record_id", "direction": "forward",
+            "boundary_record_id": "campaign-main",
+        })
+        route = f"/campaigns/campaign_atlas/atlas/records?{binding}&limit=50&cursor={urllib.parse.quote(cursor)}"
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(base + route)
+        payload = json.load(caught.exception)
+        self.assertEqual((422, "invalid_cursor_binding"), (
+            caught.exception.code, payload["error"]["code"],
+        ))
+        caught.exception.close()
 
     def test_record_context_is_verified_before_retrieval_or_dispatch_and_replay_is_exact(self) -> None:
         created = self.create()

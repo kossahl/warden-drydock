@@ -143,6 +143,27 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
             ))
             replay = restarted.approve_proposal(proposal_id, 1, approval)[1]
             self.assertEqual((published, True), (replay["published_revision"]["revision_id"], replay["exact_replay"]))
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT request_digest,source_set_digest FROM hosted_ai_generation "
+                    "WHERE generation_id=%s", (generation_id,),
+                )
+                stored_digests = cursor.fetchone()
+            for column in ("request_digest", "source_set_digest"):
+                with self.subTest(corrupted=column):
+                    with self.connect() as connection, connection.cursor() as cursor:
+                        cursor.execute(
+                            f"UPDATE hosted_ai_generation SET {column}=%s WHERE generation_id=%s",
+                            ("f" * 64, generation_id),
+                        )
+                    with self.assertRaisesRegex(ValueError, "unsafe_binding"):
+                        PostgresAIRepository(self.connect).get_generation(generation_id)
+                    with self.connect() as connection, connection.cursor() as cursor:
+                        cursor.execute(
+                            "UPDATE hosted_ai_generation SET request_digest=%s,source_set_digest=%s "
+                            "WHERE generation_id=%s",
+                            (*stored_digests, generation_id),
+                        )
 
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("DELETE FROM hosted_atlas_projection_checkpoint WHERE campaign_id=%s", (campaign_id,))

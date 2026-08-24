@@ -514,6 +514,66 @@ class SliceApplicationTests(unittest.TestCase):
         self.assertEqual(proposal["exact_diff"], result["proposal"]["exact_diff"])
         self.assertEqual(1, len(self.app.campaigns["campaign_alpha"].revisions))
 
+    def test_atlas_replace_failure_does_not_advance_head_or_expose_candidate(self) -> None:
+        proposal = self.proposal()
+        old_revision = proposal["base_revision"]
+        old_bundle = self.app.atlas_repository.get("campaign_alpha", old_revision)
+        replace = self.app.atlas_repository.replace
+
+        def dirty_replace(bundle):
+            replace(bundle)
+            raise RuntimeError("projection failed")
+
+        with mock.patch.object(
+            self.app.atlas_repository, "replace", side_effect=dirty_replace
+        ), mock.patch.object(
+            self.app.atlas_repository, "delete", side_effect=RuntimeError("rollback failed")
+        ):
+            with self.assertRaises(HTTPFailure) as caught:
+                self.app.approve_proposal(
+                    "proposal_alpha", 1, self.approval(proposal, key="idem_atlas_failure")
+                )
+        self.assertEqual(503, caught.exception.status)
+        self.assertEqual(old_revision, self.app.workflow.head("campaign_alpha"))
+        self.assertEqual(
+            old_revision,
+            self.app.atlas_overview(
+                "campaign_alpha", old_revision, old_bundle.ordinal,
+                old_bundle.tree_digest,
+            )[1]["binding"]["viewed_revision"]["revision_id"],
+        )
+        self.assertEqual({old_revision}, set(self.app.campaigns["campaign_alpha"].revisions))
+        candidate = next(
+            item for item in self.app.atlas_repository.list("campaign_alpha")
+            if item.revision_id != old_revision
+        )
+        with self.assertRaises(HTTPFailure) as hidden:
+            self.app.atlas_overview(
+                "campaign_alpha", candidate.revision_id, candidate.ordinal,
+                candidate.tree_digest,
+            )
+        self.assertEqual((404, "revision_not_found"), (
+            hidden.exception.status, hidden.exception.payload["error"]["code"],
+        ))
+
+    def test_generation_rejects_explicit_null_and_missing_session_before_dispatch(self) -> None:
+        self.consent()
+        revision = self.campaign()["head_revision"]
+        base = {
+            "contract_name": "generation_start_request", "contract_version": 2,
+            "generation_id": "generation_bad_session", "campaign_id": "campaign_alpha",
+            "source_revision": revision, "action": "ask", "prompt": "Question?",
+            "context": {"scope": "campaign"},
+        }
+        for session_id, code in ((None, "invalid_request_value"), ("session_missing", "invalid_generation_binding")):
+            request = {**base, "session_id": session_id}
+            with self.subTest(session_id=session_id), self.assertRaises(HTTPFailure) as caught:
+                self.app.start_generation("campaign_alpha", revision, request)
+            self.assertEqual((422, code), (
+                caught.exception.status, caught.exception.payload["error"]["code"],
+            ))
+        self.assertEqual((0, {}), (self.provider.calls, self.app.ai_repository.generations))
+
     def test_approval_crash_after_publish_reconciles_and_does_not_republish(self) -> None:
         proposal = self.proposal()
         request = self.approval(proposal, key="idem_publish_crash")

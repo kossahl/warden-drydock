@@ -269,12 +269,32 @@ class SliceApplication:
     def _atlas_binding(
         self, campaign_id: str, revision_id: str, ordinal: int, tree_digest: str
     ):
-        if type(ordinal) is not int or ordinal < 1:
+        if (
+            not isinstance(campaign_id, str)
+            or not 3 <= len(campaign_id) <= 80
+            or _PUBLIC_ID.fullmatch(campaign_id) is None
+            or not isinstance(revision_id, str)
+            or not 3 <= len(revision_id) <= 80
+            or _PUBLIC_ID.fullmatch(revision_id) is None
+            or not isinstance(tree_digest, str)
+            or _DIGEST.fullmatch(tree_digest) is None
+            or type(ordinal) is not int
+            or ordinal < 1
+        ):
             raise HTTPFailure(422, "unsafe_binding", "invalid_revision_binding", "atlas_read")
         try:
             viewed = self.atlas_repository.get(campaign_id, revision_id)
         except (KeyError, ValueError) as exc:
             raise HTTPFailure(404, "not_found", "revision_not_found", "atlas_read") from exc
+        campaign = self.campaigns.get(campaign_id)
+        manifest = campaign.revisions.get(revision_id) if campaign is not None else None
+        if manifest is None or not self.workflow.publication_eligible(manifest):
+            raise HTTPFailure(404, "not_found", "revision_not_found", "atlas_read")
+        if (
+            manifest.ordinal != ordinal
+            or not hmac.compare_digest(manifest.tree_digest, tree_digest)
+        ):
+            raise HTTPFailure(422, "unsafe_binding", "invalid_revision_binding", "atlas_read")
         if viewed.ordinal != ordinal or not hmac.compare_digest(viewed.tree_digest, tree_digest):
             raise HTTPFailure(422, "unsafe_binding", "invalid_revision_binding", "atlas_read")
         head_id = self.workflow.head(campaign_id)
@@ -309,13 +329,16 @@ class SliceApplication:
                              tree_digest: str, *, query: str, record_types: tuple[str, ...],
                              authorities: tuple[str, ...], statuses: tuple[str, ...],
                              limit: int, cursor: str | None) -> tuple[int, dict]:
-        viewed, head = self._atlas_binding(campaign_id, revision_id, ordinal, tree_digest)
         try:
             request = RecordLibraryQuery(
                 campaign_id, revision_id, tree_digest, query,
                 tuple(sorted(set(record_types))),
                 tuple(sorted({Authority(item) for item in authorities}, key=lambda item: item.value)),
                 tuple(sorted(set(statuses))), limit, cursor,
+            )
+            self.atlas.validate_record_library_cursor(request)
+            viewed, head = self._atlas_binding(
+                campaign_id, revision_id, ordinal, tree_digest
             )
             result = self.atlas.record_library(request)
         except ValueError as exc:
@@ -325,6 +348,14 @@ class SliceApplication:
 
     def atlas_record_detail(self, campaign_id: str, record_id: str, revision_id: str,
                             ordinal: int, tree_digest: str) -> tuple[int, dict]:
+        if (
+            not isinstance(record_id, str)
+            or not 1 <= len(record_id) <= 80
+            or _DOMAIN_ID.fullmatch(record_id) is None
+        ):
+            raise HTTPFailure(
+                422, "unsafe_binding", "invalid_record_binding", "atlas_record_detail"
+            )
         viewed, head = self._atlas_binding(campaign_id, revision_id, ordinal, tree_digest)
         try:
             record = self.atlas.record_detail(campaign_id, revision_id, record_id)
@@ -337,13 +368,17 @@ class SliceApplication:
     def atlas_neighborhood(self, campaign_id: str, record_id: str, revision_id: str,
                            ordinal: int, tree_digest: str, *, depth: int, limit: int,
                            cursor: str | None) -> tuple[int, dict]:
-        viewed, head = self._atlas_binding(campaign_id, revision_id, ordinal, tree_digest)
         if depth != 1:
             raise HTTPFailure(422, "unsafe_binding", "invalid_depth", "atlas_neighborhood")
         try:
-            value = self.atlas.neighborhood(NeighborhoodQuery(
+            request = NeighborhoodQuery(
                 campaign_id, revision_id, tree_digest, record_id, limit, cursor
-            ))
+            )
+            self.atlas.validate_neighborhood_cursor(request)
+            viewed, head = self._atlas_binding(
+                campaign_id, revision_id, ordinal, tree_digest
+            )
+            value = self.atlas.neighborhood(request)
         except KeyError as exc:
             raise HTTPFailure(404, "not_found", "record_not_found", "atlas_neighborhood") from exc
         except ValueError as exc:
@@ -354,12 +389,16 @@ class SliceApplication:
     def atlas_history(self, campaign_id: str, revision_id: str, ordinal: int,
                       tree_digest: str, *, subject_record_id: str | None,
                       limit: int, cursor: str | None, direction: str) -> tuple[int, dict]:
-        viewed, head = self._atlas_binding(campaign_id, revision_id, ordinal, tree_digest)
         try:
-            result = self.atlas.approved_history(ApprovedHistoryQuery(
+            request = ApprovedHistoryQuery(
                 campaign_id, revision_id, tree_digest, subject_record_id,
                 limit, cursor, direction,
-            ))
+            )
+            self.atlas.validate_history_cursor(request)
+            viewed, head = self._atlas_binding(
+                campaign_id, revision_id, ordinal, tree_digest
+            )
+            result = self.atlas.approved_history(request)
         except ValueError as exc:
             code = "invalid_cursor_binding" if str(exc) == "invalid_cursor_binding" else "invalid_query_binding"
             raise HTTPFailure(422, "unsafe_binding", code, "atlas_history") from exc
@@ -478,7 +517,7 @@ class SliceApplication:
                 and public(payload.get("source_revision"))
                 and payload.get("action") in {"ask", "check", "generate"}
                 and isinstance(payload.get("prompt"), str) and 1 <= len(payload["prompt"]) <= 4000
-                and (payload.get("session_id") is None or public(payload.get("session_id")))
+                and ("session_id" not in payload or public(payload.get("session_id")))
                 and valid_context
             )
         elif expected == "proposal_create_request":
@@ -672,13 +711,16 @@ class SliceApplication:
                 manifest = self.revisions.publish(
                     source, intent, framework_version=__version__, adapter_version="1.0.0",
                     validation_contract_digest=self.validation_contract_digest,
+                    before_finalize=self.atlas_rebuilder.rebuild_pending,
+                    rollback=lambda item: self.atlas_repository.delete(
+                        item.campaign_id, item.revision_id
+                    ),
                 )
                 published = True
                 self.campaigns[data["campaign_id"]] = CampaignState(
                     data["campaign_id"], data["campaign_name"], data["adapter_id"],
                     {revision_id: manifest}, {revision_id: handle},
                 )
-                self.atlas_rebuilder.rebuild(manifest)
                 response = self.revision_view(data["campaign_id"], revision_id)[1]
                 self._store("campaign_create", operation["idempotency_key"], operation["payload_digest"], 201, response)
                 return 201, response
@@ -780,6 +822,10 @@ class SliceApplication:
                     "generation_start", request_id=payload["generation_id"],
                 ) from exc
             raise HTTPFailure(422, "unsafe_binding", "invalid_generation_binding", "generation_start") from exc
+        except KeyError as exc:
+            raise HTTPFailure(
+                422, "unsafe_binding", "invalid_generation_binding", "generation_start"
+            ) from exc
         should_dispatch = reserved or (record.terminal_status is None and not record.events)
         return (202 if should_dispatch else 200), self._generation_view(record), should_dispatch
 
@@ -1181,15 +1227,18 @@ class SliceApplication:
             PublicationKind.APPROVAL, item.campaign_id, revision_id,
             item.base_revision, ordinal, tree_digest, item.diff_digest,
         )
-        manifest = self.revisions.publish(
-            source, intent, framework_version=__version__, adapter_version="1.0.0",
-            validation_contract_digest=self.validation_contract_digest,
-        )
-        campaign.revisions[revision_id] = manifest
-        campaign.workspaces[revision_id] = staged.staged_handle
         self._atlas_provenance_overrides[revision_id] = (item.proposal_id, item.version)
         try:
-            self.atlas_rebuilder.rebuild(manifest)
+            manifest = self.revisions.publish(
+                source, intent, framework_version=__version__, adapter_version="1.0.0",
+                validation_contract_digest=self.validation_contract_digest,
+                before_finalize=self.atlas_rebuilder.rebuild_pending,
+                rollback=lambda candidate: self.atlas_repository.delete(
+                    candidate.campaign_id, candidate.revision_id
+                ),
+            )
         finally:
             self._atlas_provenance_overrides.pop(revision_id, None)
+        campaign.revisions[revision_id] = manifest
+        campaign.workspaces[revision_id] = staged.staged_handle
         return manifest
