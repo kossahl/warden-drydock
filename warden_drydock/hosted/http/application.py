@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import hashlib
+import hmac
 import json
 from pathlib import Path
 import re
@@ -22,6 +23,13 @@ from warden_drydock.hosted.engine import (
 )
 from warden_drydock.hosted.proposals.service import (
     InMemoryProposalRepository, ProposalService, ProposalStatus, ProposalVersion,
+)
+from warden_drydock.hosted.projections import (
+    ApprovedHistoryQuery, AtlasProjectionRebuilder, AtlasQueryService, Authority,
+    InMemoryAtlasProjectionRepository, NeighborhoodQuery, RecordLibraryQuery,
+    approved_history_contract, campaign_collection_contract,
+    neighborhood_contract, overview_contract, record_detail_contract,
+    record_library_contract, workflow_summary_contract,
 )
 from warden_drydock.hosted.revisions import (
     FileSnapshotStore, InMemoryWorkflowRepository, PublicationIntent,
@@ -68,7 +76,7 @@ class HTTPFailure(RuntimeError):
     def __init__(self, status: int, category: str, code: str, stage: str, request_id: str = "request_http", retryable: bool = False) -> None:
         self.status = status
         self.payload = {
-            "contract_name": "error_response", "contract_version": 1,
+            "contract_name": "error_response", "contract_version": 2,
             "error": {"category": category, "code": code, "stage": stage,
                       "request_id": request_id, "retryable": retryable},
         }
@@ -111,11 +119,11 @@ class CampaignState:
 class SliceApplication:
     """Local Warden-only HTTP application composed from typed hosted services."""
 
-    validation_contract_digest = hashlib.sha256(b"hosted-http-v1").hexdigest()
+    validation_contract_digest = hashlib.sha256(b"hosted-http-v2").hexdigest()
     _request_fields = {
         "provider_consent_request": {"contract_name", "contract_version", "operation_request", "input"},
         "campaign_create_request": {"contract_name", "contract_version", "operation_request", "input"},
-        "ask_start_request": {"contract_name", "contract_version", "generation_id", "campaign_id", "source_revision", "action", "prompt"},
+        "generation_start_request": {"contract_name", "contract_version", "generation_id", "campaign_id", "source_revision", "action", "prompt", "context", "session_id"},
         "proposal_create_request": {"contract_name", "contract_version", "request_id", "idempotency_key", "payload_digest", "generation_id", "proposal_id", "campaign_id", "source_revision", "base_revision", "source_set_digest", "terminal_draft_digest", "subject_id"},
         "proposal_correction_request": {"contract_name", "contract_version", "operation_request", "proposal_id", "proposal_version", "source_revision", "base_revision", "change_id", "subject_id", "after_content"},
         "proposal_rejection_request": {"contract_name", "contract_version", "operation_request", "proposal_id", "proposal_version", "source_revision", "base_revision"},
@@ -125,7 +133,7 @@ class SliceApplication:
     def __init__(self, root: Path | None = None, *, snapshot_root: Path | None = None,
                  provider=None, receipts=None,
                  proposal_repository=None, workflow_repository=None,
-                 ai_repository=None) -> None:
+                 ai_repository=None, atlas_repository=None) -> None:
         self._temporary = None
         if root is None:
             self._temporary = tempfile.TemporaryDirectory()
@@ -139,12 +147,6 @@ class SliceApplication:
         self.revisions = RevisionService(
             FileSnapshotStore(snapshot_root or root / "revision-store"), self.workflow,
         )
-        self.ai_repository = ai_repository or InMemoryAIRepository()
-        self.provider = provider or OpenAIResponsesAdapter()
-        loader = EngineSourceLoader(self.engine, self._workspace_for_revision)
-        self.ai = GroundedAIService(
-            self.ai_repository, DeterministicSourceSelector(), self.provider, loader,
-        )
         self.proposal_repository = proposal_repository or InMemoryProposalRepository()
         self.proposals = ProposalService(
             self.proposal_repository, head=self.workflow.head,
@@ -155,11 +157,26 @@ class SliceApplication:
             diff_digest=_slice_diff_digest, payload_digest=_slice_payload_digest,
         )
         self.receipts = receipts or InMemoryHTTPRepository()
+        self.atlas_repository = atlas_repository or InMemoryAtlasProjectionRepository()
+        self._atlas_provenance_overrides: dict[str, tuple[str, int]] = {}
+        self.atlas_rebuilder = AtlasProjectionRebuilder(
+            self.revisions.store, self.atlas_repository, self.workflow,
+            proposal_provenance=self._atlas_provenance,
+        )
+        self.atlas = AtlasQueryService(self.atlas_repository)
+        self.ai_repository = ai_repository or InMemoryAIRepository()
+        self.provider = provider or OpenAIResponsesAdapter()
+        loader = EngineSourceLoader(self.engine, self._workspace_for_revision)
+        self.ai = GroundedAIService(
+            self.ai_repository, DeterministicSourceSelector(), self.provider, loader,
+            focus_verifier=self._verify_generation_focus,
+        )
         self.campaigns: dict[str, CampaignState] = {}
         self._lock = threading.RLock()
         self._dispatch_lock = threading.RLock()
         self._dispatching: set[str] = set()
         self._recover_state()
+        self._recover_atlas()
         self._abandoned_claims = set(self.receipts.recover_pending())
 
     @staticmethod
@@ -215,8 +232,172 @@ class SliceApplication:
             recovered[campaign_id] = CampaignState(campaign_id, campaign_name, "mothership", revisions, workspaces)
         self.campaigns = recovered
 
+    def _atlas_provenance(self, campaign_id: str, revision_id: str):
+        override = self._atlas_provenance_overrides.get(revision_id)
+        if override is not None:
+            return override
+        item = self.proposal_repository.find_by_published_revision(
+            campaign_id, revision_id
+        )
+        return (item.proposal_id, item.version) if item is not None else None
+
+    def _recover_atlas(self) -> None:
+        for campaign in self.campaigns.values():
+            for manifest in sorted(campaign.revisions.values(), key=lambda item: item.ordinal):
+                try:
+                    projected = self.atlas_repository.get(
+                        campaign.campaign_id, manifest.revision_id
+                    )
+                except KeyError:
+                    projected = None
+                if (
+                    projected is None
+                    or projected.tree_digest != manifest.tree_digest
+                    or projected.projection_version != self.atlas_rebuilder.projection_version
+                ):
+                    self.atlas_rebuilder.rebuild(manifest)
+
+    def _verify_generation_focus(
+        self, campaign_id: str, revision_id: str, record_id: str, digest: str
+    ) -> bool:
+        try:
+            record = self.atlas.record_detail(campaign_id, revision_id, record_id)
+        except (KeyError, ValueError):
+            return False
+        return hmac.compare_digest(record.content_digest, digest)
+
+    def _atlas_binding(
+        self, campaign_id: str, revision_id: str, ordinal: int, tree_digest: str
+    ):
+        if type(ordinal) is not int or ordinal < 1:
+            raise HTTPFailure(422, "unsafe_binding", "invalid_revision_binding", "atlas_read")
+        try:
+            viewed = self.atlas_repository.get(campaign_id, revision_id)
+        except (KeyError, ValueError) as exc:
+            raise HTTPFailure(404, "not_found", "revision_not_found", "atlas_read") from exc
+        if viewed.ordinal != ordinal or not hmac.compare_digest(viewed.tree_digest, tree_digest):
+            raise HTTPFailure(422, "unsafe_binding", "invalid_revision_binding", "atlas_read")
+        head_id = self.workflow.head(campaign_id)
+        if head_id is None:
+            raise HTTPFailure(409, "snapshot_lineage_failure", "campaign_head_unavailable", "atlas_read")
+        try:
+            head = self.atlas_repository.get(campaign_id, head_id)
+        except (KeyError, ValueError) as exc:
+            raise HTTPFailure(409, "snapshot_integrity_failure", "head_projection_unavailable", "atlas_read") from exc
+        return viewed, head
+
+    def campaign_collection(self) -> tuple[int, dict]:
+        items = []
+        for campaign_id in sorted(self.campaigns):
+            head_id = self.workflow.head(campaign_id)
+            if head_id is None:
+                raise HTTPFailure(409, "snapshot_lineage_failure", "campaign_head_unavailable", "campaign_recovery")
+            try:
+                head = self.atlas_repository.get(campaign_id, head_id)
+            except (KeyError, ValueError) as exc:
+                raise HTTPFailure(409, "snapshot_integrity_failure", "head_projection_unavailable", "campaign_recovery") from exc
+            items.append((head, head, "ready"))
+        return 200, campaign_collection_contract(tuple(items))
+
+    def atlas_overview(self, campaign_id: str, revision_id: str, ordinal: int, tree_digest: str) -> tuple[int, dict]:
+        viewed, head = self._atlas_binding(campaign_id, revision_id, ordinal, tree_digest)
+        return 200, overview_contract(
+            viewed, head, approved_revision_count=len(self.atlas_repository.list(campaign_id))
+        )
+
+    def atlas_record_library(self, campaign_id: str, revision_id: str, ordinal: int,
+                             tree_digest: str, *, query: str, record_types: tuple[str, ...],
+                             authorities: tuple[str, ...], statuses: tuple[str, ...],
+                             limit: int, cursor: str | None) -> tuple[int, dict]:
+        viewed, head = self._atlas_binding(campaign_id, revision_id, ordinal, tree_digest)
+        try:
+            request = RecordLibraryQuery(
+                campaign_id, revision_id, tree_digest, query,
+                tuple(sorted(set(record_types))),
+                tuple(sorted({Authority(item) for item in authorities}, key=lambda item: item.value)),
+                tuple(sorted(set(statuses))), limit, cursor,
+            )
+            result = self.atlas.record_library(request)
+        except ValueError as exc:
+            code = "invalid_cursor_binding" if str(exc) == "invalid_cursor_binding" else "invalid_query_binding"
+            raise HTTPFailure(422, "unsafe_binding", code, "atlas_record_library") from exc
+        return 200, record_library_contract(result, viewed, head)
+
+    def atlas_record_detail(self, campaign_id: str, record_id: str, revision_id: str,
+                            ordinal: int, tree_digest: str) -> tuple[int, dict]:
+        viewed, head = self._atlas_binding(campaign_id, revision_id, ordinal, tree_digest)
+        try:
+            record = self.atlas.record_detail(campaign_id, revision_id, record_id)
+        except KeyError as exc:
+            raise HTTPFailure(404, "not_found", "record_not_found", "atlas_record_detail") from exc
+        except ValueError as exc:
+            raise HTTPFailure(422, "unsafe_binding", "invalid_record_binding", "atlas_record_detail") from exc
+        return 200, record_detail_contract(record, viewed, head)
+
+    def atlas_neighborhood(self, campaign_id: str, record_id: str, revision_id: str,
+                           ordinal: int, tree_digest: str, *, depth: int, limit: int,
+                           cursor: str | None) -> tuple[int, dict]:
+        viewed, head = self._atlas_binding(campaign_id, revision_id, ordinal, tree_digest)
+        if depth != 1:
+            raise HTTPFailure(422, "unsafe_binding", "invalid_depth", "atlas_neighborhood")
+        try:
+            value = self.atlas.neighborhood(NeighborhoodQuery(
+                campaign_id, revision_id, tree_digest, record_id, limit, cursor
+            ))
+        except KeyError as exc:
+            raise HTTPFailure(404, "not_found", "record_not_found", "atlas_neighborhood") from exc
+        except ValueError as exc:
+            code = "invalid_cursor_binding" if str(exc) == "invalid_cursor_binding" else "invalid_query_binding"
+            raise HTTPFailure(422, "unsafe_binding", code, "atlas_neighborhood") from exc
+        return 200, neighborhood_contract(value, viewed, head)
+
+    def atlas_history(self, campaign_id: str, revision_id: str, ordinal: int,
+                      tree_digest: str, *, subject_record_id: str | None,
+                      limit: int, cursor: str | None, direction: str) -> tuple[int, dict]:
+        viewed, head = self._atlas_binding(campaign_id, revision_id, ordinal, tree_digest)
+        try:
+            result = self.atlas.approved_history(ApprovedHistoryQuery(
+                campaign_id, revision_id, tree_digest, subject_record_id,
+                limit, cursor, direction,
+            ))
+        except ValueError as exc:
+            code = "invalid_cursor_binding" if str(exc) == "invalid_cursor_binding" else "invalid_query_binding"
+            raise HTTPFailure(422, "unsafe_binding", code, "atlas_history") from exc
+        bundles = {item.revision_id: item for item in self.atlas_repository.list(campaign_id)}
+        return 200, approved_history_contract(result, viewed, head, bundles)
+
+    def atlas_workflow_summary(self, campaign_id: str, revision_id: str,
+                               ordinal: int, tree_digest: str) -> tuple[int, dict]:
+        viewed, head = self._atlas_binding(campaign_id, revision_id, ordinal, tree_digest)
+        session = self.ai_repository.active_session(campaign_id)
+        active = None
+        if session is not None:
+            try:
+                base = self.atlas_repository.get(campaign_id, session.base_revision)
+            except KeyError as exc:
+                raise HTTPFailure(409, "stale_revision", "session_base_revision_unavailable", "atlas_workflow") from exc
+            active = {
+                "session_id": session.session_id,
+                "base_revision": {
+                    "revision_id": base.revision_id, "ordinal": base.ordinal,
+                    "tree_digest": base.tree_digest,
+                },
+                "workflow_version": session.workflow_version,
+                "confirmed_table_fact_count": sum(item.capture_type.value == "confirmed_fact" for item in session.captures),
+                "unresolved_question_count": sum(item.capture_type.value == "unresolved_question" for item in session.captures),
+            }
+        return 200, workflow_summary_contract(
+            viewed, head,
+            draft_generation_count=self.ai_repository.draft_generation_count(campaign_id, revision_id),
+            proposal_counts=self.proposal_repository.workflow_counts(campaign_id, revision_id),
+            active_session=active,
+        )
+
     def _closed_request(self, payload: dict, expected: str, stage: str) -> None:
-        if payload.get("contract_name") != expected or payload.get("contract_version") != 1 or set(payload) != self._request_fields[expected]:
+        fields = set(payload)
+        allowed = self._request_fields[expected]
+        required = allowed - ({"session_id"} if expected == "generation_start_request" else set())
+        if payload.get("contract_name") != expected or payload.get("contract_version") != 2 or not required <= fields or not fields <= allowed:
             raise HTTPFailure(422, "unsafe_binding", "invalid_request_shape", stage, self._request_id(payload))
         operation = payload.get("operation_request")
         if operation is not None:
@@ -225,7 +406,7 @@ class SliceApplication:
                 base.add("subject_id")
             elif expected == "proposal_approval_request":
                 base.update({"subject_id", "intent_digest"})
-            if not isinstance(operation, dict) or set(operation) != base or operation.get("contract_name") != "operation_request" or operation.get("contract_version") != 1:
+            if not isinstance(operation, dict) or set(operation) != base or operation.get("contract_name") != "operation_request" or operation.get("contract_version") != 2:
                 raise HTTPFailure(422, "unsafe_binding", "invalid_operation_shape", stage, self._request_id(payload))
             expected_operation = {
                 "provider_consent_request": "provider_consent",
@@ -283,11 +464,22 @@ class SliceApplication:
                 and 1 <= len(value["campaign_name"]) <= 120
                 and value.get("adapter_id") == "mothership"
             )
-        elif expected == "ask_start_request":
+        elif expected == "generation_start_request":
+            context = payload.get("context")
+            valid_context = isinstance(context, dict) and (
+                set(context) == {"scope"} and context.get("scope") == "campaign"
+                or set(context) == {"scope", "record_id", "content_digest"}
+                and context.get("scope") == "record"
+                and domain(context.get("record_id"))
+                and digest(context.get("content_digest"))
+            )
             valid = (
                 public(payload.get("generation_id")) and public(payload.get("campaign_id"))
-                and public(payload.get("source_revision")) and payload.get("action") == "ask"
+                and public(payload.get("source_revision"))
+                and payload.get("action") in {"ask", "check", "generate"}
                 and isinstance(payload.get("prompt"), str) and 1 <= len(payload["prompt"]) <= 4000
+                and (payload.get("session_id") is None or public(payload.get("session_id")))
+                and valid_context
             )
         elif expected == "proposal_create_request":
             valid = (
@@ -329,8 +521,6 @@ class SliceApplication:
         if expected == "campaign_create_request" and payload["input"].get("adapter_id") != "mothership":
             raise HTTPFailure(422, "unsafe_binding", "invalid_request_shape", stage, self._request_id(payload))
         if expected == "provider_consent_request" and payload["input"].get("explicit") is not True:
-            raise HTTPFailure(422, "unsafe_binding", "invalid_request_shape", stage, self._request_id(payload))
-        if expected == "ask_start_request" and payload.get("action") != "ask":
             raise HTTPFailure(422, "unsafe_binding", "invalid_request_shape", stage, self._request_id(payload))
         if expected == "proposal_approval_request" and payload.get("warden_confirmed") is not True:
             raise HTTPFailure(422, "unsafe_binding", "invalid_request_shape", stage, self._request_id(payload))
@@ -390,7 +580,7 @@ class SliceApplication:
         consent = self.ai_repository.consent()
         current = bool(consent and consent.current and available and consent == current_identity)
         payload = {
-            "contract_name": "provider_readiness_response", "contract_version": 1,
+            "contract_name": "provider_readiness_response", "contract_version": 2,
             "provider_configured": configured, "provider_available": available,
             "consent_current": current, "consent_identity_digest": identity,
             "ai_available": bool(configured and available and current and identity),
@@ -436,6 +626,7 @@ class SliceApplication:
             return (200 if replay[0] < 400 else replay[0]), replay[1]
         recovered = self._matching_creation(data, operation["idempotency_key"])
         if recovered is not None:
+            self.atlas_rebuilder.rebuild(recovered)
             response = self.revision_view(data["campaign_id"], recovered.revision_id)[1]
             self._store("campaign_create", operation["idempotency_key"], operation["payload_digest"], 201, response)
             return 200, response
@@ -487,6 +678,7 @@ class SliceApplication:
                     data["campaign_id"], data["campaign_name"], data["adapter_id"],
                     {revision_id: manifest}, {revision_id: handle},
                 )
+                self.atlas_rebuilder.rebuild(manifest)
                 response = self.revision_view(data["campaign_id"], revision_id)[1]
                 self._store("campaign_create", operation["idempotency_key"], operation["payload_digest"], 201, response)
                 return 201, response
@@ -527,7 +719,7 @@ class SliceApplication:
         campaign, manifest = self._campaign_revision(campaign_id, revision_id)
         record = self._record(campaign_id, revision_id, "campaign-main")
         response = {
-            "contract_name": "campaign_revision_view", "contract_version": 1,
+            "contract_name": "campaign_revision_view", "contract_version": 2,
             "campaign_id": campaign_id, "campaign_name": campaign.campaign_name,
             "adapter_id": campaign.adapter_id,
             "viewed_revision": self._revision_ref(manifest),
@@ -554,7 +746,7 @@ class SliceApplication:
         if result.result.status is not Status.STAGED or not result.records:
             raise HTTPFailure(404, "not_found", "record_not_found", "record_read")
         record = result.records[0]
-        return {"contract_name": "record_view", "contract_version": 1,
+        return {"contract_name": "record_view", "contract_version": 2,
                 "campaign_id": campaign_id, "revision_id": revision_id,
                 "record_id": record.subject_id, "record_type": record.record_type,
                 "name": record.name, "authority": self._authority(record.status),
@@ -563,25 +755,31 @@ class SliceApplication:
     def record_view(self, campaign_id: str, revision_id: str, record_id: str) -> tuple[int, dict]:
         return 200, self._record(campaign_id, revision_id, record_id)
 
-    def start_ask(self, campaign_id: str, revision_id: str, payload: dict) -> tuple[int, dict, bool]:
-        self._closed_request(payload, "ask_start_request", "ask_start")
-        self._semantic(payload, context={"path_params": {"campaign_id": campaign_id, "source_revision": revision_id}}, stage="ask_start")
+    def start_generation(self, campaign_id: str, revision_id: str, payload: dict) -> tuple[int, dict, bool]:
+        self._closed_request(payload, "generation_start_request", "generation_start")
+        self._semantic(payload, context={"path_params": {"campaign_id": campaign_id, "source_revision": revision_id}}, stage="generation_start")
+        context = payload["context"]
+        focus_record_id = context.get("record_id") if context["scope"] == "record" else None
+        focus_content_digest = context.get("content_digest") if context["scope"] == "record" else None
         try:
             record, reserved = self.ai.prepare(
                 payload["generation_id"], campaign_id, revision_id,
-                Action.ASK, payload["prompt"],
+                Action(payload["action"]), payload["prompt"],
+                session_id=payload.get("session_id"),
+                focus_record_id=focus_record_id,
+                focus_content_digest=focus_content_digest,
             )
         except ConsentRequired as exc:
-            raise HTTPFailure(409, "capability_rejected", "explicit_consent_required", "ask_start", retryable=False) from exc
+            raise HTTPFailure(409, "capability_rejected", "explicit_consent_required", "generation_start", retryable=False) from exc
         except ProviderUnavailable as exc:
-            raise HTTPFailure(503, "provider_unavailable", "provider_unavailable", "ask_start", retryable=True) from exc
+            raise HTTPFailure(503, "provider_unavailable", "provider_unavailable", "generation_start", retryable=True) from exc
         except ValueError as exc:
             if str(exc) == "idempotency_digest_conflict":
                 raise HTTPFailure(
                     409, "idempotency_digest_conflict", "idempotency_digest_conflict",
-                    "ask_start", request_id=payload["generation_id"],
+                    "generation_start", request_id=payload["generation_id"],
                 ) from exc
-            raise HTTPFailure(422, "unsafe_binding", "invalid_ask_request", "ask_start") from exc
+            raise HTTPFailure(422, "unsafe_binding", "invalid_generation_binding", "generation_start") from exc
         should_dispatch = reserved or (record.terminal_status is None and not record.events)
         return (202 if should_dispatch else 200), self._generation_view(record), should_dispatch
 
@@ -613,10 +811,18 @@ class SliceApplication:
                    for item in envelope.excerpts]
         status = record.terminal_status or "pending"
         content = record.terminal_content if status == "complete" else None
-        payload = {"contract_name": "generation_view", "contract_version": 1,
+        context = (
+            {"scope": "record", "record_id": record.request.focus_record_id,
+             "content_digest": record.request.focus_content_digest}
+            if record.request.focus_record_id is not None
+            else {"scope": "campaign"}
+        )
+        payload = {"contract_name": "generation_view", "contract_version": 2,
                    "generation_id": record.request.generation_id,
                    "campaign_id": record.request.campaign_id,
                    "source_revision": record.request.revision_id,
+                   "action": record.request.action.value, "context": context,
+                   "session_id": envelope.session_id,
                    "draft_authority": "draft", "status": status,
                    "sources": sources, "source_set_digest": envelope.source_set_digest,
                    "last_sequence": len(record.events), "terminal_content": content,
@@ -628,7 +834,17 @@ class SliceApplication:
                           "sources": [{"source_id": item.source_id, "authority": item.authority,
                                        "text": item.text, "digest": item.digest, "order": item.order}
                                       for item in envelope.excerpts]}
-        self._semantic(payload, context={"source_envelope": source_context}, stage="generation_read")
+        self._semantic(payload, context={
+            "source_envelope": source_context,
+            "generation_request": {
+                "generation_id": record.request.generation_id,
+                "campaign_id": record.request.campaign_id,
+                "source_revision": record.request.revision_id,
+                "action": record.request.action.value,
+                "context": context,
+                "session_id": envelope.session_id,
+            },
+        }, stage="generation_read")
         return payload
 
     def generation_events(self, generation_id: str, *, after: int | None, last_event_id: int | None) -> tuple[int, tuple[dict, ...]]:
@@ -638,9 +854,9 @@ class SliceApplication:
         if record.terminal_status is None and not record.events:
             threading.Thread(target=self.dispatch_generation, args=(generation_id,), daemon=True).start()
         context = {"after": after, "last_event_id": last_event_id, "last_sequence": len(record.events)}
-        self._semantic({"contract_name": "generation_event", "contract_version": 1}, context=context, stage="ask_resume")
+        self._semantic({"contract_name": "generation_event", "contract_version": 2}, context=context, stage="generation_resume")
         observed = last_event_id if last_event_id is not None else (after or 0)
-        events = tuple({"contract_name": "generation_event", "contract_version": 1,
+        events = tuple({"contract_name": "generation_event", "contract_version": 2,
                         "generation_id": generation_id, "sequence": event.sequence,
                         "event_type": event.event_type, "draft_fragment": event.draft_fragment,
                         "retryable": event.retryable}
@@ -755,7 +971,7 @@ class SliceApplication:
         status = item.status.value
         if status in {"approving", "approved"}:
             status = "draft"
-        view = {"contract_name": "proposal_view", "contract_version": 1,
+        view = {"contract_name": "proposal_view", "contract_version": 2,
                 "proposal_id": item.proposal_id, "proposal_version": item.version,
                 "campaign_id": item.campaign_id, "generation_id": item.generation_id,
                 "source_revision": item.source_revision, "base_revision": item.base_revision,
@@ -914,7 +1130,7 @@ class SliceApplication:
 
     def _approval_result(self, item: ProposalVersion, request_id: str, *, exact_replay: bool) -> tuple[int, dict] | None:
         if item.status is ProposalStatus.CONFLICT:
-            return 409, {"contract_name": "proposal_approval_result", "contract_version": 1,
+            return 409, {"contract_name": "proposal_approval_result", "contract_version": 2,
                 "proposal": self._proposal_view(item), "outcome": "conflict", "published_revision": None,
                 "error": {"category": "stale_revision", "code": "stale_campaign_head",
                           "stage": "proposal_approve", "request_id": request_id, "retryable": False},
@@ -923,7 +1139,7 @@ class SliceApplication:
             manifest = self._matching_publication(item)
             if manifest is None:
                 return None
-            return 200, {"contract_name": "proposal_approval_result", "contract_version": 1,
+            return 200, {"contract_name": "proposal_approval_result", "contract_version": 2,
                 "proposal": self._proposal_view(item), "outcome": "published",
                 "published_revision": self._revision_ref(manifest), "error": None,
                 "exact_replay": exact_replay}
@@ -971,4 +1187,9 @@ class SliceApplication:
         )
         campaign.revisions[revision_id] = manifest
         campaign.workspaces[revision_id] = staged.staged_handle
+        self._atlas_provenance_overrides[revision_id] = (item.proposal_id, item.version)
+        try:
+            self.atlas_rebuilder.rebuild(manifest)
+        finally:
+            self._atlas_provenance_overrides.pop(revision_id, None)
         return manifest

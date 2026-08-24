@@ -58,9 +58,17 @@ on the target host. Do not add a database port or attach `db` to `egress`.
 Startup obtains a PostgreSQL advisory transaction lock and applies each
 packaged migration exactly once. A failed migration rolls back and prevents
 `app` startup. `/health/live` reports process health. `/health/ready` requires
-the expected `0006` schema record plus readable and writable snapshot/secret volumes.
+the expected `0007` schema record plus readable and writable snapshot/secret volumes.
 Provider failure is intentionally outside base readiness so deterministic
 Capture can remain available.
+
+Migration `0007` removes only cached HTTP operation receipts created by the
+v1 runtime. This prevents an exact replay from returning a stored v1 response
+through the v2 API. The first repeated mutation after upgrade runs again under
+its normal deterministic and authority checks. Snapshots, revisions, campaign
+records, proposals, proposal audit, AI generations, and live-session state are
+unchanged. Startup applies this reset automatically; the Warden does not need
+to inspect or edit PostgreSQL.
 
 ## Backup
 

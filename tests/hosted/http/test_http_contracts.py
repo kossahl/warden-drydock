@@ -17,7 +17,7 @@ from warden_drydock.hosted.http.contracts import (
 )
 
 
-ROOT = Path(__file__).parents[3] / "docs" / "contracts" / "hosted" / "http" / "v1"
+ROOT = Path(__file__).parents[3] / "docs" / "contracts" / "hosted" / "http" / "v2"
 
 
 def canonical_digest(value: object) -> str:
@@ -66,7 +66,7 @@ class HostedHTTPContractTests(unittest.TestCase):
             "campaign_id": generation["campaign_id"],
             "revision_id": generation["source_revision"],
             "retrieval_policy_version": 1,
-            "session_id": None,
+            "session_id": generation["session_id"],
             "source_set_digest": generation["source_set_digest"],
             "sources": [{
                 "source_id": item["source_id"],
@@ -386,11 +386,23 @@ class HostedHTTPContractTests(unittest.TestCase):
         bad_result["published_revision"]["revision_id"] = "revision_other"
         vectors.append(("http_approval_result", bad_result, self.proposal_context(bad_result["proposal"])))
 
-        vectors.append(("http_path_body_equality", self.examples["ask_start"], {
+        vectors.append(("http_path_body_equality", self.examples["generation_start_campaign"], {
             "path_params": {"campaign_id": "campaign_other", "source_revision": "revision_alpha"}}))
+        invalid_context = deepcopy(self.examples["generation_start_campaign"])
+        invalid_context["context"] = {"scope": "campaign", "record_id": "campaign-main"}
+        route_context = {"path_params": {
+            "campaign_id": invalid_context["campaign_id"],
+            "source_revision": invalid_context["source_revision"],
+        }}
+        vectors.append(("http_generation_context", invalid_context, route_context))
+        replay = deepcopy(self.examples["generation_start_campaign"])
+        vectors.append(("http_generation_exact_replay", replay, {
+            **route_context,
+            "generation_request": {**replay, "generation_id": "generation_other"},
+        }))
         vectors.append(("http_sse_resume", self.examples["generation_event"], {
             "after": 3, "last_event_id": 3, "last_sequence": 2}))
-        unsafe_error = {"contract_name":"error_response","contract_version":1,"error":{
+        unsafe_error = {"contract_name":"error_response","contract_version":2,"error":{
             "category":"provider_terminal_failure","code":"provider_failed","stage":"ask","request_id":"request_error",
             "retryable":False,"message":"sk-synthetic raw provider prompt text"}}
         vectors.append(("http_safe_error", unsafe_error, {}))
@@ -417,7 +429,7 @@ class HostedHTTPContractTests(unittest.TestCase):
         null_before["exact_diff"][0]["before_content"] = None
         self.assert_invalid(null_before)
 
-        private_path = {"contract_name":"error_response","contract_version":1,"error":{
+        private_path = {"contract_name":"error_response","contract_version":2,"error":{
             "category":"service_unavailable","code":"failed","stage":"read","request_id":"request_error",
             "message":"read failed at /etc/passwd","retryable":False}}
         self.assert_invalid(private_path)

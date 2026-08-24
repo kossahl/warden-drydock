@@ -263,6 +263,7 @@ def approved_history_contract(
         "binding": revision_binding(viewed, head),
         "subject_record_id": result.query.subject_record_id,
         "limit": result.query.limit,
+        "direction": result.query.direction,
         "sort": "revision_ordinal",
         "total": result.total,
         "entries": [

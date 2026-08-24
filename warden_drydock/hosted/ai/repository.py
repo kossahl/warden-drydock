@@ -82,6 +82,14 @@ class InMemoryAIRepository:
     def update_reported_head(self, session_id: str, revision_id: str) -> None:
         self.sessions[session_id].reported_head_revision = revision_id
 
+    def draft_generation_count(self, campaign_id: str, revision_id: str) -> int:
+        return sum(
+            1 for item in self.generations.values()
+            if item.request.campaign_id == campaign_id
+            and item.request.revision_id == revision_id
+            and item.terminal_status == "complete"
+        )
+
 
 class PostgresAIRepository:
     """PostgreSQL implementation of the same provider/live repository contract."""
@@ -123,12 +131,14 @@ class PostgresAIRepository:
 
     def get_generation(self, generation_id: str) -> GenerationRecord | None:
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT campaign_id,revision_id,action,prompt,source_envelope,status,terminal_draft,focus_record_id,focus_content_digest FROM hosted_ai_generation WHERE generation_id=%s", (generation_id,))
+            cursor.execute("SELECT campaign_id,revision_id,session_id,action,prompt,source_envelope,status,terminal_draft,focus_record_id,focus_content_digest FROM hosted_ai_generation WHERE generation_id=%s", (generation_id,))
             row = cursor.fetchone()
             if not row:
                 return None
-            envelope = self._envelope(row[4])
-            record = GenerationRecord(GenerationRequest(generation_id, row[0], row[1], Action(row[2]), row[3], envelope, row[7], row[8]), terminal_status=None if row[5] == "pending" else row[5], terminal_content=row[6] or "")
+            envelope = self._envelope(row[5])
+            if envelope.campaign_id != row[0] or envelope.revision_id != row[1] or envelope.session_id != row[2]:
+                raise ValueError("unsafe_binding")
+            record = GenerationRecord(GenerationRequest(generation_id, row[0], row[1], Action(row[3]), row[4], envelope, row[8], row[9]), terminal_status=None if row[6] == "pending" else row[6], terminal_content=row[7] or "")
             cursor.execute("SELECT sequence,event_type,payload FROM hosted_ai_stream_event WHERE generation_id=%s ORDER BY sequence", (generation_id,))
             record.events = [StreamEvent(item[0], item[1], item[2].get("draft_fragment"), item[2].get("retryable")) for item in cursor.fetchall()]
             return record
@@ -245,3 +255,12 @@ class PostgresAIRepository:
             cursor.execute("UPDATE hosted_live_session SET reported_head_revision=%s WHERE session_id=%s", (revision_id, session_id))
             if cursor.rowcount != 1:
                 raise KeyError(session_id)
+
+    def draft_generation_count(self, campaign_id: str, revision_id: str) -> int:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT count(*) FROM hosted_ai_generation "
+                "WHERE campaign_id=%s AND revision_id=%s AND status='complete'",
+                (campaign_id, revision_id),
+            )
+            return cursor.fetchone()[0]

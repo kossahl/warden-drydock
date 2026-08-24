@@ -86,6 +86,32 @@ class PostgresProposalRepository:
             cursor.execute("SELECT proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id FROM hosted_proposal_version WHERE proposal_id=%s ORDER BY version", (proposal_id,))
             return tuple(self._item(row) for row in cursor.fetchall())
 
+    def workflow_counts(self, campaign_id, revision_id):
+        values = {name: 0 for name in ("draft", "rejected", "conflict", "published", "quarantined")}
+        with self._transaction() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT status,count(*) FROM hosted_proposal_version "
+                "WHERE campaign_id=%s AND base_revision=%s "
+                "AND status IN ('draft','rejected','conflict','published','quarantined') "
+                "GROUP BY status",
+                (campaign_id, revision_id),
+            )
+            for status, count in cursor.fetchall():
+                values[status] = count
+        return values
+
+    def find_by_published_revision(self, campaign_id, revision_id):
+        with self._transaction() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id "
+                "FROM hosted_proposal_version WHERE campaign_id=%s AND published_revision_id=%s",
+                (campaign_id, revision_id),
+            )
+            rows = cursor.fetchall()
+        if len(rows) > 1:
+            raise ValueError("proposal_publication_binding_conflict")
+        return self._item(rows[0]) if rows else None
+
     def _transition(self, item, expected, status, event):
         with self._transaction() as connection, connection.cursor() as cursor:
             cursor.execute("UPDATE hosted_proposal_version SET status=%s WHERE proposal_id=%s AND version=%s AND status=%s RETURNING proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id",

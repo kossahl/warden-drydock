@@ -604,12 +604,12 @@ class AtlasQueryService:
 
     @staticmethod
     def _history_binding(
-        query: ApprovedHistoryQuery, direction: str, boundary: int
+        query: ApprovedHistoryQuery, boundary: int
     ) -> dict[str, object]:
         return {
             "boundary_ordinal": boundary,
             "campaign_id": query.campaign_id,
-            "direction": direction,
+            "direction": query.direction,
             "kind": "approved_history",
             "limit": query.limit,
             "revision_id": query.revision_id,
@@ -639,29 +639,28 @@ class AtlasQueryService:
                     continue
                 entry = replace(entry, changes=changes)
             entries.append(entry)
-        filtered = tuple(sorted(entries, key=lambda item: item.ordinal))
+        filtered = tuple(sorted(
+            entries,
+            key=lambda item: item.ordinal,
+            reverse=query.direction == "backward",
+        ))
         start, end = 0, min(query.limit, len(filtered))
         if query.cursor is not None:
             binding = decode_cursor(query.cursor)
-            direction = binding.get("direction")
             boundary = binding.get("boundary_ordinal")
             if (
                 not isinstance(boundary, int)
                 or isinstance(boundary, bool)
-                or direction not in {"forward", "backward"}
             ):
                 raise ValueError("invalid_cursor_binding")
-            if binding != self._history_binding(query, direction, boundary):
+            if binding != self._history_binding(query, boundary):
                 raise ValueError("invalid_cursor_binding")
             ordinals = [item.ordinal for item in filtered]
             try:
                 index = ordinals.index(boundary)
             except ValueError as exc:
                 raise ValueError("invalid_cursor_binding") from exc
-            if direction == "forward":
-                start, end = index + 1, min(index + 1 + query.limit, len(filtered))
-            else:
-                start, end = max(0, index - query.limit), index
+            start, end = index + 1, min(index + 1 + query.limit, len(filtered))
         page = filtered[start:end]
         return ApprovedHistoryResult(
             query=replace(query, cursor=None),
@@ -669,16 +668,10 @@ class AtlasQueryService:
             total=len(filtered),
             next_cursor=(
                 encode_cursor(
-                    self._history_binding(query, "forward", page[-1].ordinal)
+                    self._history_binding(query, page[-1].ordinal)
                 )
                 if page and end < len(filtered)
                 else None
             ),
-            previous_cursor=(
-                encode_cursor(
-                    self._history_binding(query, "backward", page[0].ordinal)
-                )
-                if page and start > 0
-                else None
-            ),
+            previous_cursor=None,
         )
