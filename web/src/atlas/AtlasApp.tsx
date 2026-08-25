@@ -1,0 +1,278 @@
+import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
+import type { AtlasApi, AtlasRevisionQuery } from "../api/atlasClient";
+import { ApiError } from "../api/client";
+import type { AtlasBinding, AtlasCampaignItem, AtlasFacets, AtlasHistoryCollection, AtlasHistoryEntry, AtlasOverview, AtlasRecordLibraryResult, AtlasRevisionRef, AtlasWorkflowSummary, RawStatus } from "../contracts/v1";
+import { SafeMarkdown } from "./SafeMarkdown";
+import { atlasHref, parseAtlasRoute, recordHref, type AtlasRoute, type AtlasUrlState } from "./routing";
+
+type Navigate = (href: string, replace?: boolean) => void;
+type Resource<T> = { value: T | null; error: unknown; pending: boolean; retry: () => void };
+export interface ProviderState { provider_configured: boolean; provider_available: boolean; consent_current: boolean; ai_available: boolean; }
+
+function useResource<T>(load: (() => Promise<T>) | null, dependencies: ReadonlyArray<unknown>): Resource<T> {
+  const [value, setValue] = useState<T | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [pending, setPending] = useState(load !== null);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!load) { setPending(false); setError(null); return; }
+    let current = true;
+    setPending(true); setError(null);
+    void load().then((result) => { if (current) setValue(result); }).catch((failure) => { if (current) setError(failure); }).finally(() => { if (current) setPending(false); });
+    return () => { current = false; };
+    // The caller owns the dependency list so a resource can retain its prior value while a URL-bound request changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [...dependencies, attempt]);
+  return { value, error, pending, retry: () => setAttempt((value) => value + 1) };
+}
+
+function Link({ href, navigate, children, className, current }: { href: string; navigate: Navigate; children: ReactNode; className?: string; current?: boolean }) {
+  const activate = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault(); navigate(href);
+  };
+  return <a className={className} href={href} onClick={activate} aria-current={current ? "page" : undefined}>{children}</a>;
+}
+
+const revisionQuery = (revision: AtlasRevisionRef): AtlasRevisionQuery => ({ revision_id: revision.revision_id, revision_ordinal: revision.ordinal, tree_digest: revision.tree_digest });
+const titleCase = (value: string) => value.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+const statusLabel = (status: RawStatus) => status.classification === "known"
+  ? status.value === "accepted" ? "Accepted (legacy)" : titleCase(status.value)
+  : status.classification === "missing" ? "Not recorded" : `Unknown (${status.value})`;
+const statusFilterLabel = (value: string) => value === "accepted" ? "Accepted (legacy)" : titleCase(value);
+const authorityLabel = (value: string) => titleCase(value);
+const publicFailure = (error: unknown) => error instanceof ApiError && error.status === 404
+  ? "The requested Atlas view was not found."
+  : "This Atlas region could not be loaded.";
+const isIntegrityFailure = (error: unknown) => error instanceof ApiError && ["snapshot_integrity_failure", "snapshot_lineage_failure"].includes(error.code);
+
+function ErrorState({ error, retry, children }: { error: unknown; retry: () => void; children?: ReactNode }) {
+  return <div className="error atlas-error" role="alert"><strong>{isIntegrityFailure(error) ? "Campaign view blocked" : "Atlas read failed"}</strong><p>{isIntegrityFailure(error) ? "Snapshot integrity or lineage verification failed for this campaign view." : publicFailure(error)}</p>{children}<button type="button" onClick={retry}>Retry</button></div>;
+}
+
+function ProviderStatus({ resource }: { resource: Resource<ProviderState> }) {
+  const value = resource.value;
+  const label = resource.pending && !value ? "Checking" : !value ? "Unavailable" : !value.provider_configured ? "Setup required" : !value.provider_available ? "Unavailable" : !value.consent_current ? "Consent required" : value.ai_available ? "Ready" : "Unavailable";
+  return <span role="status">Provider: {label}</span>;
+}
+
+function stateFromRoute(route: AtlasRoute, revisionId: string): AtlasUrlState {
+  return { revisionId, q: route.q, type: route.type, authority: route.authority, status: route.status, cursor: route.cursor };
+}
+
+function openHeadHref(route: AtlasRoute, head: AtlasRevisionRef) {
+  const state = { ...stateFromRoute(route, head.revision_id), cursor: null };
+  if (route.kind === "record" && route.recordId) return recordHref(route.campaignId, route.recordId, state);
+  return atlasHref(route.campaignId, route.kind === "history" ? "history" : route.kind === "records" ? "records" : "overview", state);
+}
+
+function Shell({ campaign, route, viewed, provider, navigate, children }: { campaign: AtlasCampaignItem; route: AtlasRoute; viewed: AtlasRevisionRef; provider: Resource<ProviderState>; navigate: Navigate; children: ReactNode }) {
+  const state = stateFromRoute(route, viewed.revision_id);
+  const historical = viewed.revision_id !== campaign.head_revision.revision_id;
+  return <div className="app-shell atlas-shell">
+    <a className="skip-link" href="#atlas-content">Skip to main content</a>
+    <header className="banner">
+      <div><p className="eyebrow">Local Warden workspace</p><Link href="/" navigate={navigate} className="brand-link">Warden Drydock proposal workspace</Link></div>
+      <ProviderStatus resource={provider} />
+    </header>
+    <div className="atlas-layout">
+      <aside className="atlas-rail">
+        <p className="atlas-campaign-name">{campaign.campaign_name}</p>
+        <nav aria-label="Campaign Atlas">
+          <Link href={atlasHref(campaign.campaign_id, "overview", state)} navigate={navigate} current={route.kind === "overview"}>Overview</Link>
+          <Link href={atlasHref(campaign.campaign_id, "records", state)} navigate={navigate} current={route.kind === "records" || route.kind === "record"}>Records</Link>
+          <Link href={atlasHref(campaign.campaign_id, "history", state)} navigate={navigate} current={route.kind === "history"}>Approved history</Link>
+        </nav>
+      </aside>
+      <div className="atlas-main-wrap">
+        <aside className="revision-banner" aria-label="Viewed revision">
+          <span>Viewed revision {viewed.ordinal} · <code>{viewed.revision_id}</code> · {historical ? "Historical" : "Head"}</span>
+          {historical && <Link href={openHeadHref(route, campaign.head_revision)} navigate={navigate} className="button-link">Open head</Link>}
+        </aside>
+        <main id="atlas-content" className="atlas-main" tabIndex={-1}>{children}</main>
+      </div>
+    </div>
+  </div>;
+}
+
+function Heading({ children }: { children: ReactNode }) {
+  return <h1 tabIndex={-1}>{children}</h1>;
+}
+
+function FacetLinks({ facets, campaignId, revisionId, navigate }: { facets: AtlasFacets; campaignId: string; revisionId: string; navigate: Navigate }) {
+  const sections = [
+    ["Record type", facets.record_types, "type"],
+    ["Authority", facets.authorities, "authority"],
+    ["Status", facets.statuses, "status"],
+  ] as const;
+  return <div className="facet-groups">{sections.map(([heading, values, key]) => <section key={key}><h3>{heading}</h3><ul>{values.map((facet) => {
+    const state: AtlasUrlState = { revisionId, [key]: facet.value };
+    return <li key={facet.value}><Link href={atlasHref(campaignId, "records", state)} navigate={navigate}>{key === "authority" ? authorityLabel(facet.value) : key === "status" ? statusFilterLabel(facet.value) : titleCase(facet.value)} <span>({facet.count})</span></Link></li>;
+  })}</ul></section>)}</div>;
+}
+
+function HistoryEntries({ value, campaignId, navigate, compact = false }: { value: AtlasHistoryCollection; campaignId: string; navigate: Navigate; compact?: boolean }) {
+  if (!value.entries.length) return <p>No approved revision events are recorded.</p>;
+  return <ol className="history-list">{value.entries.map((entry) => <HistoryEntryView key={entry.revision.revision_id} entry={entry} campaignId={campaignId} navigate={navigate} compact={compact} />)}</ol>;
+}
+
+function HistoryEntryView({ entry, campaignId, navigate, compact }: { entry: AtlasHistoryEntry; campaignId: string; navigate: Navigate; compact: boolean }) {
+  return <li className="history-entry">
+    <h3>Revision {entry.revision.ordinal}</h3>
+    <p><code>{entry.revision.revision_id}</code>{entry.parent_revision_id ? <> · Parent <Link href={atlasHref(campaignId, "overview", { revisionId: entry.parent_revision_id })} navigate={navigate}><code>{entry.parent_revision_id}</code></Link></> : " · Initial revision"}</p>
+    {!compact && <>
+      <ul className="change-list">{entry.changes.map((change, index) => {
+        const removed = change.change_kind === "removed";
+        return <li key={`${change.record_id}-${change.change_kind}-${index}`}>
+          <span className={`change-kind change-kind--${change.change_kind}`}>{titleCase(change.change_kind)}</span>{" "}
+          <Link href={recordHref(campaignId, change.record_id, { revisionId: change.link_revision_id })} navigate={navigate}>{removed ? `Removed record ${change.record_id}` : change.record_id}</Link>
+          {change.from_authority !== change.to_authority && <span> · Authority: {change.from_authority ? authorityLabel(change.from_authority) : "None"} → {change.to_authority ? authorityLabel(change.to_authority) : "None"}</span>}
+        </li>;
+      })}</ul>
+      <p>Affected records: {entry.affected_records.map((record, index) => <span key={record.record_id}>{index ? ", " : ""}<Link href={recordHref(campaignId, record.record_id, { revisionId: record.link_revision_id })} navigate={navigate}>{record.record_id}</Link></span>)}</p>
+      {entry.proposal_id && entry.proposal_version && <p>Proposal <code>{entry.proposal_id}</code>, version {entry.proposal_version}</p>}
+    </>}
+  </li>;
+}
+
+function WorkflowSummary({ value }: { value: AtlasWorkflowSummary }) {
+  const proposalTotal = Object.values(value.proposal_counts).reduce((sum, count) => sum + count, 0);
+  if (!value.draft_generation_count && !proposalTotal && !value.active_session) return null;
+  return <section className="card non-canon" aria-labelledby="non-canon-heading"><h2 id="non-canon-heading">Non-canon work</h2><p>This operational summary is separate from approved campaign history.</p><dl className="totals"><div><dt>Draft generations</dt><dd>{value.draft_generation_count}</dd></div><div><dt>Proposals</dt><dd>{proposalTotal}</dd></div>{value.active_session && <><div><dt>Confirmed table facts</dt><dd>{value.active_session.confirmed_table_fact_count}</dd></div><div><dt>Unresolved questions</dt><dd>{value.active_session.unresolved_question_count}</dd></div></>}</dl></section>;
+}
+
+function useIntegrityGate(errors: ReadonlyArray<unknown>, block: (error: unknown) => void) {
+  useEffect(() => { const failure = errors.find(isIntegrityFailure); if (failure) block(failure); }, [block, ...errors]);
+}
+
+function OverviewView({ api, campaign, route, revision, navigate, block }: { api: AtlasApi; campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate; block: (error: unknown) => void }) {
+  const query = revisionQuery(revision);
+  const overview = useResource<AtlasOverview>(() => api.overview(campaign.campaign_id, query), [api, campaign.campaign_id, revision.revision_id]);
+  const recent = useResource(() => api.history(campaign.campaign_id, { ...query, limit: 5, direction: "backward" }), [api, campaign.campaign_id, revision.revision_id]);
+  const workflow = useResource(() => api.workflow(campaign.campaign_id, query), [api, campaign.campaign_id, revision.revision_id]);
+  useIntegrityGate([overview.error, recent.error, workflow.error], block);
+  return <section aria-busy={overview.pending}>
+    <Heading>{overview.value?.campaign_name ?? campaign.campaign_name}</Heading>
+    <p className="eyebrow">Adapter: {overview.value?.adapter_id ?? campaign.adapter_id}</p>
+    <p><Link href={atlasHref(campaign.campaign_id, "records", { revisionId: revision.revision_id })} navigate={navigate} className="button-link">Browse records</Link></p>
+    <section className="card integration-boundary" aria-labelledby="campaign-tools-heading"><h2 id="campaign-tools-heading">Campaign tools</h2><p>Campaign-bound Ask, Check and Generate integration is reserved for a later package.</p></section>
+    {overview.error ? <ErrorState error={overview.error} retry={overview.retry} /> : null}
+    {overview.value && <>
+      <dl className="totals"><div><dt>Records</dt><dd>{overview.value.record_count}</dd></div><div><dt>Relationships</dt><dd>{overview.value.edge_occurrence_count}</dd></div><div><dt>Approved revisions</dt><dd>{overview.value.approved_revision_count}</dd></div></dl>
+      <FacetLinks facets={overview.value.facets} campaignId={campaign.campaign_id} revisionId={revision.revision_id} navigate={navigate} />
+    </>}
+    <section className="card" aria-labelledby="recent-history-heading" aria-busy={recent.pending}><h2 id="recent-history-heading">Most recent approved revisions</h2>{recent.error ? <ErrorState error={recent.error} retry={recent.retry} /> : null}{recent.value && <HistoryEntries value={recent.value} campaignId={campaign.campaign_id} navigate={navigate} compact />}</section>
+    {workflow.error ? <ErrorState error={workflow.error} retry={workflow.retry}><p>Approved Atlas browsing remains available.</p></ErrorState> : null}
+    {workflow.value && <WorkflowSummary value={workflow.value} />}
+  </section>;
+}
+
+function RecordLabels({ authority, status }: { authority: string; status: RawStatus }) {
+  return <div className="record-labels"><span className={`authority-label authority-label--${authority}`}>Authority: {authorityLabel(authority)}</span><span className={`status-label status-label--${status.classification}`}>Status: {statusLabel(status)}</span></div>;
+}
+
+function RecordsView({ api, campaign, route, revision, navigate, block }: { api: AtlasApi; campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate; block: (error: unknown) => void }) {
+  const [draftQuery, setDraftQuery] = useState(route.q);
+  useEffect(() => setDraftQuery(route.q), [route.q]);
+  const state = stateFromRoute(route, revision.revision_id);
+  const query = { ...revisionQuery(revision), q: route.q, types: route.type ? [route.type] : [], authorities: route.authority ? [route.authority] : [], statuses: route.status ? [route.status] : [], ...(route.cursor ? { cursor: route.cursor } : {}) };
+  const records = useResource<AtlasRecordLibraryResult>(() => api.records(campaign.campaign_id, query), [api, campaign.campaign_id, revision.revision_id, route.q, route.type, route.authority, route.status, route.cursor]);
+  useIntegrityGate([records.error], block);
+  const changeState = (next: Partial<AtlasUrlState>) => navigate(atlasHref(campaign.campaign_id, "records", { ...state, ...next, cursor: null }));
+  const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const value = new FormData(event.currentTarget).get("record-search")?.toString().trim() ?? ""; changeState({ q: value }); };
+  const revisionHasRecords = records.value ? records.value.facets.record_types.some((facet) => facet.count > 0) : true;
+  return <section aria-busy={records.pending}>
+    <Heading>Records</Heading>
+    <form className="search-form" role="search" onSubmit={submit}><label htmlFor="record-search">Search campaign records</label><div><input id="record-search" name="record-search" value={draftQuery} onChange={(event) => setDraftQuery(event.target.value)} /><button type="submit">Search</button><button type="button" onClick={() => { setDraftQuery(""); changeState({ q: "" }); }}>Clear</button></div></form>
+    <div className="filters">
+      <label>Type<select value={route.type ?? ""} onChange={(event) => changeState({ type: event.target.value || null })}><option value="">All types</option>{records.value?.facets.record_types.map((facet) => <option key={facet.value} value={facet.value}>{titleCase(facet.value)} ({facet.count})</option>)}</select></label>
+      <label>Authority<select value={route.authority ?? ""} onChange={(event) => changeState({ authority: (event.target.value || null) as AtlasUrlState["authority"] })}><option value="">All authorities</option>{records.value?.facets.authorities.map((facet) => <option key={facet.value} value={facet.value}>{authorityLabel(facet.value)} ({facet.count})</option>)}</select></label>
+      <label>Status<select value={route.status ?? ""} onChange={(event) => changeState({ status: (event.target.value || null) as AtlasUrlState["status"] })}><option value="">All statuses</option>{records.value?.facets.statuses.map((facet) => <option key={facet.value} value={facet.value}>{statusFilterLabel(facet.value)} ({facet.count})</option>)}</select></label>
+    </div>
+    {(route.q || route.type || route.authority || route.status) && <div className="applied-filters" aria-label="Applied filters">{route.q && <button onClick={() => changeState({ q: "" })}>Search: {route.q} ×</button>}{route.type && <button onClick={() => changeState({ type: null })}>Type: {titleCase(route.type)} ×</button>}{route.authority && <button onClick={() => changeState({ authority: null })}>Authority: {authorityLabel(route.authority)} ×</button>}{route.status && <button onClick={() => changeState({ status: null })}>Status: {statusFilterLabel(route.status)} ×</button>}</div>}
+    {records.error ? <ErrorState error={records.error} retry={records.retry} /> : null}
+    {records.value && <>
+      <p role="status">{records.value.total} matching {records.value.total === 1 ? "record" : "records"}.</p>
+      {!records.value.items.length ? <p className="empty-state">{revisionHasRecords ? "No records match this search and filter combination." : "No records are stored in this revision."}</p> : <ul className="record-list">{records.value.items.map((record) => <li key={record.record_id} className="card"><h2><Link href={recordHref(campaign.campaign_id, record.record_id, state)} navigate={navigate}>{record.name}</Link></h2><p>{titleCase(record.record_type)}</p><p>{record.summary || "No summary recorded."}</p><RecordLabels authority={record.authority} status={record.raw_status} /></li>)}</ul>}
+      <nav className="pagination" aria-label="Record pages">{records.value.previous_cursor ? <Link href={atlasHref(campaign.campaign_id, "records", { ...state, cursor: records.value.previous_cursor })} navigate={navigate}>Previous</Link> : <span aria-disabled="true">Previous</span>}{records.value.next_cursor ? <Link href={atlasHref(campaign.campaign_id, "records", { ...state, cursor: records.value.next_cursor })} navigate={navigate}>Next</Link> : <span aria-disabled="true">Next</span>}</nav>
+    </>}
+  </section>;
+}
+
+function RecordDetailView({ api, campaign, route, revision, navigate, block }: { api: AtlasApi; campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate; block: (error: unknown) => void }) {
+  const recordId = route.recordId ?? "";
+  const query = revisionQuery(revision);
+  const detail = useResource(() => api.record(campaign.campaign_id, recordId, query), [api, campaign.campaign_id, recordId, revision.revision_id]);
+  const neighborhood = useResource(() => api.neighborhood(campaign.campaign_id, recordId, query), [api, campaign.campaign_id, recordId, revision.revision_id]);
+  const history = useResource(() => api.history(campaign.campaign_id, { ...query, subject_record_id: recordId, limit: 50 }), [api, campaign.campaign_id, recordId, revision.revision_id]);
+  useIntegrityGate([detail.error, neighborhood.error, history.error], block);
+  const state = stateFromRoute(route, revision.revision_id);
+  return <section aria-busy={detail.pending}>
+    <p><Link href={atlasHref(campaign.campaign_id, "records", state)} navigate={navigate}>Back to records</Link></p>
+    <Heading>{detail.value?.record.name ?? "Record detail"}</Heading>
+    {detail.error ? <ErrorState error={detail.error} retry={detail.retry} /> : null}
+    {detail.value && <>
+      <p className="eyebrow">{titleCase(detail.value.record.record_type)}</p>
+      <RecordLabels authority={detail.value.record.authority} status={detail.value.record.raw_status} />
+      <p>{detail.value.record.summary || "No summary recorded."}</p>
+      <section className="card integration-boundary" aria-labelledby="record-tools-heading"><h2 id="record-tools-heading">Contextual campaign tools</h2><p>The record-bound AI integration point is reserved for a later package.</p></section>
+      <section className="card source-binding" aria-labelledby="source-binding-heading"><h2 id="source-binding-heading">Source binding</h2><dl><div><dt>Record ID</dt><dd><code>{detail.value.record.record_id}</code></dd></div><div><dt>Revision</dt><dd><code>{detail.value.binding.viewed_revision.revision_id}</code></dd></div><div><dt>Normalized content digest</dt><dd><code>{detail.value.record.content_digest}</code></dd></div></dl></section>
+      <section className="card" aria-labelledby="record-content-heading"><h2 id="record-content-heading">Record content</h2><SafeMarkdown source={detail.value.record.content} /><details><summary>Exact source text</summary><pre>{detail.value.record.content}</pre></details></section>
+    </>}
+    <section className="card" aria-labelledby="relationship-heading" aria-busy={neighborhood.pending}><h2 id="relationship-heading">Relationships</h2>{neighborhood.error ? <ErrorState error={neighborhood.error} retry={neighborhood.retry} /> : null}{neighborhood.value && <p>{neighborhood.value.total_edges === 0 ? "No explicit relationships." : `${neighborhood.value.total_edges} explicit ${neighborhood.value.total_edges === 1 ? "relationship" : "relationships"}. Relationship map and list controls are reserved for the next Atlas package.`}</p>}</section>
+    <section className="card" aria-labelledby="record-history-heading" aria-busy={history.pending}><h2 id="record-history-heading">Approved history for this record</h2>{history.error ? <ErrorState error={history.error} retry={history.retry} /> : null}{history.value && <HistoryEntries value={history.value} campaignId={campaign.campaign_id} navigate={navigate} />}</section>
+  </section>;
+}
+
+function HistoryView({ api, campaign, revision, route, navigate, block }: { api: AtlasApi; campaign: AtlasCampaignItem; revision: AtlasRevisionRef; route: AtlasRoute; navigate: Navigate; block: (error: unknown) => void }) {
+  const query = { ...revisionQuery(revision), limit: 50 as const, ...(route.cursor ? { cursor: route.cursor } : {}) };
+  const history = useResource(() => api.history(campaign.campaign_id, query), [api, campaign.campaign_id, revision.revision_id, route.cursor]);
+  useIntegrityGate([history.error], block);
+  const state = stateFromRoute(route, revision.revision_id);
+  return <section aria-busy={history.pending}><Heading>Approved history</Heading><p>Only verified snapshot revisions appear here.</p>{history.error ? <ErrorState error={history.error} retry={history.retry} /> : null}{history.value && <><p role="status">{history.value.total} approved revision {history.value.total === 1 ? "event" : "events"}.</p><HistoryEntries value={history.value} campaignId={campaign.campaign_id} navigate={navigate} /><nav className="pagination" aria-label="History pages">{history.value.previous_cursor ? <Link href={atlasHref(campaign.campaign_id, "history", { ...state, cursor: history.value.previous_cursor })} navigate={navigate}>Previous</Link> : <span aria-disabled="true">Previous</span>}{history.value.next_cursor ? <Link href={atlasHref(campaign.campaign_id, "history", { ...state, cursor: history.value.next_cursor })} navigate={navigate}>Next</Link> : <span aria-disabled="true">Next</span>}</nav></>}</section>;
+}
+
+export function AtlasApp({ api, readiness, location, navigate }: { api: AtlasApi; readiness: () => Promise<ProviderState>; location: string; navigate: Navigate }) {
+  const route = useMemo(() => parseAtlasRoute(location), [location]);
+  const previousLocation = useRef(location);
+  const campaigns = useResource(() => api.campaigns(), [api]);
+  const provider = useResource(() => readiness(), [readiness]);
+  const [integrityError, setIntegrityError] = useState<unknown>(null);
+  const campaign = campaigns.value?.campaigns.find((item) => item.campaign_id === route.campaignId) ?? null;
+  const requestedRevision = route.revisionId ?? campaign?.head_revision.revision_id ?? null;
+  const knownRevision = campaign && requestedRevision === campaign.head_revision.revision_id ? campaign.head_revision : campaign?.projected_revision?.revision_id === requestedRevision ? campaign.projected_revision : null;
+  const revisionKey = campaign && requestedRevision ? `${campaign.campaign_id}\u0000${requestedRevision}` : null;
+  const resolveHistorical = campaign && requestedRevision && !knownRevision && revisionKey
+    ? () => api.resolveRevision(campaign.campaign_id, requestedRevision).then((revision) => ({ key: revisionKey, revision }))
+    : null;
+  const resolved = useResource(resolveHistorical, [api, campaign?.campaign_id, requestedRevision, revisionKey]);
+  const resolvedRevision = resolved.value?.key === revisionKey ? resolved.value.revision : null;
+  const viewed = knownRevision ?? resolvedRevision;
+
+  useEffect(() => setIntegrityError(null), [route.campaignId, requestedRevision]);
+  useEffect(() => {
+    if (previousLocation.current !== location) document.querySelector<HTMLElement>("#atlas-content h1")?.focus();
+    previousLocation.current = location;
+  }, [location]);
+
+  useEffect(() => {
+    if (campaign && !route.revisionId) navigate(atlasHref(campaign.campaign_id, route.kind === "records" ? "records" : route.kind === "history" ? "history" : "overview", { revisionId: campaign.head_revision.revision_id }), true);
+  }, [campaign, route.kind, route.revisionId, navigate]);
+
+  if (campaigns.error) return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to main content</a><header className="banner"><strong>Warden Drydock</strong><ProviderStatus resource={provider} /></header><main id="main-content" tabIndex={-1}><Heading>Campaign Atlas</Heading><ErrorState error={campaigns.error} retry={campaigns.retry} /></main></div>;
+  if (!campaigns.value) return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to main content</a><header className="banner"><strong>Warden Drydock</strong><ProviderStatus resource={provider} /></header><main id="main-content" tabIndex={-1} aria-busy="true"><Heading>Loading Campaign Atlas</Heading></main></div>;
+  if (!campaigns.value.campaigns.length) return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to main content</a><header className="banner"><strong>Warden Drydock</strong><ProviderStatus resource={provider} /></header><main id="main-content" tabIndex={-1}><Heading>No campaign yet</Heading><p>Create a campaign in the proposal workspace first.</p><Link href="/" navigate={navigate} className="button-link">Open proposal workspace</Link></main></div>;
+  if (!campaign) return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to main content</a><header className="banner"><strong>Warden Drydock</strong><ProviderStatus resource={provider} /></header><main id="main-content" tabIndex={-1}><Heading>Campaign unavailable</Heading><p>The requested campaign could not be opened.</p><Link href={`/campaigns/${encodeURIComponent(campaigns.value.campaigns[0].campaign_id)}?revision=${encodeURIComponent(campaigns.value.campaigns[0].head_revision.revision_id)}`} navigate={navigate}>Open an available campaign</Link></main></div>;
+  if (campaign.recovery_state !== "ready") return <Shell campaign={campaign} route={route} viewed={campaign.head_revision} provider={provider} navigate={navigate}><Heading>Campaign view unavailable</Heading><div className="error" role="alert"><p>{campaign.recovery_state === "integrity_blocked" ? "Snapshot integrity verification blocks this campaign." : "This campaign projection must be rebuilt before Atlas can open it."}</p><button type="button" onClick={campaigns.retry}>Retry</button></div></Shell>;
+  if (route.kind === "invalid") return <Shell campaign={campaign} route={{ ...route, kind: "overview" }} viewed={campaign.head_revision} provider={provider} navigate={navigate}><Heading>Page unavailable</Heading><p>The requested Atlas page does not exist.</p><Link href={atlasHref(campaign.campaign_id, "overview", { revisionId: campaign.head_revision.revision_id })} navigate={navigate}>Open Overview</Link></Shell>;
+  if (resolved.error) return <Shell campaign={campaign} route={route} viewed={campaign.head_revision} provider={provider} navigate={navigate}><Heading>Revision unavailable</Heading><p>The requested revision could not be opened. The campaign head remains available.</p><Link href={openHeadHref(route, campaign.head_revision)} navigate={navigate}>Open head</Link></Shell>;
+  if (!viewed) return <Shell campaign={campaign} route={route} viewed={campaign.head_revision} provider={provider} navigate={navigate}><section aria-busy="true"><Heading>Resolving revision</Heading></section></Shell>;
+  if (integrityError) return <Shell campaign={campaign} route={route} viewed={viewed} provider={provider} navigate={navigate}><Heading>Campaign view blocked</Heading><ErrorState error={integrityError} retry={() => { setIntegrityError(null); campaigns.retry(); }} /></Shell>;
+
+  return <Shell campaign={campaign} route={route} viewed={viewed} provider={provider} navigate={navigate}>
+    {route.kind === "overview" && <OverviewView api={api} campaign={campaign} route={route} revision={viewed} navigate={navigate} block={setIntegrityError} />}
+    {route.kind === "records" && <RecordsView api={api} campaign={campaign} route={route} revision={viewed} navigate={navigate} block={setIntegrityError} />}
+    {route.kind === "record" && <RecordDetailView api={api} campaign={campaign} route={route} revision={viewed} navigate={navigate} block={setIntegrityError} />}
+    {route.kind === "history" && <HistoryView api={api} campaign={campaign} route={route} revision={viewed} navigate={navigate} block={setIntegrityError} />}
+  </Shell>;
+}
