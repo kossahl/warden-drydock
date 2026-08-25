@@ -326,7 +326,7 @@ class AtlasApplicationTests(unittest.TestCase):
             "contract_name": "generation_start_request", "contract_version": 2,
             "generation_id": "generation_record", "campaign_id": "campaign_atlas",
             "source_revision": viewed["revision_id"], "action": "check",
-            "prompt": "Check the campaign record.",
+            "prompt": "What is this?",
             "context": {"scope": "record", "record_id": "campaign-main", "content_digest": "0" * 64},
         }
         with self.assertRaises(HTTPFailure) as caught:
@@ -343,6 +343,7 @@ class AtlasApplicationTests(unittest.TestCase):
         self.assertEqual((202, True, request["context"], 0), (
             status, dispatch, response["context"], self.provider.calls,
         ))
+        self.assertEqual("campaign-main", response["sources"][0]["source_id"])
         changed = deepcopy(request)
         changed["action"] = "generate"
         with self.assertRaises(HTTPFailure) as replay:

@@ -85,6 +85,14 @@ class GroundedAIService:
             ):
                 raise ValueError("unsafe_binding")
         records = self.source_loader.load(campaign_id, revision_id, prompt)
+        if focus_record_id is not None:
+            focused = self.source_loader.load_focus(
+                campaign_id, revision_id, focus_record_id
+            )
+            records = (focused,) + tuple(
+                item for item in records
+                if getattr(item, "subject_id", None) != focus_record_id
+            )
         envelope = self.selector.select(campaign_id, revision_id, records, session_id=session_id, confirmed_facts=confirmed_facts)
         request = GenerationRequest(
             generation_id, campaign_id, revision_id, action, prompt, envelope,

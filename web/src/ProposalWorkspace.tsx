@@ -163,7 +163,7 @@ export function ProposalWorkspace({ api = httpSliceApi, active = true, navigate,
   const recordBoundGenerate = !!generation && generation.action === "generate" && generation.context.scope === "record" && generation.context.record_id === record?.record_id && generation.context.content_digest === recordContentDigest;
   const canCreateProposal = !!campaign && generation?.status === "complete" && recordBoundGenerate && generation.source_revision === campaign.head_revision && !proposal;
   const historicalRecordGenerate = !!campaign && generation?.status === "complete" && recordBoundGenerate && generation.source_revision !== campaign.head_revision && !proposal;
-  const proposalStale = !!campaign && !!proposal && proposal.base_revision !== campaign.head_revision;
+  const proposalStale = !!campaign && !!proposal && proposal.status === "draft" && proposal.base_revision !== campaign.head_revision;
   const disabled = busy !== null;
   const providerStatus = !readiness
     ? "Checking"

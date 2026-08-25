@@ -20,7 +20,7 @@ class EngineSourceLoader:
         stopwords = {"and", "are", "for", "from", "how", "is", "of", "the", "this", "to", "was", "what", "when", "where", "who", "why", "with"}
         tokens = sorted(set(re.findall(r"[a-z0-9-]{3,}", prompt.casefold())) - stopwords)
         if not tokens:
-            raise ValueError("retrieval_consistency_failure")
+            return ()
         records: dict[str, object] = {}
         scores: dict[str, int] = {}
         for index, token in enumerate(tokens[:20], 1):
@@ -39,6 +39,27 @@ class EngineSourceLoader:
                 exact_bonus = 10000 if token == record.subject_id.casefold() or token == name else 0
                 scores[record.subject_id] = scores.get(record.subject_id, 0) + weight + exact_bonus
         return tuple(RankedRecord(records[key], scores[key]) for key in sorted(records, key=lambda item: (-scores[item], item)))
+
+    def load_focus(
+        self, campaign_id: str, revision_id: str, record_id: str
+    ) -> object:
+        """Load the exact verified record independently of prompt relevance."""
+        handle = self.workspace_for_revision(campaign_id, revision_id)
+        result = self.engine.retrieve(RetrievalRequest(
+            command_id="retrieval_" + __import__("hashlib").sha256(
+                f"{campaign_id}:{revision_id}:focus:{record_id}".encode()
+            ).hexdigest()[:16],
+            workspace_handle=handle,
+            kind=RetrievalKind.SHOW,
+            subject_id=record_id,
+        ))
+        if (
+            result.result.status is not Status.STAGED
+            or len(result.records) != 1
+            or result.records[0].subject_id != record_id
+        ):
+            raise ValueError("retrieval_consistency_failure")
+        return RankedRecord(result.records[0], 1_000_000)
 
 @dataclass(frozen=True)
 class RankedRecord:

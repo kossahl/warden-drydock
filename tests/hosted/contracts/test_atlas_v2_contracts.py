@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import unittest
+from copy import deepcopy
 
 from jsonschema import Draft202012Validator, FormatChecker
 
@@ -68,6 +69,27 @@ class AtlasV2ContractTests(unittest.TestCase):
         self.assertIn("actions", schema["$defs"]["generation_cursor_binding"]["properties"])
         self.assertNotIn("actions", schema["$defs"]["proposal_cursor_binding"]["properties"])
         self.assertNotIn("actions", schema["$defs"]["proposal_filters"]["properties"])
+
+    def test_proposal_publication_status_requires_exact_revision_identity(self) -> None:
+        schema = json.loads((CONTRACT_ROOT / "atlas.schema.json").read_text(encoding="utf-8"))
+        validator = Draft202012Validator(schema, format_checker=FormatChecker())
+        examples = json.loads((CONTRACT_ROOT / "examples.json").read_text(encoding="utf-8"))["examples"]
+        collection = next(
+            item for item in examples
+            if item["contract_name"] == "atlas_proposal_collection"
+        )
+        published_without_revision = deepcopy(collection)
+        published_without_revision["items"][0]["status"] = "published"
+        self.assertTrue(list(validator.iter_errors(published_without_revision)))
+
+        draft_with_revision = deepcopy(collection)
+        draft_with_revision["items"][0]["published_revision_id"] = "revision_three"
+        self.assertTrue(list(validator.iter_errors(draft_with_revision)))
+
+        published = deepcopy(collection)
+        published["items"][0]["status"] = "published"
+        published["items"][0]["published_revision_id"] = "revision_three"
+        self.assertEqual([], list(validator.iter_errors(published)))
 
     def test_v1_routes_are_carried_forward_exactly_and_v2_additions_are_deliberate(self) -> None:
         v1 = json.loads((CONTRACT_ROOT.parent / "v1" / "routes.json").read_text(encoding="utf-8"))
