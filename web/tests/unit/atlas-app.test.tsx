@@ -212,7 +212,7 @@ describe("Campaign Atlas browser experience", () => {
     const listButton = screen.getByRole("button", { name: "List" }); fireEvent.click(listButton); expect(listButton).toHaveFocus(); expect(listButton).toHaveAttribute("aria-pressed", "true");
     const selfRow = container.querySelectorAll(".relationship-list > li")[2];
     expect(selfRow).toHaveTextContent("Related record: Station Keeper (this record)");
-    expect(within(selfRow as HTMLElement).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(selfRow as HTMLElement).getByRole("link", { name: "Station Keeper" })).toHaveAttribute("href", expect.stringContaining("revision=revision_two"));
   });
 
   it("labels incoming backlinks and fails closed when a viewed-revision endpoint is missing", async () => {

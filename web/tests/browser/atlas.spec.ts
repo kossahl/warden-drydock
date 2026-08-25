@@ -163,6 +163,13 @@ test("wide relationship map and ordered list preserve duplicate and self occurre
   await expect(rows.nth(0)).toContainText("DirectionOutgoing");
   await expect(rows.nth(0)).toContainText("TypeKnows");
   await expect(rows.nth(0)).toContainText("StateCurrent");
+  const selfTarget = rows.nth(2).getByRole("link", { name: "Station Keeper" });
+  await expect(selfTarget).toHaveAttribute("href", expect.stringContaining("revision=revision_two"));
+  await selfTarget.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { level: 1, name: "Station Keeper" })).toBeFocused();
+  await expect(page).not.toHaveURL(/relationship_cursor|generation_cursor|proposal_cursor/);
+  await controls.getByRole("button", { name: "List" }).click();
   const neighbor = rows.nth(0).getByRole("link", { name: "Legacy Ship" });
   await neighbor.focus();
   await page.keyboard.press("Enter");
