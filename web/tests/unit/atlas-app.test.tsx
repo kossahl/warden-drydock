@@ -73,7 +73,14 @@ describe("Campaign Atlas browser experience", () => {
     expect(screen.getByText(/javascript:alert/)).toBeVisible();
     const relationships = screen.getByRole("heading", { name: "Relationships" }).closest("section")!;
     expect(within(relationships).getByRole("button", { name: "Map", pressed: true })).toBeVisible();
-    expect(within(relationships).getAllByRole("link", { name: "Open Legacy Ship" })).toHaveLength(2);
+    expect(within(relationships).getAllByRole("link", { name: "Legacy Ship" })).toHaveLength(2);
+    const card = relationships.querySelector(".relationship-card")!;
+    expect(card.firstElementChild).toHaveTextContent("Synthetic edge.");
+    expect(card).toHaveTextContent("Related record: Legacy Ship");
+    expect(card).toHaveTextContent("DirectionOutgoing");
+    expect(card).toHaveTextContent("TypeKnows");
+    expect(card).toHaveTextContent("StateCurrent");
+    expect(card).not.toHaveTextContent("Station Keeper knows Legacy Ship");
   });
 
   it("keeps a historical revision selected until Open head", async () => {
@@ -203,6 +210,38 @@ describe("Campaign Atlas browser experience", () => {
     expect(neighbor.href).toContain("q=station"); expect(neighbor.href).toContain("type=npc"); expect(neighbor.href).toContain("cursor=library_page"); expect(neighbor.href).not.toContain("relationship_cursor"); expect(neighbor.href).not.toContain("generation_cursor"); expect(neighbor.href).not.toContain("proposal_cursor");
     expect(screen.getByRole("group", { name: "Relationship view" })).toBeVisible();
     const listButton = screen.getByRole("button", { name: "List" }); fireEvent.click(listButton); expect(listButton).toHaveFocus(); expect(listButton).toHaveAttribute("aria-pressed", "true");
+    const selfRow = container.querySelectorAll(".relationship-list > li")[2];
+    expect(selfRow).toHaveTextContent("Related record: Station Keeper (this record)");
+    expect(within(selfRow as HTMLElement).queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("labels incoming backlinks and fails closed when a viewed-revision endpoint is missing", async () => {
+    const incoming = { ...neighborhood, edges: [{ ...neighborhood.edges[0], source_record_id: "record-two", target_record_id: "record-one", relationship: "reports-to", state: "former", context: "The ship once reported to the keeper." }] };
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+    const { rerender } = render(<App atlasApi={fakeAtlas({ neighborhood: vi.fn(async () => incoming) })} providerReadiness={async () => readinessUnavailable} />);
+    const relationships = (await screen.findByRole("heading", { name: "Relationships" })).closest("section")!;
+    await within(relationships).findAllByRole("link", { name: "Legacy Ship" });
+    const card = relationships.querySelector(".relationship-card")!;
+    expect(card.firstElementChild).toHaveTextContent("The ship once reported to the keeper.");
+    expect(card).toHaveTextContent("Source: Legacy Ship");
+    expect(card).toHaveTextContent("DirectionIncoming");
+    expect(card).toHaveTextContent("TypeReports To");
+
+    const missing = { ...neighborhood, neighbors: [] };
+    rerender(<App atlasApi={fakeAtlas({ neighborhood: vi.fn(async () => missing) })} providerReadiness={async () => readinessUnavailable} />);
+    expect(await screen.findByRole("alert", { name: "" })).toHaveTextContent("Relationship data could not be verified.");
+    expect(screen.queryByRole("link", { name: "Legacy Ship" })).not.toBeInTheDocument();
+    expect(screen.queryByText("record-two")).not.toBeInTheDocument();
+  });
+
+  it("pins relationship target navigation to a historical viewed revision", async () => {
+    const historicalBinding = { ...binding, viewed_revision: oldRevision };
+    const historicalDetail = { ...detail, binding: historicalBinding };
+    const historicalNeighborhood = { ...neighborhood, binding: historicalBinding };
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_one");
+    render(<App atlasApi={fakeAtlas({ record: vi.fn(async () => historicalDetail), neighborhood: vi.fn(async () => historicalNeighborhood) })} providerReadiness={async () => readinessUnavailable} />);
+    const target = (await screen.findAllByRole("link", { name: "Legacy Ship" }))[0];
+    expect(target).toHaveAttribute("href", expect.stringContaining("revision=revision_one"));
   });
 
   it("shows persisted workflow bindings and publication-safe status links", async () => {
@@ -258,7 +297,7 @@ describe("Campaign Atlas browser experience", () => {
     fireEvent.change(screen.getByLabelText("Generation brief"), { target: { value: "Draft for record one" } });
     fireEvent.click(screen.getByRole("button", { name: "Submit Generate" }));
     await screen.findByText("A grounded Draft.");
-    fireEvent.click(screen.getAllByRole("link", { name: "Open Legacy Ship" })[0]);
+    fireEvent.click(screen.getAllByRole("link", { name: "Legacy Ship" })[0]);
     await screen.findByRole("heading", { name: "Legacy Ship", level: 1 });
     expect(screen.queryByText("A grounded Draft.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Review as proposal/ })).not.toBeInTheDocument();
