@@ -17,13 +17,15 @@ from warden_drydock.hosted.http.application import HTTPFailure, SliceApplication
 from warden_drydock.hosted.http.repository import PostgresHTTPRepository
 from warden_drydock.hosted.proposals import PostgresProposalRepository
 from warden_drydock.hosted.ai.repository import PostgresAIRepository
+from warden_drydock.hosted.projections import PostgresAtlasProjectionRepository
 from warden_drydock.hosted.revisions import PostgresWorkflowRepository
+from warden_drydock.hosted.http.query import parse_flat_query, require_int
 
 
 _ROUTES = {
     "revision": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)$"),
     "record": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/records/([^/]+)$"),
-    "ask": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/asks$"),
+    "generation_start": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/generations$"),
     "events": re.compile(r"^/api/v1/generations/([^/]+)/events$"),
     "generation": re.compile(r"^/api/v1/generations/([^/]+)$"),
     "proposal_create": re.compile(r"^/api/v1/generations/([^/]+)/proposals$"),
@@ -31,6 +33,12 @@ _ROUTES = {
     "correct": re.compile(r"^/api/v1/proposals/([^/]+)/versions/(\d+)/corrections$"),
     "reject": re.compile(r"^/api/v1/proposals/([^/]+)/versions/(\d+)/rejection$"),
     "approve": re.compile(r"^/api/v1/proposals/([^/]+)/versions/(\d+)/approval$"),
+    "atlas_overview": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/overview$"),
+    "atlas_records": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/records$"),
+    "atlas_detail": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/records/([^/]+)$"),
+    "atlas_neighborhood": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/records/([^/]+)/neighborhood$"),
+    "atlas_history": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/history$"),
+    "atlas_workflow": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/workflow-summary$"),
 }
 
 
@@ -193,33 +201,103 @@ class Handler(SimpleHTTPRequestHandler):
     def _api_get(self, path: str) -> None:
         try:
             app = self._application()
+            raw_query = urllib.parse.urlsplit(self.path).query
             if path == "/api/v1/provider/readiness":
+                parse_flat_query(raw_query, singleton=frozenset())
                 status, payload = app.provider_readiness()
+            elif path == "/api/v1/campaigns":
+                parse_flat_query(raw_query, singleton=frozenset())
+                status, payload = app.campaign_collection()
             elif match := _ROUTES["revision"].fullmatch(path):
+                parse_flat_query(raw_query, singleton=frozenset())
                 status, payload = app.revision_view(*match.groups())
             elif match := _ROUTES["record"].fullmatch(path):
+                parse_flat_query(raw_query, singleton=frozenset())
                 status, payload = app.record_view(*match.groups())
             elif match := _ROUTES["generation"].fullmatch(path):
+                parse_flat_query(raw_query, singleton=frozenset())
                 status, payload = app.generation_view(match.group(1))
             elif match := _ROUTES["proposal"].fullmatch(path):
+                parse_flat_query(raw_query, singleton=frozenset())
                 status, payload = app.proposal_view(match.group(1), int(match.group(2)))
             elif match := _ROUTES["events"].fullmatch(path):
                 self._send_events(app, match.group(1))
                 return
+            elif match := _ROUTES["atlas_overview"].fullmatch(path):
+                query = self._atlas_binding_query(raw_query)
+                status, payload = app.atlas_overview(match.group(1), **query)
+            elif match := _ROUTES["atlas_records"].fullmatch(path):
+                query = parse_flat_query(
+                    raw_query,
+                    singleton=frozenset({"revision_id", "revision_ordinal", "tree_digest", "q", "limit", "cursor"}),
+                    repeated=frozenset({"type", "authority", "status"}),
+                    required=frozenset({"revision_id", "revision_ordinal", "tree_digest", "limit"}),
+                )
+                status, payload = app.atlas_record_library(
+                    match.group(1), str(query["revision_id"]),
+                    require_int(query["revision_ordinal"], minimum=1, maximum=2_147_483_647),
+                    str(query["tree_digest"]), query=str(query.get("q", "")),
+                    record_types=tuple(query.get("type", ())),
+                    authorities=tuple(query.get("authority", ())),
+                    statuses=tuple(query.get("status", ())),
+                    limit=require_int(query["limit"], minimum=1, maximum=100),
+                    cursor=str(query["cursor"]) if "cursor" in query else None,
+                )
+            elif match := _ROUTES["atlas_neighborhood"].fullmatch(path):
+                query = parse_flat_query(
+                    raw_query,
+                    singleton=frozenset({"revision_id", "revision_ordinal", "tree_digest", "depth", "limit", "cursor"}),
+                    required=frozenset({"revision_id", "revision_ordinal", "tree_digest", "depth", "limit"}),
+                )
+                status, payload = app.atlas_neighborhood(
+                    match.group(1), match.group(2), str(query["revision_id"]),
+                    require_int(query["revision_ordinal"], minimum=1, maximum=2_147_483_647),
+                    str(query["tree_digest"]),
+                    depth=require_int(query["depth"], minimum=1, maximum=1),
+                    limit=require_int(query["limit"], minimum=1, maximum=100),
+                    cursor=str(query["cursor"]) if "cursor" in query else None,
+                )
+            elif match := _ROUTES["atlas_detail"].fullmatch(path):
+                query = self._atlas_binding_query(raw_query)
+                status, payload = app.atlas_record_detail(match.group(1), match.group(2), **query)
+            elif match := _ROUTES["atlas_history"].fullmatch(path):
+                query = parse_flat_query(
+                    raw_query,
+                    singleton=frozenset({"revision_id", "revision_ordinal", "tree_digest", "subject_record_id", "limit", "cursor", "direction"}),
+                    required=frozenset({"revision_id", "revision_ordinal", "tree_digest", "limit"}),
+                )
+                direction = str(query.get("direction", "forward"))
+                if direction not in {"forward", "backward"}:
+                    raise ValueError("invalid_query_binding")
+                status, payload = app.atlas_history(
+                    match.group(1), str(query["revision_id"]),
+                    require_int(query["revision_ordinal"], minimum=1, maximum=2_147_483_647),
+                    str(query["tree_digest"]),
+                    subject_record_id=str(query["subject_record_id"]) if "subject_record_id" in query else None,
+                    limit=require_int(query["limit"], minimum=1, maximum=100),
+                    cursor=str(query["cursor"]) if "cursor" in query else None,
+                    direction=direction,
+                )
+            elif match := _ROUTES["atlas_workflow"].fullmatch(path):
+                query = self._atlas_binding_query(raw_query)
+                status, payload = app.atlas_workflow_summary(match.group(1), **query)
             else:
                 raise HTTPFailure(404, "not_found", "route_not_found", "routing")
             self._send_json(status, payload)
         except HTTPFailure as exc:
             self._send_json(exc.status, exc.payload)
         except (KeyError, TypeError, ValueError):
-            self._send_json(422, HTTPFailure(422, "unsafe_binding", "invalid_request", "request_validation").payload)
+            self._send_json(422, HTTPFailure(422, "unsafe_binding", "invalid_query_binding", "request_validation").payload)
         except Exception:
             self._send_json(503, HTTPFailure(503, "service_unavailable", "service_unavailable", "request_dispatch", retryable=True).payload)
 
     def _send_events(self, app: SliceApplication, generation_id: str) -> None:
-        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query, keep_blank_values=True)
+        query = parse_flat_query(
+            urllib.parse.urlsplit(self.path).query,
+            singleton=frozenset({"after"}),
+        )
         try:
-            after = int(query["after"][0]) if "after" in query else None
+            after = require_int(query["after"], minimum=0, maximum=2_147_483_647) if "after" in query else None
             last = int(self.headers["Last-Event-ID"]) if self.headers.get("Last-Event-ID") is not None else None
         except (ValueError, IndexError):
             raise HTTPFailure(422, "unsafe_binding", "resume_sequence_invalid", "ask_resume")
@@ -246,8 +324,8 @@ class Handler(SimpleHTTPRequestHandler):
                 status, response = app.provider_consent(payload)
             elif path == "/api/v1/campaigns":
                 status, response = app.create_campaign(payload)
-            elif match := _ROUTES["ask"].fullmatch(path):
-                status, response, reserved = app.start_ask(*match.groups(), payload)
+            elif match := _ROUTES["generation_start"].fullmatch(path):
+                status, response, reserved = app.start_generation(*match.groups(), payload)
                 dispatch = response["generation_id"] if reserved else None
             elif match := _ROUTES["proposal_create"].fullmatch(path):
                 status, response = app.create_proposal(match.group(1), payload)
@@ -268,6 +346,19 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json(422, HTTPFailure(422, "unsafe_binding", "invalid_request", "request_validation").payload)
         except Exception:
             self._send_json(503, HTTPFailure(503, "service_unavailable", "service_unavailable", "request_dispatch", retryable=True).payload)
+
+    @staticmethod
+    def _atlas_binding_query(raw_query: str) -> dict[str, object]:
+        query = parse_flat_query(
+            raw_query,
+            singleton=frozenset({"revision_id", "revision_ordinal", "tree_digest"}),
+            required=frozenset({"revision_id", "revision_ordinal", "tree_digest"}),
+        )
+        return {
+            "revision_id": str(query["revision_id"]),
+            "ordinal": require_int(query["revision_ordinal"], minimum=1, maximum=2_147_483_647),
+            "tree_digest": str(query["tree_digest"]),
+        }
 
     def _reject_unsupported(self) -> None:
         if self._prepare_request():
@@ -310,6 +401,7 @@ def main() -> None:
     proposal_repository = None
     workflow_repository = None
     ai_repository = None
+    atlas_repository = None
     if os.environ.get("DATABASE_URL"):
         try:
             import psycopg
@@ -318,6 +410,7 @@ def main() -> None:
             proposal_repository = PostgresProposalRepository(lambda: psycopg.connect(database_url))
             workflow_repository = PostgresWorkflowRepository(lambda: psycopg.connect(database_url))
             ai_repository = PostgresAIRepository(lambda: psycopg.connect(database_url))
+            atlas_repository = PostgresAtlasProjectionRepository(lambda: psycopg.connect(database_url))
         except ImportError:
             raise RuntimeError("postgres driver unavailable")
     Handler.application = SliceApplication(
@@ -325,6 +418,7 @@ def main() -> None:
         proposal_repository=proposal_repository,
         workflow_repository=workflow_repository,
         ai_repository=ai_repository,
+        atlas_repository=atlas_repository,
     )
     Handler.csrf_secret = _installation_csrf_secret(root)
     ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()

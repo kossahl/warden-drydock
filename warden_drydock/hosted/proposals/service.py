@@ -203,6 +203,17 @@ class InMemoryProposalRepository:
     def get(self, proposal_id, version): return self.items[(proposal_id, version)]
     def versions(self, proposal_id):
         return tuple(sorted((item for item in self.items.values() if item.proposal_id == proposal_id), key=lambda item: item.version))
+    def workflow_counts(self, campaign_id, revision_id):
+        counts = {name: 0 for name in ("draft", "rejected", "conflict", "published", "quarantined")}
+        for item in self.items.values():
+            if item.campaign_id == campaign_id and item.base_revision == revision_id and item.status.value in counts:
+                counts[item.status.value] += 1
+        return counts
+    def find_by_published_revision(self, campaign_id, revision_id):
+        matches = [item for item in self.items.values() if item.campaign_id == campaign_id and item.published_revision_id == revision_id]
+        if len(matches) > 1:
+            raise ValueError("proposal_publication_binding_conflict")
+        return matches[0] if matches else None
     def add(self, item): self.items[(item.proposal_id, item.version)] = item; self.audit.append((item.proposal_id, item.version, item.status.value))
     def replace_status(self, item, status):
         current = self.items[(item.proposal_id, item.version)]

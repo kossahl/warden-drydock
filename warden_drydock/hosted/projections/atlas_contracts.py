@@ -17,8 +17,6 @@ def revision_ref(bundle: AtlasProjectionBundle) -> dict[str, object]:
         "ordinal": bundle.ordinal,
         "tree_digest": bundle.tree_digest,
     }
-
-
 def revision_binding(
     viewed: AtlasProjectionBundle, head: AtlasProjectionBundle
 ) -> dict[str, object]:
@@ -164,7 +162,6 @@ def record_library_contract(
         "previous_cursor": result.previous_cursor,
     }
 
-
 def record_detail_contract(
     record: AtlasRecord,
     viewed: AtlasProjectionBundle,
@@ -263,6 +260,7 @@ def approved_history_contract(
         "binding": revision_binding(viewed, head),
         "subject_record_id": result.query.subject_record_id,
         "limit": result.query.limit,
+        "direction": result.query.direction,
         "sort": "revision_ordinal",
         "total": result.total,
         "entries": [
@@ -270,24 +268,4 @@ def approved_history_contract(
         ],
         "next_cursor": result.next_cursor,
         "previous_cursor": result.previous_cursor,
-    }
-
-
-def contextual_generation_contract(
-    bundle: AtlasProjectionBundle,
-    *,
-    session_id: str | None = None,
-    focus_record_id: str | None = None,
-    focus_content_digest: str | None = None,
-) -> dict[str, object]:
-    if (focus_record_id is None) != (focus_content_digest is None):
-        raise ValueError("unsafe_binding")
-    return {
-        "contract_name": "atlas_contextual_generation",
-        "contract_version": 1,
-        "campaign_id": bundle.campaign_id,
-        "source_revision": revision_ref(bundle),
-        "session_id": session_id,
-        "focus_record_id": focus_record_id,
-        "focus_content_digest": focus_content_digest,
     }

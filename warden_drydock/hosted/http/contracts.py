@@ -78,6 +78,9 @@ def validate_http_semantics(
     if name == "generation_view":
         _generation_digests(payload)
         _source_set_binding(payload, context)
+    if name in {"generation_start_request", "generation_view"}:
+        _generation_context(payload, context)
+        _generation_exact_replay(payload, context)
     if name in {"proposal_view", "proposal_approval_result"}:
         proposal = payload if name == "proposal_view" else payload["proposal"]
         _proposal_digests(proposal)
@@ -108,7 +111,7 @@ def _fail(rule_id: str, category: str, code: str) -> None:
 def _require_route_context(name: object, context: Mapping[str, object]) -> None:
     required = {
         "provider_consent_request": ("consent_identity_digest",),
-        "ask_start_request": ("path_params",),
+        "generation_start_request": ("path_params",),
         "generation_view": ("source_envelope",),
         "proposal_view": ("stored_proposal", "generation", "record", "path_params"),
         "proposal_approval_result": ("stored_proposal", "generation", "record", "path_params"),
@@ -165,10 +168,36 @@ def _generation_digests(payload: Mapping[str, object]) -> None:
         _fail("http_content_digests", "unsafe_binding", "terminal_content_digest_mismatch")
 
 
+def _generation_context(payload: Mapping[str, object], context: Mapping[str, object]) -> None:
+    value = payload.get("context")
+    if not isinstance(value, Mapping):
+        _fail("http_generation_context", "source_digest_conflict", "generation_context_invalid")
+    if value.get("scope") == "campaign":
+        if set(value) != {"scope"}:
+            _fail("http_generation_context", "source_digest_conflict", "generation_context_invalid")
+    elif value.get("scope") == "record":
+        if set(value) != {"scope", "record_id", "content_digest"}:
+            _fail("http_generation_context", "source_digest_conflict", "generation_context_invalid")
+    else:
+        _fail("http_generation_context", "source_digest_conflict", "generation_context_invalid")
+    stored = context.get("generation_request")
+    if stored is not None and any(payload.get(field) != stored.get(field) for field in (
+        "campaign_id", "source_revision", "action", "context", "session_id"
+    )):
+        _fail("http_generation_context", "source_digest_conflict", "generation_context_mismatch")
+
+
+def _generation_exact_replay(payload: Mapping[str, object], context: Mapping[str, object]) -> None:
+    stored = context.get("generation_request")
+    if stored is None:
+        return
+    for field in ("generation_id", "campaign_id", "source_revision", "action", "context", "session_id"):
+        if payload.get(field) != stored.get(field):
+            _fail("http_generation_exact_replay", "idempotency_digest_conflict", "generation_replay_mismatch")
+
+
 def _source_set_binding(payload: Mapping[str, object], context: Mapping[str, object]) -> None:
     envelope = context["source_envelope"]
-    if envelope.get("session_id") is not None:
-        _fail("http_source_set_binding", "source_digest_conflict", "session_source_not_allowed")
     source_values = [{
         "authority": item["authority"],
         "digest": item["digest"],
@@ -194,6 +223,7 @@ def _source_set_binding(payload: Mapping[str, object], context: Mapping[str, obj
         computed == envelope["source_set_digest"] == payload["source_set_digest"]
         and payload["campaign_id"] == envelope["campaign_id"]
         and payload["source_revision"] == envelope["revision_id"]
+        and payload["session_id"] == envelope.get("session_id")
         and payload["sources"] == public_sources
     ):
         _fail("http_source_set_binding", "source_digest_conflict", "source_set_binding_mismatch")
@@ -404,6 +434,8 @@ IMPLEMENTED_INVARIANTS = frozenset({
     "http_operation_digest",
     "http_content_digests",
     "http_source_set_binding",
+    "http_generation_context",
+    "http_generation_exact_replay",
     "http_proposal_digests",
     "http_consent_identity",
     "http_proposal_provenance",
@@ -420,6 +452,10 @@ INVARIANT_APPLIES_TO = frozenset({
     ("http_operation_digest", name) for name in (
         "provider_consent_request", "campaign_create_request", "proposal_create_request",
         "proposal_correction_request", "proposal_rejection_request", "proposal_approval_request")
+} | {
+    ("http_generation_context", name) for name in ("generation_start_request", "generation_view")
+} | {
+    ("http_generation_exact_replay", name) for name in ("generation_start_request", "generation_view")
 } | {
     ("http_content_digests", name) for name in ("generation_view", "proposal_view", "proposal_approval_result")
 } | {
@@ -441,6 +477,6 @@ INVARIANT_APPLIES_TO = frozenset({
     ("http_safe_error", "proposal_approval_result"),
 } | {
     ("http_path_body_equality", name) for name in (
-        "ask_start_request", "proposal_create_request", "proposal_correction_request",
+        "generation_start_request", "proposal_create_request", "proposal_correction_request",
         "proposal_rejection_request", "proposal_approval_request")
 })

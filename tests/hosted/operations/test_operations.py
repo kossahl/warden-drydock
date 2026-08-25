@@ -84,16 +84,26 @@ class RuntimeTests(unittest.TestCase):
 
     def test_migrations_are_ordered_and_outer_transactions_removed(self) -> None:
         files = migration_files(ROOT / "warden_drydock" / "hosted" / "migrations")
-        self.assertEqual(["0001", "0002", "0003", "0004", "0005", "0006"], [path.name[:4] for path in files])
+        self.assertEqual(["0001", "0002", "0003", "0004", "0005", "0006", "0007"], [path.name[:4] for path in files])
         for path in files:
             body = migration_body(path)
             self.assertFalse(body.startswith("BEGIN;"))
             self.assertFalse(body.endswith("COMMIT;"))
 
-    def test_readiness_requires_current_ai_live_schema(self) -> None:
+    def test_readiness_requires_v2_receipt_reset_schema(self) -> None:
         health = (ROOT / "warden_drydock" / "hosted" / "operations" / "health.py").read_text(encoding="utf-8")
-        self.assertIn("version='0006'", health)
+        self.assertIn("version='0007'", health)
         self.assertNotIn("version='0002'", health)
+
+    def test_v2_migration_resets_only_transport_receipts(self) -> None:
+        migration = (ROOT / "warden_drydock" / "hosted" / "migrations" / "0007_http_v2_receipt_reset.sql").read_text(encoding="utf-8")
+        self.assertIn("DELETE FROM hosted_http_operation_receipt", migration)
+        for protected in (
+            "hosted_campaign", "hosted_revision", "hosted_proposal_version",
+            "hosted_proposal_audit", "hosted_ai_generation", "hosted_live_session",
+        ):
+            self.assertNotIn(f"DELETE FROM {protected}", migration)
+            self.assertNotIn(f"DROP TABLE {protected}", migration)
 
     def test_secret_replace_is_atomic_and_metadata_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -31,7 +31,7 @@ class SliceApplicationTests(unittest.TestCase):
 
     @staticmethod
     def operation(operation: str, request_id: str, key: str, *, expected_revision=None, subject_id=None, intent_digest=None) -> dict:
-        value = {"contract_name": "operation_request", "contract_version": 1,
+        value = {"contract_name": "operation_request", "contract_version": 2,
                  "request_id": request_id, "operation": operation,
                  "idempotency_key": key, "payload_digest": "0" * 64,
                  "expected_revision": expected_revision,
@@ -50,13 +50,13 @@ class SliceApplicationTests(unittest.TestCase):
 
     def consent(self) -> dict:
         readiness = self.app.provider_readiness()[1]
-        payload = {"contract_name": "provider_consent_request", "contract_version": 1,
+        payload = {"contract_name": "provider_consent_request", "contract_version": 2,
                    "operation_request": self.operation("provider_consent", "request_consent", "idem_consent"),
                    "input": {"explicit": True, "consent_identity_digest": readiness["consent_identity_digest"]}}
         return self.app.provider_consent(self.bind(payload))[1]
 
     def campaign(self, *, key="idem_campaign") -> dict:
-        payload = {"contract_name": "campaign_create_request", "contract_version": 1,
+        payload = {"contract_name": "campaign_create_request", "contract_version": 2,
                    "operation_request": self.operation("campaign_create", "request_campaign", key),
                    "input": {"campaign_id": "campaign_alpha", "campaign_name": "Synthetic Campaign", "adapter_id": "mothership"}}
         return self.app.create_campaign(self.bind(payload))[1]
@@ -64,18 +64,18 @@ class SliceApplicationTests(unittest.TestCase):
     def generation(self, *, generation_id="generation_alpha") -> dict:
         self.consent()
         revision = self.campaign()["head_revision"]
-        request = {"contract_name": "ask_start_request", "contract_version": 1,
+        request = {"contract_name": "generation_start_request", "contract_version": 2,
                    "generation_id": generation_id, "campaign_id": "campaign_alpha",
                    "source_revision": revision, "action": "ask",
-                   "prompt": "What is the campaign called?"}
-        status, pending, reserved = self.app.start_ask("campaign_alpha", revision, request)
+                   "prompt": "What is the campaign called?", "context": {"scope": "campaign"}}
+        status, pending, reserved = self.app.start_generation("campaign_alpha", revision, request)
         self.assertEqual((202, True, "pending", 0), (status, reserved, pending["status"], self.provider.calls))
         self.app.dispatch_generation(generation_id)
         return self.app.generation_view(generation_id)[1]
 
     def proposal(self) -> dict:
         generation = self.generation()
-        payload = {"contract_name": "proposal_create_request", "contract_version": 1,
+        payload = {"contract_name": "proposal_create_request", "contract_version": 2,
                    "request_id": "request_proposal", "idempotency_key": "idem_proposal",
                    "payload_digest": "0" * 64, "generation_id": generation["generation_id"],
                    "proposal_id": "proposal_alpha", "campaign_id": generation["campaign_id"],
@@ -88,7 +88,7 @@ class SliceApplicationTests(unittest.TestCase):
         operation = self.operation("proposal_approve", "request_approval", key,
                                    expected_revision=proposal["base_revision"],
                                    subject_id=proposal["proposal_id"], intent_digest=proposal["diff_digest"])
-        payload = {"contract_name": "proposal_approval_request", "contract_version": 1,
+        payload = {"contract_name": "proposal_approval_request", "contract_version": 2,
                    "operation_request": operation, "proposal_id": proposal["proposal_id"],
                    "proposal_version": proposal["proposal_version"], "source_revision": proposal["source_revision"],
                    "base_revision": proposal["base_revision"], "expected_campaign_head": proposal["base_revision"],
@@ -97,7 +97,7 @@ class SliceApplicationTests(unittest.TestCase):
         return self.bind(payload)
 
     def test_create_replay_is_exact_and_does_not_allocate_again(self) -> None:
-        payload = {"contract_name": "campaign_create_request", "contract_version": 1,
+        payload = {"contract_name": "campaign_create_request", "contract_version": 2,
                    "operation_request": self.operation("campaign_create", "request_campaign", "idem_campaign"),
                    "input": {"campaign_id": "campaign_alpha", "campaign_name": "Synthetic Campaign", "adapter_id": "mothership"}}
         payload = self.bind(payload)
@@ -157,7 +157,7 @@ class SliceApplicationTests(unittest.TestCase):
         self.assertEqual((revision_id, "campaign-main"), (record["revision_id"], record["record_id"]))
         self.assertEqual(revision_id, restarted.revision_view("campaign_alpha", revision_id)[1]["head_revision"])
 
-        payload = {"contract_name": "campaign_create_request", "contract_version": 1,
+        payload = {"contract_name": "campaign_create_request", "contract_version": 2,
                    "operation_request": self.operation("campaign_create", "request_second", "idem_second"),
                    "input": {"campaign_id": "campaign_second", "campaign_name": "Second Campaign", "adapter_id": "mothership"}}
         second = restarted.create_campaign(self.bind(payload))[1]
@@ -205,7 +205,7 @@ class SliceApplicationTests(unittest.TestCase):
         self.assertTrue(replay["exact_replay"])
 
     def test_campaign_validation_and_claim_precede_initializer(self) -> None:
-        payload = {"contract_name": "campaign_create_request", "contract_version": 1,
+        payload = {"contract_name": "campaign_create_request", "contract_version": 2,
                    "operation_request": self.operation("campaign_create", "request_bad", "idem_bad"),
                    "input": {"campaign_id": "BAD", "campaign_name": "Bad", "adapter_id": "mothership"}}
         payload = self.bind(payload)
@@ -220,7 +220,7 @@ class SliceApplicationTests(unittest.TestCase):
         self.assertIsNone(self.app.workflow.head("BAD"))
 
     def test_gate_failure_has_no_head_or_snapshot_and_exact_retry_replays_failure(self) -> None:
-        payload = {"contract_name": "campaign_create_request", "contract_version": 1,
+        payload = {"contract_name": "campaign_create_request", "contract_version": 2,
                    "operation_request": self.operation("campaign_create", "request_gate", "idem_gate"),
                    "input": {"campaign_id": "campaign_gate", "campaign_name": "Gate Campaign", "adapter_id": "mothership"}}
         payload = self.bind(payload)
@@ -249,7 +249,7 @@ class SliceApplicationTests(unittest.TestCase):
         self.assertEqual({}, self.app.registry._paths)
 
     def test_transient_prepublication_failure_releases_claim_for_exact_retry(self) -> None:
-        payload = {"contract_name": "campaign_create_request", "contract_version": 1,
+        payload = {"contract_name": "campaign_create_request", "contract_version": 2,
                    "operation_request": self.operation("campaign_create", "request_transient", "idem_transient"),
                    "input": {"campaign_id": "campaign_transient", "campaign_name": "Transient Campaign", "adapter_id": "mothership"}}
         payload = self.bind(payload)
@@ -261,7 +261,7 @@ class SliceApplicationTests(unittest.TestCase):
         self.assertEqual((201, "campaign_transient"), (status, created["campaign_id"]))
 
     def test_campaign_pipeline_order_is_claim_initialize_index_context_validate_publish(self) -> None:
-        payload = {"contract_name": "campaign_create_request", "contract_version": 1,
+        payload = {"contract_name": "campaign_create_request", "contract_version": 2,
                    "operation_request": self.operation("campaign_create", "request_order", "idem_order"),
                    "input": {"campaign_id": "campaign_order", "campaign_name": "Ordered Campaign", "adapter_id": "mothership"}}
         payload = self.bind(payload)
@@ -287,7 +287,7 @@ class SliceApplicationTests(unittest.TestCase):
         receipts = InMemoryHTTPRepository()
         first = SliceApplication(runtime, snapshot_root=snapshots, provider=self.provider,
                                  workflow_repository=workflow, receipts=receipts)
-        payload = {"contract_name": "campaign_create_request", "contract_version": 1,
+        payload = {"contract_name": "campaign_create_request", "contract_version": 2,
                    "operation_request": self.operation("campaign_create", "request_crash", "idem_crash"),
                    "input": {"campaign_id": "campaign_crash", "campaign_name": "Crash Campaign", "adapter_id": "mothership"}}
         payload = self.bind(payload)
@@ -310,7 +310,7 @@ class SliceApplicationTests(unittest.TestCase):
         receipts = InMemoryHTTPRepository()
         first = SliceApplication(runtime, snapshot_root=snapshots, provider=self.provider,
                                  workflow_repository=workflow, receipts=receipts)
-        payload = {"contract_name": "campaign_create_request", "contract_version": 1,
+        payload = {"contract_name": "campaign_create_request", "contract_version": 2,
                    "operation_request": self.operation("campaign_create", "request_receipt", "idem_receipt"),
                    "input": {"campaign_id": "campaign_receipt", "campaign_name": "Receipt Campaign", "adapter_id": "mothership"}}
         payload = self.bind(payload)
@@ -337,16 +337,16 @@ class SliceApplicationTests(unittest.TestCase):
     def test_pending_generation_is_dispatchable_after_restart_and_exact_start_retry(self) -> None:
         self.consent()
         revision = self.campaign()["head_revision"]
-        ask = {"contract_name": "ask_start_request", "contract_version": 1,
+        ask = {"contract_name": "generation_start_request", "contract_version": 2,
                "generation_id": "generation_restart", "campaign_id": "campaign_alpha",
-               "source_revision": revision, "action": "ask", "prompt": "What is the campaign called?"}
-        self.assertTrue(self.app.start_ask("campaign_alpha", revision, ask)[2])
+               "source_revision": revision, "action": "ask", "prompt": "What is the campaign called?", "context": {"scope": "campaign"}}
+        self.assertTrue(self.app.start_generation("campaign_alpha", revision, ask)[2])
         restarted = SliceApplication(
             Path(self.temporary.name), provider=self.provider, receipts=self.app.receipts,
             workflow_repository=self.app.workflow, ai_repository=self.app.ai_repository,
             proposal_repository=self.app.proposal_repository,
         )
-        status, pending, should_dispatch = restarted.start_ask("campaign_alpha", revision, deepcopy(ask))
+        status, pending, should_dispatch = restarted.start_generation("campaign_alpha", revision, deepcopy(ask))
         self.assertEqual((202, "pending", True), (status, pending["status"], should_dispatch))
         workers = [threading.Thread(target=restarted.dispatch_generation, args=("generation_restart",)) for _ in range(2)]
         for worker in workers:
@@ -358,13 +358,13 @@ class SliceApplicationTests(unittest.TestCase):
     def test_ask_generation_id_digest_conflict_is_sanitized_409_without_dispatch(self) -> None:
         self.consent()
         revision = self.campaign()["head_revision"]
-        request = {"contract_name": "ask_start_request", "contract_version": 1,
+        request = {"contract_name": "generation_start_request", "contract_version": 2,
                    "generation_id": "generation_conflict", "campaign_id": "campaign_alpha",
-                   "source_revision": revision, "action": "ask", "prompt": "What is the campaign called?"}
-        self.app.start_ask("campaign_alpha", revision, request)
+                   "source_revision": revision, "action": "ask", "prompt": "What is the campaign called?", "context": {"scope": "campaign"}}
+        self.app.start_generation("campaign_alpha", revision, request)
         conflicting = {**request, "prompt": "What is the campaign name?"}
         with self.assertRaises(HTTPFailure) as caught:
-            self.app.start_ask("campaign_alpha", revision, conflicting)
+            self.app.start_generation("campaign_alpha", revision, conflicting)
         self.assertEqual((409, "idempotency_digest_conflict"),
                          (caught.exception.status, caught.exception.payload["error"]["code"]))
         stored = self.app.ai_repository.get_generation("generation_conflict")
@@ -389,7 +389,7 @@ class SliceApplicationTests(unittest.TestCase):
     def test_proposal_create_receipt_prevents_second_version(self) -> None:
         proposal = self.proposal()
         generation = self.app.generation_view("generation_alpha")[1]
-        payload = {"contract_name": "proposal_create_request", "contract_version": 1,
+        payload = {"contract_name": "proposal_create_request", "contract_version": 2,
                    "request_id": "request_proposal", "idempotency_key": "idem_proposal",
                    "payload_digest": "0" * 64, "generation_id": generation["generation_id"],
                    "proposal_id": proposal["proposal_id"], "campaign_id": proposal["campaign_id"],
@@ -402,7 +402,7 @@ class SliceApplicationTests(unittest.TestCase):
 
     def test_http_proposal_create_rejects_client_supplied_multi_change_shape(self) -> None:
         generation = self.generation()
-        payload = {"contract_name": "proposal_create_request", "contract_version": 1,
+        payload = {"contract_name": "proposal_create_request", "contract_version": 2,
                    "request_id": "request_multi", "idempotency_key": "idem_multi",
                    "payload_digest": "0" * 64, "generation_id": generation["generation_id"],
                    "proposal_id": "proposal_multi", "campaign_id": generation["campaign_id"],
@@ -418,7 +418,7 @@ class SliceApplicationTests(unittest.TestCase):
 
     def test_proposal_create_crash_after_add_reconciles_pending_receipt(self) -> None:
         generation = self.generation()
-        payload = {"contract_name": "proposal_create_request", "contract_version": 1,
+        payload = {"contract_name": "proposal_create_request", "contract_version": 2,
                    "request_id": "request_crash_proposal", "idempotency_key": "idem_crash_proposal",
                    "payload_digest": "0" * 64, "generation_id": generation["generation_id"],
                    "proposal_id": "proposal_crash", "campaign_id": generation["campaign_id"],
@@ -435,7 +435,7 @@ class SliceApplicationTests(unittest.TestCase):
 
     def test_restart_recovers_abandoned_proposal_create_claim_before_mutation(self) -> None:
         generation = self.generation()
-        payload = {"contract_name": "proposal_create_request", "contract_version": 1,
+        payload = {"contract_name": "proposal_create_request", "contract_version": 2,
                    "request_id": "request_abandoned", "idempotency_key": "idem_abandoned",
                    "payload_digest": "0" * 64, "generation_id": generation["generation_id"],
                    "proposal_id": "proposal_abandoned", "campaign_id": generation["campaign_id"],
@@ -470,12 +470,12 @@ class SliceApplicationTests(unittest.TestCase):
     def test_pending_generation_cannot_create_proposal(self) -> None:
         self.consent()
         revision = self.campaign()["head_revision"]
-        ask = {"contract_name": "ask_start_request", "contract_version": 1,
+        ask = {"contract_name": "generation_start_request", "contract_version": 2,
                "generation_id": "generation_pending", "campaign_id": "campaign_alpha",
-               "source_revision": revision, "action": "ask", "prompt": "What is the campaign called?"}
-        self.app.start_ask("campaign_alpha", revision, ask)
+               "source_revision": revision, "action": "ask", "prompt": "What is the campaign called?", "context": {"scope": "campaign"}}
+        self.app.start_generation("campaign_alpha", revision, ask)
         generation = self.app.generation_view("generation_pending")[1]
-        request = {"contract_name": "proposal_create_request", "contract_version": 1,
+        request = {"contract_name": "proposal_create_request", "contract_version": 2,
                    "request_id": "request_pending", "idempotency_key": "idem_pending",
                    "payload_digest": "0" * 64, "generation_id": generation["generation_id"],
                    "proposal_id": "proposal_pending", "campaign_id": generation["campaign_id"],
@@ -492,7 +492,7 @@ class SliceApplicationTests(unittest.TestCase):
         self.app = SliceApplication(Path(self.temporary.name) / "failed-proposal", provider=SyntheticProvider(failures=1))
         generation = self.generation(generation_id="generation_failed_proposal")
         self.assertEqual("failed", generation["status"])
-        request = {"contract_name": "proposal_create_request", "contract_version": 1,
+        request = {"contract_name": "proposal_create_request", "contract_version": 2,
                    "request_id": "request_failed_proposal", "idempotency_key": "idem_failed_proposal",
                    "payload_digest": "0" * 64, "generation_id": generation["generation_id"],
                    "proposal_id": "proposal_failed", "campaign_id": generation["campaign_id"],
@@ -514,6 +514,66 @@ class SliceApplicationTests(unittest.TestCase):
         self.assertEqual(proposal["exact_diff"], result["proposal"]["exact_diff"])
         self.assertEqual(1, len(self.app.campaigns["campaign_alpha"].revisions))
 
+    def test_atlas_replace_failure_does_not_advance_head_or_expose_candidate(self) -> None:
+        proposal = self.proposal()
+        old_revision = proposal["base_revision"]
+        old_bundle = self.app.atlas_repository.get("campaign_alpha", old_revision)
+        replace = self.app.atlas_repository.replace
+
+        def dirty_replace(bundle):
+            replace(bundle)
+            raise RuntimeError("projection failed")
+
+        with mock.patch.object(
+            self.app.atlas_repository, "replace", side_effect=dirty_replace
+        ), mock.patch.object(
+            self.app.atlas_repository, "delete", side_effect=RuntimeError("rollback failed")
+        ):
+            with self.assertRaises(HTTPFailure) as caught:
+                self.app.approve_proposal(
+                    "proposal_alpha", 1, self.approval(proposal, key="idem_atlas_failure")
+                )
+        self.assertEqual(503, caught.exception.status)
+        self.assertEqual(old_revision, self.app.workflow.head("campaign_alpha"))
+        self.assertEqual(
+            old_revision,
+            self.app.atlas_overview(
+                "campaign_alpha", old_revision, old_bundle.ordinal,
+                old_bundle.tree_digest,
+            )[1]["binding"]["viewed_revision"]["revision_id"],
+        )
+        self.assertEqual({old_revision}, set(self.app.campaigns["campaign_alpha"].revisions))
+        candidate = next(
+            item for item in self.app.atlas_repository.list("campaign_alpha")
+            if item.revision_id != old_revision
+        )
+        with self.assertRaises(HTTPFailure) as hidden:
+            self.app.atlas_overview(
+                "campaign_alpha", candidate.revision_id, candidate.ordinal,
+                candidate.tree_digest,
+            )
+        self.assertEqual((404, "revision_not_found"), (
+            hidden.exception.status, hidden.exception.payload["error"]["code"],
+        ))
+
+    def test_generation_rejects_explicit_null_and_missing_session_before_dispatch(self) -> None:
+        self.consent()
+        revision = self.campaign()["head_revision"]
+        base = {
+            "contract_name": "generation_start_request", "contract_version": 2,
+            "generation_id": "generation_bad_session", "campaign_id": "campaign_alpha",
+            "source_revision": revision, "action": "ask", "prompt": "Question?",
+            "context": {"scope": "campaign"},
+        }
+        for session_id, code in ((None, "invalid_request_value"), ("session_missing", "invalid_generation_binding")):
+            request = {**base, "session_id": session_id}
+            with self.subTest(session_id=session_id), self.assertRaises(HTTPFailure) as caught:
+                self.app.start_generation("campaign_alpha", revision, request)
+            self.assertEqual((422, code), (
+                caught.exception.status, caught.exception.payload["error"]["code"],
+            ))
+        self.assertEqual((0, {}), (self.provider.calls, self.app.ai_repository.generations))
+
     def test_approval_crash_after_publish_reconciles_and_does_not_republish(self) -> None:
         proposal = self.proposal()
         request = self.approval(proposal, key="idem_publish_crash")
@@ -529,6 +589,68 @@ class SliceApplicationTests(unittest.TestCase):
         status, result = restarted.approve_proposal("proposal_alpha", 1, deepcopy(request))
         self.assertEqual((200, "published", True), (status, result["outcome"], result["exact_replay"]))
         self.assertEqual(revision_count, len(restarted.revisions.store.inventory()))
+
+    def test_restart_finalizes_exact_pending_atlas_publication_with_provenance(self) -> None:
+        proposal = self.proposal()
+        request = self.approval(proposal, key="idem_pending_atlas_crash")
+        with mock.patch.object(
+            self.app.workflow, "finalize_head", side_effect=SystemExit("crash")
+        ):
+            with self.assertRaises(SystemExit):
+                self.app.approve_proposal("proposal_alpha", 1, request)
+        self.assertEqual(proposal["base_revision"], self.app.workflow.head("campaign_alpha"))
+        self.assertEqual(2, len(self.app.revisions.store.inventory()))
+        self.assertEqual(2, len(self.app.atlas_repository.list("campaign_alpha")))
+        restarted = SliceApplication(
+            Path(self.temporary.name), provider=self.provider,
+            receipts=self.app.receipts, workflow_repository=self.app.workflow,
+            ai_repository=self.app.ai_repository,
+            proposal_repository=self.app.proposal_repository,
+            atlas_repository=self.app.atlas_repository,
+        )
+        new_head = restarted.workflow.head("campaign_alpha")
+        self.assertNotEqual(proposal["base_revision"], new_head)
+        candidate = restarted.atlas_repository.get("campaign_alpha", new_head)
+        self.assertEqual(("proposal_alpha", 1), (
+            candidate.history_entry.proposal_id,
+            candidate.history_entry.proposal_version,
+        ))
+        status, replay = restarted.approve_proposal(
+            "proposal_alpha", 1, deepcopy(request)
+        )
+        self.assertEqual((200, True, new_head), (
+            status, replay["exact_replay"],
+            replay["published_revision"]["revision_id"],
+        ))
+        self.assertEqual(2, len(restarted.revisions.store.inventory()))
+        self.assertEqual(2, len(restarted.atlas_repository.list("campaign_alpha")))
+
+    def test_restart_clears_unprojected_pending_snapshot_and_exact_retry_succeeds(self) -> None:
+        proposal = self.proposal()
+        request = self.approval(proposal, key="idem_pre_projection_crash")
+        with mock.patch.object(
+            self.app.atlas_rebuilder, "rebuild_pending", side_effect=SystemExit("crash")
+        ):
+            with self.assertRaises(SystemExit):
+                self.app.approve_proposal("proposal_alpha", 1, request)
+        self.assertEqual(2, len(self.app.revisions.store.inventory()))
+        restarted = SliceApplication(
+            Path(self.temporary.name), provider=self.provider,
+            receipts=self.app.receipts, workflow_repository=self.app.workflow,
+            ai_repository=self.app.ai_repository,
+            proposal_repository=self.app.proposal_repository,
+            atlas_repository=self.app.atlas_repository,
+        )
+        self.assertEqual(proposal["base_revision"], restarted.workflow.head("campaign_alpha"))
+        self.assertEqual(1, len(restarted.revisions.store.inventory()))
+        self.assertEqual(1, len(restarted.atlas_repository.list("campaign_alpha")))
+        status, replay = restarted.approve_proposal(
+            "proposal_alpha", 1, deepcopy(request)
+        )
+        self.assertEqual((200, False), (status, replay["exact_replay"]))
+        self.assertNotEqual(
+            proposal["base_revision"], restarted.workflow.head("campaign_alpha")
+        )
 
     def test_approval_restart_after_domain_claim_before_publication_resumes_once(self) -> None:
         proposal = self.proposal()
@@ -590,7 +712,7 @@ class SliceApplicationTests(unittest.TestCase):
             "proposal_correct", "request_correct", "idem_correct",
             expected_revision=proposal["base_revision"], subject_id=proposal["proposal_id"],
         )
-        request = {"contract_name": "proposal_correction_request", "contract_version": 1,
+        request = {"contract_name": "proposal_correction_request", "contract_version": 2,
                    "operation_request": operation, "proposal_id": proposal["proposal_id"],
                    "proposal_version": 1, "source_revision": proposal["source_revision"],
                    "base_revision": proposal["base_revision"], "change_id": change["change_id"],
@@ -603,7 +725,7 @@ class SliceApplicationTests(unittest.TestCase):
             "proposal_reject", "request_reject", "idem_reject",
             expected_revision=corrected["base_revision"], subject_id=corrected["proposal_id"],
         )
-        rejection = {"contract_name": "proposal_rejection_request", "contract_version": 1,
+        rejection = {"contract_name": "proposal_rejection_request", "contract_version": 2,
                      "operation_request": reject_operation, "proposal_id": corrected["proposal_id"],
                      "proposal_version": 2, "source_revision": corrected["source_revision"],
                      "base_revision": corrected["base_revision"]}
@@ -619,7 +741,7 @@ class SliceApplicationTests(unittest.TestCase):
             "proposal_correct", "request_correct_crash", "idem_correct_crash",
             expected_revision=proposal["base_revision"], subject_id=proposal["proposal_id"],
         )
-        correction = {"contract_name": "proposal_correction_request", "contract_version": 1,
+        correction = {"contract_name": "proposal_correction_request", "contract_version": 2,
                       "operation_request": operation, "proposal_id": proposal["proposal_id"],
                       "proposal_version": 1, "source_revision": proposal["source_revision"],
                       "base_revision": proposal["base_revision"], "change_id": change["change_id"],
@@ -635,7 +757,7 @@ class SliceApplicationTests(unittest.TestCase):
             "proposal_reject", "request_reject_crash", "idem_reject_crash",
             expected_revision=corrected["base_revision"], subject_id=corrected["proposal_id"],
         )
-        rejection = self.bind({"contract_name": "proposal_rejection_request", "contract_version": 1,
+        rejection = self.bind({"contract_name": "proposal_rejection_request", "contract_version": 2,
             "operation_request": reject_operation, "proposal_id": corrected["proposal_id"],
             "proposal_version": 2, "source_revision": corrected["source_revision"],
             "base_revision": corrected["base_revision"]})
@@ -653,7 +775,7 @@ class SliceApplicationTests(unittest.TestCase):
             "proposal_correct", "request_authority", "idem_authority",
             expected_revision=proposal["base_revision"], subject_id=proposal["proposal_id"],
         )
-        request = {"contract_name": "proposal_correction_request", "contract_version": 1,
+        request = {"contract_name": "proposal_correction_request", "contract_version": 2,
                    "operation_request": operation, "proposal_id": proposal["proposal_id"],
                    "proposal_version": 1, "source_revision": proposal["source_revision"],
                    "base_revision": proposal["base_revision"], "change_id": change["change_id"],
@@ -675,7 +797,7 @@ class SliceApplicationTests(unittest.TestCase):
             "proposal_correct", "request_invalid_correction", "idem_invalid_correction",
             expected_revision=proposal["base_revision"], subject_id=proposal["proposal_id"],
         )
-        request = {"contract_name": "proposal_correction_request", "contract_version": 1,
+        request = {"contract_name": "proposal_correction_request", "contract_version": 2,
                    "operation_request": operation, "proposal_id": proposal["proposal_id"],
                    "proposal_version": 1, "source_revision": proposal["source_revision"],
                    "base_revision": proposal["base_revision"], "change_id": change["change_id"],
@@ -758,7 +880,7 @@ class SliceApplicationTests(unittest.TestCase):
         self.assertIsNone(head_rejected.exception.headers.get("Set-Cookie"))
         self.assertEqual(b"", head_rejected.exception.read())
         head_rejected.exception.close()
-        payload = {"contract_name": "campaign_create_request", "contract_version": 1,
+        payload = {"contract_name": "campaign_create_request", "contract_version": 2,
                    "operation_request": self.operation("campaign_create", "request_route", "idem_route"),
                    "input": {"campaign_id": "campaign_route", "campaign_name": "Route Campaign", "adapter_id": "mothership"}}
         body = json.dumps(self.bind(payload)).encode()

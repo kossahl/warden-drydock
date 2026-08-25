@@ -418,12 +418,15 @@ class AtlasProjectionTests(AtlasFixture):
         )
         self.assertEqual((101,), tuple(item.ordinal for item in final_page.entries))
         self.assertIsNone(final_page.next_cursor)
-        self.assertEqual(
-            second_page.entries,
-            service.approved_history(
-                replace(query, cursor=final_page.previous_cursor)
-            ).entries,
+        self.assertIsNone(final_page.previous_cursor)
+        backward = service.approved_history(replace(query, direction="backward", limit=5))
+        self.assertEqual((101, 100, 99, 98, 97), tuple(item.ordinal for item in backward.entries))
+        backward_next = service.approved_history(
+            replace(query, direction="backward", limit=5, cursor=backward.next_cursor)
         )
+        self.assertEqual((96, 95, 94, 93, 92), tuple(item.ordinal for item in backward_next.entries))
+        with self.assertRaisesRegex(ValueError, "invalid_cursor_binding"):
+            service.approved_history(replace(query, cursor=backward.next_cursor))
         with self.assertRaisesRegex(ValueError, "invalid_cursor_binding"):
             service.approved_history(
                 replace(query, subject_record_id="record-001", cursor=first_page.next_cursor)

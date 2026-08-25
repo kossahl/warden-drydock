@@ -44,7 +44,8 @@ class SourceExcerpt:
 
     @property
     def digest(self) -> str:
-        return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
+        normalized = self.text.replace("\r\n", "\n").replace("\r", "\n")
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)

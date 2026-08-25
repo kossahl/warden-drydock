@@ -385,6 +385,7 @@ class ApprovedHistoryQuery:
     subject_record_id: str | None = None
     limit: int = 50
     cursor: str | None = None
+    direction: str = "forward"
 
     def __post_init__(self) -> None:
         require_public_id(self.campaign_id, "campaign_id")
@@ -396,6 +397,8 @@ class ApprovedHistoryQuery:
             raise ValueError("limit must be between 1 and 100")
         if self.cursor is not None and len(self.cursor) > 4096:
             raise ValueError("cursor is too long")
+        if self.direction not in {"forward", "backward"}:
+            raise ValueError("history direction is invalid")
 
 
 @dataclass(frozen=True)

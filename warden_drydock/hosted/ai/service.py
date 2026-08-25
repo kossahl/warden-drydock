@@ -9,11 +9,12 @@ class ConsentRequired(PermissionError):
 
 
 class GroundedAIService:
-    def __init__(self, repository, selector, provider, source_loader) -> None:
+    def __init__(self, repository, selector, provider, source_loader, *, focus_verifier=None) -> None:
         self.repository = repository
         self.selector = selector
         self.provider = provider
         self.source_loader = source_loader
+        self.focus_verifier = focus_verifier
         self._enabled = True
         self.endpoint_id = "responses_api"
         self.region = "provider_default"
@@ -67,12 +68,22 @@ class GroundedAIService:
             raise ConsentRequired("provider credential configuration and current consent are required")
         if session_id is not None:
             session = self.repository.get_session(session_id)
-            if session.campaign_id != campaign_id or session.mode != "active":
+            if (
+                session.campaign_id != campaign_id
+                or session.mode != "active"
+                or session.base_revision != revision_id
+            ):
                 raise ValueError("unsafe_binding")
-            revision_id = session.base_revision
             confirmed_facts = tuple(item for item in session.captures if item.capture_type.value == "confirmed_fact")
         else:
             confirmed_facts = ()
+        if (focus_record_id is None) != (focus_content_digest is None):
+            raise ValueError("unsafe_binding")
+        if focus_record_id is not None:
+            if self.focus_verifier is None or not self.focus_verifier(
+                campaign_id, revision_id, focus_record_id, focus_content_digest
+            ):
+                raise ValueError("unsafe_binding")
         records = self.source_loader.load(campaign_id, revision_id, prompt)
         envelope = self.selector.select(campaign_id, revision_id, records, session_id=session_id, confirmed_facts=confirmed_facts)
         request = GenerationRequest(
