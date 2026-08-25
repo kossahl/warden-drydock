@@ -40,7 +40,6 @@ class EngineSourceLoader:
                 scores[record.subject_id] = scores.get(record.subject_id, 0) + weight + exact_bonus
         return tuple(RankedRecord(records[key], scores[key]) for key in sorted(records, key=lambda item: (-scores[item], item)))
 
-
 @dataclass(frozen=True)
 class RankedRecord:
     record: object

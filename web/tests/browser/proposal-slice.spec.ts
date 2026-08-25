@@ -16,6 +16,8 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 async function installApi(page: Page, mode: "happy" | "conflict" | "retry") {
   let consent = false;
   let generationId = "generation_alpha";
+  let generationAction: "ask" | "check" | "generate" = "generate";
+  let generationContext: { scope: "campaign" } | { scope: "record"; record_id: string; content_digest: string } = { scope: "record", record_id: "campaign-main", content_digest: digest("a") };
   let streamAttempts = 0;
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
@@ -28,10 +30,11 @@ async function installApi(page: Page, mode: "happy" | "conflict" | "retry") {
     if (path.includes("/records/")) return fulfillJson(route, record(path.includes("revision_beta") ? "revision_beta" : "revision_alpha"));
     if (path.endsWith("/generations")) {
       const start = request.postDataJSON() as { generation_id: string; action: "ask" | "check" | "generate"; context: { scope: "campaign" } | { scope: "record"; record_id: string; content_digest: string }; session_id?: string };
-      expect(start.action).toBe("ask");
+      expect(start.action).toBe("generate");
       expect(start.context.scope).toBe("record");
       expect(start.session_id).toBeUndefined();
       generationId = start.generation_id;
+      generationAction = start.action; generationContext = start.context;
       return fulfillJson(route, { contract_name: "generation_view", contract_version: 2, generation_id: generationId, campaign_id: "campaign_alpha", source_revision: "revision_alpha", action: start.action, context: start.context, session_id: start.session_id ?? null, draft_authority: "draft", status: "pending", sources: [source], source_set_digest: digest("b"), last_sequence: 0, terminal_content: null, terminal_content_digest: null }, 202);
     }
     if (path.endsWith("/events")) {
@@ -40,7 +43,7 @@ async function installApi(page: Page, mode: "happy" | "conflict" | "retry") {
       const event = { contract_name: "generation_event", contract_version: 2, generation_id: generationId, sequence: 2, event_type: "delta", draft_fragment: "The station is quiet.", retryable: null };
       return route.fulfill({ status: 200, headers: { "Content-Type": "text/event-stream" }, body: `id: 2\nevent: delta\ndata: ${JSON.stringify(event)}\n\n` });
     }
-    if (/\/generations\/[^/]+$/.test(path)) return fulfillJson(route, { contract_name: "generation_view", contract_version: 2, generation_id: generationId, campaign_id: "campaign_alpha", source_revision: "revision_alpha", action: "ask", context: { scope: "record", record_id: "campaign-main", content_digest: digest("a") }, session_id: null, draft_authority: "draft", status: "complete", sources: [source], source_set_digest: digest("b"), last_sequence: 3, terminal_content: "The station is quiet.", terminal_content_digest: digest("c") });
+    if (/\/generations\/[^/]+$/.test(path)) return fulfillJson(route, { contract_name: "generation_view", contract_version: 2, generation_id: generationId, campaign_id: "campaign_alpha", source_revision: "revision_alpha", action: generationAction, context: generationContext, session_id: null, draft_authority: "draft", status: "complete", sources: [source], source_set_digest: digest("b"), last_sequence: 3, terminal_content: "The station is quiet.", terminal_content_digest: digest("c") });
     if (path.endsWith("/proposals")) return fulfillJson(route, proposal(), 201);
     if (path.endsWith("/corrections")) return fulfillJson(route, proposal("draft", 2), 201);
     if (path.endsWith("/rejection")) return fulfillJson(route, { ...proposal(), status: "rejected" });
@@ -52,16 +55,17 @@ async function installApi(page: Page, mode: "happy" | "conflict" | "retry") {
   });
 }
 
-async function createAndAsk(page: Page) {
+async function createAndGenerate(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Create campaign" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Synthetic Campaign" })).toBeVisible();
   await page.getByRole("button", { name: "Allow grounded AI" }).click();
-  await page.getByRole("button", { name: "Ask grounded question" }).click();
+  await page.getByRole("radio", { name: "Generate" }).click();
+  await page.getByRole("button", { name: "Submit Generate" }).click();
 }
 
 test("creates, grounds, inspects exact diff, approves, and opens the validated revision", async ({ page }) => {
-  await createAndAsk(page);
+  await createAndGenerate(page);
   await expect(page.getByRole("heading", { name: "Sources" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Sources" })).toContainText("record:campaign-main");
   await expect(page.getByText("campaign-main", { exact: true })).toBeVisible();
@@ -70,7 +74,7 @@ test("creates, grounds, inspects exact diff, approves, and opens the validated r
   await expect(page.getByRole("heading", { name: "Grounded Draft" })).toBeVisible();
   await expect(page.getByText("The grounded source is campaign-main.")).toBeVisible();
   const baseRevision = await page.locator(".revision-id code").innerText();
-  await page.getByRole("button", { name: "Create proposal" }).click();
+  await page.getByRole("button", { name: "Create proposal for Synthetic Campaign" }).click();
   await expect(page.getByRole("region", { name: "Complete before and after content" })).toContainText("## Proposed addition");
   await page.getByRole("button", { name: "Approve exact diff" }).click();
   await expect(page.locator(".revision-id code")).not.toHaveText(baseRevision);
@@ -81,8 +85,8 @@ test("creates, grounds, inspects exact diff, approves, and opens the validated r
 
 test("preserves a proposal when approval finds a stale head", async ({ page }) => {
   await installApi(page, "conflict");
-  await createAndAsk(page);
-  await page.getByRole("button", { name: "Create proposal" }).click();
+  await createAndGenerate(page);
+  await page.getByRole("button", { name: "Create proposal for Synthetic Campaign" }).click();
   await page.getByRole("button", { name: "Approve exact diff" }).click();
   await expect(page.getByRole("alert")).toContainText("proposal is preserved");
   await expect(page.getByRole("heading", { name: "Exact diff" })).toBeVisible();
@@ -91,9 +95,47 @@ test("preserves a proposal when approval finds a stale head", async ({ page }) =
 
 test("announces a failed stream and resumes from its last event", async ({ page }) => {
   await installApi(page, "retry");
-  await createAndAsk(page);
+  await createAndGenerate(page);
   await expect(page.getByRole("alert")).toContainText("provider_retryable_failure");
   await page.getByRole("button", { name: "Resume stream after event 0" }).click();
   await expect(page.getByRole("heading", { name: "Grounded Draft" })).toBeVisible();
   await expect(page.getByText("The station is quiet.")).toBeVisible();
+});
+
+test("exact Draft deep links gate proposal creation by action, context, status, and current head", async ({ page }) => {
+  const exactDigest = "6ae57d4640095550294f9f68b8390e483c43103bcabad485716afbea7680a6fd";
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/v1/provider/readiness") return fulfillJson(route, { contract_name: "provider_readiness_response", contract_version: 2, provider_configured: true, provider_available: true, consent_current: true, consent_identity_digest: digest("9"), ai_available: true });
+    if (/\/generations\/generation_/.test(path)) {
+      const id = path.split("/").at(-1)!; const action = id.includes("check") ? "check" : id.includes("ask") ? "ask" : "generate"; const campaignContext = id.includes("campaign"); const historical = id.includes("historical"); const failed = id.includes("failed");
+      return fulfillJson(route, { contract_name: "generation_view", contract_version: 2, generation_id: id, campaign_id: "campaign_alpha", source_revision: historical ? "revision_alpha" : "revision_beta", action, context: campaignContext ? { scope: "campaign" } : { scope: "record", record_id: "campaign-main", content_digest: exactDigest }, session_id: null, draft_authority: "draft", status: failed ? "failed" : "complete", sources: [source], source_set_digest: digest("b"), last_sequence: 3, terminal_content: "Deep-linked Draft.", terminal_content_digest: digest("c") });
+    }
+    if (/\/revisions\/revision_(alpha|beta)$/.test(path)) { const historical = path.endsWith("alpha"); const value = campaign(historical ? "revision_alpha" : "revision_beta"); return fulfillJson(route, { ...value, head_revision: "revision_beta" }); }
+    if (path.includes("/records/campaign-main")) return fulfillJson(route, { ...record("revision_alpha"), revision_id: path.includes("revision_beta") ? "revision_beta" : "revision_alpha" });
+    return route.abort();
+  });
+  for (const id of ["generation_ask", "generation_check", "generation_campaign", "generation_failed"]) {
+    await page.goto(`/?generation=${id}`); await expect(page.getByText("Deep-linked Draft.")).toBeVisible(); await expect(page.getByRole("button", { name: /Create proposal for/ })).toHaveCount(0);
+  }
+  await page.goto("/?generation=generation_record_head"); await expect(page.getByRole("button", { name: "Create proposal for Synthetic Campaign" })).toBeVisible();
+  await page.goto("/?generation=generation_historical"); await expect(page.getByRole("link", { name: "Open head to create a proposal." })).toBeVisible(); await expect(page.getByRole("button", { name: /Create proposal for/ })).toHaveCount(0);
+});
+
+test("a stale proposal deep link is preserved but cannot be approved", async ({ page }) => {
+  const exactDigest = "6ae57d4640095550294f9f68b8390e483c43103bcabad485716afbea7680a6fd";
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/v1/provider/readiness") return fulfillJson(route, { contract_name: "provider_readiness_response", contract_version: 2, provider_configured: true, provider_available: true, consent_current: true, consent_identity_digest: digest("9"), ai_available: true });
+    if (path === "/api/v1/proposals/proposal_alpha/versions/1") return fulfillJson(route, proposal());
+    if (path === "/api/v1/generations/generation_alpha") return fulfillJson(route, { contract_name: "generation_view", contract_version: 2, generation_id: "generation_alpha", campaign_id: "campaign_alpha", source_revision: "revision_alpha", action: "generate", context: { scope: "record", record_id: "campaign-main", content_digest: exactDigest }, session_id: null, draft_authority: "draft", status: "complete", sources: [source], source_set_digest: digest("b"), last_sequence: 3, terminal_content: "Deep-linked Draft.", terminal_content_digest: digest("c") });
+    if (path.endsWith("/revisions/revision_alpha")) return fulfillJson(route, { ...campaign("revision_alpha"), head_revision: "revision_beta" });
+    if (path.endsWith("/records/campaign-main")) return fulfillJson(route, record("revision_alpha"));
+    return route.abort();
+  });
+  await page.goto("/?proposal=proposal_alpha&version=1");
+  await expect(page.getByRole("heading", { name: "Proposal version 1" })).toBeVisible();
+  await expect(page.getByText("Stale base, not published")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve exact diff" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Reject proposal" })).toBeVisible();
 });

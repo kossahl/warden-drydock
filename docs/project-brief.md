@@ -70,11 +70,14 @@ detected and require an explicit `--apply` flag.
 
 ## Current implementation boundary
 
-- The browser and hosted HTTP API implement one focused local proposal slice:
-  deterministic campaign creation, revision-bound grounded Ask and sources,
-  server-owned proposal construction/correction/rejection, exact approval, and
-  validated-revision opening. The full Campaign Atlas, Live Cockpit, and other
-  hosted product surfaces remain incomplete.
+- The browser and hosted HTTP API implement the local proposal slice and
+  Campaign Atlas: deterministic campaign creation, complete revision-bound
+  record browsing, depth-1 relationships with an accessible list, approved
+  history, persisted Draft and Proposal workflow panels, context-bound Ask,
+  Check, and Generate, server-owned proposal construction/correction/rejection,
+  exact approval, and validated-revision opening. Provider setup or outage
+  disables AI actions but does not block Atlas reads. The Live Cockpit and
+  other hosted product surfaces remain incomplete.
 - Notion integration.
 - Obsidian as a required dependency.
 - Git submodules between framework and campaigns.

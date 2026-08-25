@@ -1,0 +1,18 @@
+{
+  "contract_name": "hosted_atlas_http_contract_index",
+  "contract_version": 2,
+  "schema": "atlas.schema.json",
+  "routes": "routes.json",
+  "examples": "examples.json",
+  "semantic_invariants": "semantic-invariants.json",
+  "query_serialization_fixtures": "query-serialization-fixtures.json",
+  "negative_fixtures": [
+    "negative/cursor-rebinding.json",
+    "negative/head-switch.json",
+    "negative/status-authority.json",
+    "negative/edge-identity.json",
+    "negative/workflow-cursor-rebinding.json",
+    "negative/workflow-provenance.json"
+  ],
+  "compatibility": "Carries forward Atlas v1 reads without changing their meaning and adds closed, read-only workflow collections. General hosted HTTP v2 remains a separate active package."
+}

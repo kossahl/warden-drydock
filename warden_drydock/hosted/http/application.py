@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import tempfile
 import threading
+from datetime import datetime, timezone
 
 from warden_drydock import __version__
 from warden_drydock.hosted.ai.models import Action, GenerationRecord, ProviderConsent
@@ -31,6 +32,7 @@ from warden_drydock.hosted.projections import (
     neighborhood_contract, overview_contract, record_detail_contract,
     record_library_contract, workflow_summary_contract,
 )
+from warden_drydock.hosted.projections.atlas_models import decode_cursor, encode_cursor
 from warden_drydock.hosted.revisions import (
     FileSnapshotStore, InMemoryWorkflowRepository, IntentStatus,
     PublicationIntent, PublicationIntentError, PublicationKind, RevisionService,
@@ -515,6 +517,242 @@ class SliceApplication:
             proposal_counts=self.proposal_repository.workflow_counts(campaign_id, revision_id),
             active_session=active,
         )
+
+    @staticmethod
+    def _rfc3339(value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    @staticmethod
+    def _revision_contract(bundle) -> dict[str, object]:
+        return {
+            "revision_id": bundle.revision_id,
+            "ordinal": bundle.ordinal,
+            "tree_digest": bundle.tree_digest,
+        }
+
+    @classmethod
+    def _workflow_binding(cls, campaign_id: str, viewed, head) -> dict[str, object]:
+        return {
+            "campaign_id": campaign_id,
+            "viewed_revision": cls._revision_contract(viewed),
+            "head_revision": cls._revision_contract(head),
+        }
+
+    @staticmethod
+    def _workflow_page(rows, *, cursor: str | None, binding: dict[str, object], boundary_fields: tuple[str, ...]):
+        start = 0
+        if cursor is not None:
+            decoded = decode_cursor(cursor)
+            expected = dict(binding)
+            for field in boundary_fields:
+                expected[field] = decoded.get(field)
+            if decoded != expected or any(decoded.get(field) is None for field in boundary_fields):
+                raise ValueError("invalid_cursor_binding")
+            boundary = tuple(decoded[field] for field in boundary_fields)
+            identities = [tuple(row[field] for field in boundary_fields) for row in rows]
+            try:
+                start = identities.index(boundary) + 1
+            except ValueError as exc:
+                raise ValueError("invalid_cursor_binding") from exc
+        return start
+
+    def atlas_generation_collection(
+        self, campaign_id: str, revision_id: str, ordinal: int, tree_digest: str,
+        *, actions: tuple[str, ...], statuses: tuple[str, ...], record_id: str | None,
+        limit: int, cursor: str | None,
+    ) -> tuple[int, dict]:
+        allowed_actions = {item.value for item in Action}
+        allowed_statuses = {"pending", "complete", "failed", "cancelled"}
+        if any(item not in allowed_actions for item in actions) or any(item not in allowed_statuses for item in statuses):
+            raise HTTPFailure(422, "unsafe_binding", "invalid_query_binding", "atlas_generations")
+        if record_id is not None and (not 1 <= len(record_id) <= 80 or _DOMAIN_ID.fullmatch(record_id) is None):
+            raise HTTPFailure(422, "unsafe_binding", "invalid_query_binding", "atlas_generations")
+        viewed, head = self._atlas_binding(campaign_id, revision_id, ordinal, tree_digest)
+        if record_id is not None:
+            try:
+                self.atlas.record_detail(campaign_id, revision_id, record_id)
+            except KeyError as exc:
+                raise HTTPFailure(404, "not_found", "record_not_found", "atlas_generations") from exc
+        action_filter, status_filter = set(actions), set(statuses)
+        rows = []
+        try:
+            stored_rows = self.ai_repository.generation_rows(campaign_id, revision_id)
+            for stored in stored_rows:
+                record = stored["record"]
+                request = record.request
+                if request.envelope.campaign_id != campaign_id or request.envelope.revision_id != revision_id:
+                    raise ValueError("source_digest_conflict")
+                context = ({"scope": "record", "record_id": request.focus_record_id,
+                            "content_digest": request.focus_content_digest}
+                           if request.focus_record_id is not None else {"scope": "campaign"})
+                if request.focus_record_id is not None and not self._verify_generation_focus(
+                    campaign_id, revision_id, request.focus_record_id, request.focus_content_digest or ""
+                ):
+                    raise ValueError("source_digest_conflict")
+                status = record.terminal_status or "pending"
+                if action_filter and request.action.value not in action_filter:
+                    continue
+                if status_filter and status not in status_filter:
+                    continue
+                if record_id is not None and request.focus_record_id != record_id:
+                    continue
+                retryable = next(
+                    (event.retryable for event in reversed(record.events)
+                     if event.event_type in {"completion", "failure", "cancel"}), None
+                )
+                rows.append({
+                    "generation_id": request.generation_id,
+                    "action": request.action.value,
+                    "context": context,
+                    "source_revision": self._revision_contract(viewed),
+                    "source_set_digest": request.envelope.source_set_digest,
+                    "status": status,
+                    "retryable": retryable,
+                    "created_at": self._rfc3339(stored["created_at"]),
+                })
+        except ValueError as exc:
+            raise HTTPFailure(
+                409, "source_digest_conflict", "generation_provenance_mismatch",
+                "atlas_generations",
+            ) from exc
+        rows.sort(key=lambda row: (row["created_at"], row["generation_id"]), reverse=True)
+        cursor_binding = {
+            "kind": "atlas_generations", "campaign_id": campaign_id,
+            "revision_id": revision_id, "revision_ordinal": ordinal,
+            "tree_digest": tree_digest, "actions": sorted(action_filter),
+            "statuses": sorted(status_filter), "record_id": record_id, "limit": limit,
+            "sort": "created_at_desc_generation_id_desc", "direction": "forward",
+        }
+        try:
+            start = self._workflow_page(rows, cursor=cursor, binding=cursor_binding,
+                                        boundary_fields=("created_at", "generation_id"))
+        except ValueError as exc:
+            raise HTTPFailure(422, "invalid_cursor_binding", "invalid_cursor_binding", "atlas_generations") from exc
+        items = rows[start:start + limit]
+        next_cursor = None
+        if items and start + limit < len(rows):
+            next_cursor = encode_cursor({**cursor_binding, "created_at": items[-1]["created_at"],
+                                         "generation_id": items[-1]["generation_id"]})
+        return 200, {
+            "contract_name": "atlas_generation_collection", "contract_version": 2,
+            "binding": self._workflow_binding(campaign_id, viewed, head),
+            "filters": {"actions": sorted(action_filter), "statuses": sorted(status_filter), "record_id": record_id},
+            "limit": limit, "sort": "created_at_desc_generation_id_desc",
+            "items": items, "next_cursor": next_cursor,
+        }
+
+    def atlas_proposal_collection(
+        self, campaign_id: str, revision_id: str, ordinal: int, tree_digest: str,
+        *, statuses: tuple[str, ...], record_id: str | None,
+        limit: int, cursor: str | None,
+    ) -> tuple[int, dict]:
+        allowed_statuses = {"draft", "rejected", "conflict", "published", "quarantined"}
+        if any(item not in allowed_statuses for item in statuses):
+            raise HTTPFailure(422, "unsafe_binding", "invalid_query_binding", "atlas_proposals")
+        if record_id is not None and (not 1 <= len(record_id) <= 80 or _DOMAIN_ID.fullmatch(record_id) is None):
+            raise HTTPFailure(422, "unsafe_binding", "invalid_query_binding", "atlas_proposals")
+        viewed, head = self._atlas_binding(campaign_id, revision_id, ordinal, tree_digest)
+        if record_id is not None:
+            try:
+                self.atlas.record_detail(campaign_id, revision_id, record_id)
+            except KeyError as exc:
+                raise HTTPFailure(404, "not_found", "record_not_found", "atlas_proposals") from exc
+        status_filter = set(statuses)
+        rows = []
+        try:
+            for stored in self.proposal_repository.proposal_rows(campaign_id, revision_id):
+                item = stored["item"]
+                if item.generation_id is None or item.source_revision != revision_id or len(item.changes) != 1:
+                    raise ValueError("source_digest_conflict")
+                generation = self.ai_repository.get_generation(item.generation_id)
+                if generation is None:
+                    raise ValueError("source_digest_conflict")
+                request = generation.request
+                change = item.changes[0]
+                if (
+                    request.campaign_id != campaign_id
+                    or request.revision_id != revision_id
+                    or request.envelope.source_set_digest != item.source_set_digest
+                    or change.expected_content_digest is None
+                ):
+                    raise ValueError("source_digest_conflict")
+                context = ({"scope": "record", "record_id": request.focus_record_id,
+                            "content_digest": request.focus_content_digest}
+                           if request.focus_record_id is not None else {"scope": "campaign"})
+                if request.focus_record_id is not None and not self._verify_generation_focus(
+                    campaign_id, revision_id, request.focus_record_id, request.focus_content_digest or ""
+                ):
+                    raise ValueError("source_digest_conflict")
+                status = item.status.value
+                matching_publication = (
+                    self._matching_publication(item)
+                    if item.status in {
+                        ProposalStatus.APPROVING, ProposalStatus.APPROVED,
+                        ProposalStatus.PUBLISHED, ProposalStatus.QUARANTINED,
+                    }
+                    else None
+                )
+                if item.status is ProposalStatus.PUBLISHED and matching_publication is None:
+                    raise HTTPFailure(
+                        503, "service_unavailable", "proposal_publication_unverified",
+                        "atlas_proposals", retryable=True,
+                    )
+                if matching_publication is not None:
+                    status = "published"
+                elif status in {"approving", "approved"}:
+                    status = "draft"
+                if status_filter and status not in status_filter:
+                    continue
+                if record_id is not None and change.subject_id != record_id:
+                    continue
+                rows.append({
+                    "proposal_id": item.proposal_id, "proposal_version": item.version,
+                    "generation_id": item.generation_id, "action": request.action.value,
+                    "context": context, "subject_record_id": change.subject_id,
+                    "subject_content_digest": change.expected_content_digest,
+                    "source_revision": self._revision_contract(viewed),
+                    "base_revision": self._revision_contract(viewed), "status": status,
+                    "validation_status": "passed",
+                    "published_revision_id": (
+                        matching_publication.revision_id
+                        if matching_publication is not None
+                        else item.published_revision_id
+                    ),
+                    "created_at": self._rfc3339(stored["created_at"]),
+                })
+        except ValueError as exc:
+            if str(exc) in {"source_digest_conflict", "unsafe_binding"}:
+                raise HTTPFailure(409, "source_digest_conflict", "proposal_provenance_mismatch", "atlas_proposals") from exc
+            raise
+        rows.sort(key=lambda row: (row["created_at"], row["proposal_id"], row["proposal_version"]), reverse=True)
+        cursor_binding = {
+            "kind": "atlas_proposals", "campaign_id": campaign_id,
+            "revision_id": revision_id, "revision_ordinal": ordinal,
+            "tree_digest": tree_digest, "statuses": sorted(status_filter),
+            "record_id": record_id, "limit": limit,
+            "sort": "created_at_desc_proposal_id_desc_proposal_version_desc", "direction": "forward",
+        }
+        try:
+            start = self._workflow_page(rows, cursor=cursor, binding=cursor_binding,
+                                        boundary_fields=("created_at", "proposal_id", "proposal_version"))
+        except ValueError as exc:
+            raise HTTPFailure(422, "invalid_cursor_binding", "invalid_cursor_binding", "atlas_proposals") from exc
+        items = rows[start:start + limit]
+        next_cursor = None
+        if items and start + limit < len(rows):
+            last = items[-1]
+            next_cursor = encode_cursor({**cursor_binding, "created_at": last["created_at"],
+                                         "proposal_id": last["proposal_id"],
+                                         "proposal_version": last["proposal_version"]})
+        return 200, {
+            "contract_name": "atlas_proposal_collection", "contract_version": 2,
+            "binding": self._workflow_binding(campaign_id, viewed, head),
+            "filters": {"statuses": sorted(status_filter), "record_id": record_id},
+            "limit": limit, "sort": "created_at_desc_proposal_id_desc_proposal_version_desc",
+            "items": items, "next_cursor": next_cursor,
+        }
 
     def _closed_request(self, payload: dict, expected: str, stage: str) -> None:
         fields = set(payload)

@@ -1,5 +1,4 @@
-import type { AtlasAuthority, AtlasCampaignCollection, AtlasHistoryCollection, AtlasNeighborhood, AtlasOverview, AtlasRecordDetail, AtlasRecordLibraryResult, AtlasRevisionRef, AtlasStatusFilter, AtlasWorkflowSummary } from "../contracts/v1";
-import type { CampaignRevisionView } from "../contracts/v2";
+import type { AtlasAuthority, AtlasCampaignCollection, AtlasGenerationCollection, AtlasGenerationStatus, AtlasHistoryCollection, AtlasNeighborhood, AtlasOverview, AtlasProposalCollection, AtlasRecordDetail, AtlasRecordLibraryResult, AtlasRevisionRef, AtlasStatusFilter, AtlasWorkflowSummary, CampaignRevisionView, GenerationAction, ProposalView } from "../contracts/v2";
 import { ApiError } from "./client";
 
 export interface AtlasRevisionQuery { revision_id: string; revision_ordinal: number; tree_digest: string; }
@@ -16,15 +15,20 @@ export interface AtlasHistoryQuery extends AtlasRevisionQuery {
   direction?: "forward" | "backward";
   limit?: 5 | 50;
 }
+export interface AtlasNeighborhoodQuery extends AtlasRevisionQuery { cursor?: string; }
+export interface AtlasGenerationQuery extends AtlasRevisionQuery { actions: ReadonlyArray<GenerationAction>; statuses: ReadonlyArray<AtlasGenerationStatus>; record_id?: string; cursor?: string; }
+export interface AtlasProposalQuery extends AtlasRevisionQuery { statuses: ReadonlyArray<ProposalView["status"]>; record_id?: string; cursor?: string; }
 export interface AtlasApi {
   campaigns(): Promise<AtlasCampaignCollection>;
   resolveRevision(campaignId: string, revisionId: string): Promise<AtlasRevisionRef>;
   overview(campaignId: string, revision: AtlasRevisionQuery): Promise<AtlasOverview>;
   records(campaignId: string, query: AtlasRecordsQuery): Promise<AtlasRecordLibraryResult>;
   record(campaignId: string, recordId: string, revision: AtlasRevisionQuery): Promise<AtlasRecordDetail>;
-  neighborhood(campaignId: string, recordId: string, revision: AtlasRevisionQuery): Promise<AtlasNeighborhood>;
+  neighborhood(campaignId: string, recordId: string, revision: AtlasNeighborhoodQuery): Promise<AtlasNeighborhood>;
   history(campaignId: string, query: AtlasHistoryQuery): Promise<AtlasHistoryCollection>;
   workflow(campaignId: string, revision: AtlasRevisionQuery): Promise<AtlasWorkflowSummary>;
+  generations(campaignId: string, query: AtlasGenerationQuery): Promise<AtlasGenerationCollection>;
+  proposals(campaignId: string, query: AtlasProposalQuery): Promise<AtlasProposalCollection>;
 }
 
 async function requestAtlasJson<T>(path: string): Promise<T> {
@@ -63,6 +67,15 @@ export function atlasHistoryUrl(campaignId: string, query: AtlasHistoryQuery) {
   if (query.direction) params.append("direction", query.direction);
   return withQuery(`/campaigns/${atlasPath(campaignId)}/atlas/history`, params);
 }
+export function atlasWorkflowCollectionUrl(campaignId: string, kind: "generations" | "proposals", query: AtlasGenerationQuery | AtlasProposalQuery) {
+  const params = new URLSearchParams(); appendRevision(params, query);
+  params.append("limit", "50");
+  if (kind === "generations" && "actions" in query) query.actions.forEach((value) => params.append("action", value));
+  query.statuses.forEach((value) => params.append("status", value));
+  if (query.record_id) params.append("record_id", query.record_id);
+  if (query.cursor) params.append("cursor", query.cursor);
+  return withQuery(`/campaigns/${atlasPath(campaignId)}/atlas/${kind}`, params);
+}
 function atlasBoundUrl(path: string, revision: AtlasRevisionQuery) {
   const params = new URLSearchParams(); appendRevision(params, revision);
   return withQuery(path, params);
@@ -79,8 +92,11 @@ export const httpAtlasApi: AtlasApi = {
   record: (campaignId, recordId, revision) => requestAtlasJson(atlasBoundUrl(`/campaigns/${atlasPath(campaignId)}/atlas/records/${atlasPath(recordId)}`, revision)),
   neighborhood: (campaignId, recordId, revision) => {
     const params = new URLSearchParams(); appendRevision(params, revision); params.append("depth", "1"); params.append("limit", "50");
+    if (revision.cursor) params.append("cursor", revision.cursor);
     return requestAtlasJson(withQuery(`/campaigns/${atlasPath(campaignId)}/atlas/records/${atlasPath(recordId)}/neighborhood`, params));
   },
   history: (campaignId, query) => requestAtlasJson(atlasHistoryUrl(campaignId, query)),
   workflow: (campaignId, revision) => requestAtlasJson(atlasBoundUrl(`/campaigns/${atlasPath(campaignId)}/atlas/workflow-summary`, revision)),
+  generations: (campaignId, query) => requestAtlasJson(atlasWorkflowCollectionUrl(campaignId, "generations", query)),
+  proposals: (campaignId, query) => requestAtlasJson(atlasWorkflowCollectionUrl(campaignId, "proposals", query)),
 };

@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import threading
+from datetime import datetime, timedelta, timezone
 
 from warden_drydock.hosted.engine.models import ExactTextChange, Status, exact_diff_digest
 from warden_drydock.hosted.revisions.models import SnapshotManifest, StaleHeadError
@@ -198,7 +199,7 @@ class ProposalService:
 
 
 class InMemoryProposalRepository:
-    def __init__(self): self.items = {}; self.audit = []; self._lock = threading.Lock()
+    def __init__(self): self.items = {}; self.audit = []; self._lock = threading.Lock(); self._created_at = {}
     def next_version(self, proposal_id): return 1 + max((v.version for v in self.items.values() if v.proposal_id == proposal_id), default=0)
     def get(self, proposal_id, version): return self.items[(proposal_id, version)]
     def versions(self, proposal_id):
@@ -214,7 +215,10 @@ class InMemoryProposalRepository:
         if len(matches) > 1:
             raise ValueError("proposal_publication_binding_conflict")
         return matches[0] if matches else None
-    def add(self, item): self.items[(item.proposal_id, item.version)] = item; self.audit.append((item.proposal_id, item.version, item.status.value))
+    def add(self, item):
+        self.items[(item.proposal_id, item.version)] = item
+        self._created_at[(item.proposal_id, item.version)] = datetime(2000, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=len(self._created_at))
+        self.audit.append((item.proposal_id, item.version, item.status.value))
     def replace_status(self, item, status):
         current = self.items[(item.proposal_id, item.version)]
         if current.status == status: return current
@@ -255,8 +259,16 @@ class InMemoryProposalRepository:
             )
             self.items[(item.proposal_id, item.version)] = retired
             self.items[(item.proposal_id, version)] = corrected
+            self._created_at[(item.proposal_id, version)] = datetime(2000, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=len(self._created_at))
             self.audit.extend(((item.proposal_id, item.version, retired.status.value), (item.proposal_id, version, corrected.status.value)))
             return corrected
+
+    def proposal_rows(self, campaign_id, revision_id):
+        return tuple(
+            {"item": item, "created_at": self._created_at[(item.proposal_id, item.version)]}
+            for item in self.items.values()
+            if item.campaign_id == campaign_id and item.base_revision == revision_id
+        )
 
     def finalize(self, item, status, result=None):
         revision_id = result.revision_id if isinstance(result, SnapshotManifest) else None

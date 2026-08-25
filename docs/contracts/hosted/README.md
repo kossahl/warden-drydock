@@ -28,5 +28,6 @@ requirements.
 
 The transport-neutral v1 package remains unchanged. The HTTP registry at
 [`http/index.json`](http/index.json) lists the complete active HTTP package set:
-general hosted HTTP v2 and Campaign Atlas HTTP v1. General hosted HTTP v1 stays
-at its stable path for historical traceability but is no longer active.
+general hosted HTTP v2 and Campaign Atlas HTTP v2. General hosted HTTP v1 and
+Campaign Atlas HTTP v1 stay at their stable paths for historical traceability
+but are no longer active.

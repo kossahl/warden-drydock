@@ -472,7 +472,7 @@ class AtlasProjectionTests(AtlasFixture):
         first_bundle = rebuilder.rebuild(first)
         second_bundle = rebuilder.rebuild(second)
         service = AtlasQueryService(self.projections)
-        schema_path = Path(__file__).resolve().parents[3] / "docs" / "contracts" / "hosted" / "http" / "atlas" / "v1" / "atlas.schema.json"
+        schema_path = Path(__file__).resolve().parents[3] / "docs" / "contracts" / "hosted" / "http" / "atlas" / "v2" / "atlas.schema.json"
         validator = Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
         query = RecordLibraryQuery(
             "campaign_atlas", "revision_one", first_bundle.tree_digest

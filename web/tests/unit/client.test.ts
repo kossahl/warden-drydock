@@ -1,4 +1,4 @@
-import { atlasHistoryUrl, atlasOverviewUrl, atlasRecordsUrl } from "../../src/api/atlasClient";
+import { atlasHistoryUrl, atlasOverviewUrl, atlasRecordsUrl, atlasWorkflowCollectionUrl } from "../../src/api/atlasClient";
 import { ContractClient, frontendCapabilities, type ContractTransport } from "../../src/api/client";
 import type { ContractEnvelope, OperationRequest } from "../../src/contracts/v2";
 
@@ -82,5 +82,20 @@ describe("Campaign Atlas GET serialization", () => {
   it("serializes newest-first history without crawling pages", () => {
     const url = atlasHistoryUrl("campaign_atlas", { ...revision, subject_record_id: "record/one", limit: 5, cursor: "older page", direction: "backward" });
     expect(url).toBe(`/campaigns/campaign_atlas/atlas/history?revision_id=revision+two&revision_ordinal=12&tree_digest=${"a".repeat(64)}&subject_record_id=record%2Fone&limit=5&cursor=older+page&direction=backward`);
+  });
+
+  it("serializes exact workflow filters without comma packing", () => {
+    const url = atlasWorkflowCollectionUrl("campaign_atlas", "generations", { ...revision, actions: ["ask", "generate"], statuses: ["pending", "complete"], record_id: "record-one", cursor: "older" });
+    const parsed = new URL(url, "http://drydock.local");
+    expect(parsed.searchParams.getAll("action")).toEqual(["ask", "generate"]);
+    expect(parsed.searchParams.getAll("status")).toEqual(["pending", "complete"]);
+    expect(parsed.searchParams.get("record_id")).toBe("record-one");
+    expect(parsed.searchParams.get("limit")).toBe("50");
+    expect(parsed.searchParams.get("cursor")).toBe("older");
+    expect(url).not.toContain("ask%2Cgenerate");
+    const proposalUrl = atlasWorkflowCollectionUrl("campaign_atlas", "proposals", { ...revision, statuses: ["draft", "conflict"], record_id: "record-one" });
+    const proposalParams = new URL(proposalUrl, "http://drydock.local").searchParams;
+    expect(proposalParams.has("action")).toBe(false);
+    expect(proposalParams.getAll("status")).toEqual(["draft", "conflict"]);
   });
 });

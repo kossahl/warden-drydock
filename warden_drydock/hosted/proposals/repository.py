@@ -100,6 +100,19 @@ class PostgresProposalRepository:
                 values[status] = count
         return values
 
+    def proposal_rows(self, campaign_id, revision_id):
+        with self._transaction() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,"
+                "generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id,created_at "
+                "FROM hosted_proposal_version WHERE campaign_id=%s AND base_revision=%s",
+                (campaign_id, revision_id),
+            )
+            return tuple(
+                {"item": self._item(row[:13]), "created_at": row[13]}
+                for row in cursor.fetchall()
+            )
+
     def find_by_published_revision(self, campaign_id, revision_id):
         with self._transaction() as connection, connection.cursor() as cursor:
             cursor.execute(

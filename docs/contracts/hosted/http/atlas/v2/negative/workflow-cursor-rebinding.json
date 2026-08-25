@@ -1,0 +1,5 @@
+{
+  "fixture_name": "workflow_cursor_rebinding",
+  "expected_category": "invalid_cursor_binding",
+  "description": "A workflow cursor cannot be reused under a changed record, filter, limit, revision triple, sort, direction, or keyset boundary."
+}

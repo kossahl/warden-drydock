@@ -8,6 +8,7 @@ import json
 import uuid
 from typing import Iterator
 import threading
+from datetime import datetime, timedelta, timezone
 
 from .models import Action, Capture, CaptureType, GenerationRecord, GenerationRequest, LiveSession, ProviderConsent, SourceEnvelope, SourceExcerpt, StreamEvent
 
@@ -22,14 +23,15 @@ class InMemoryAIRepository:
         self.dispatch_log: list[str] = []
         self._provider_consent: ProviderConsent | None = None
         self._lock = threading.RLock()
+        self._created_at: dict[str, datetime] = {}
 
     @contextmanager
     def transaction(self) -> Iterator["InMemoryAIRepository"]:
-        snapshot = deepcopy((self.sources, self.generations, self.sessions, self.dispatch_log, self._provider_consent))
+        snapshot = deepcopy((self.sources, self.generations, self.sessions, self.dispatch_log, self._provider_consent, self._created_at))
         try:
             yield self
         except Exception:
-            self.sources, self.generations, self.sessions, self.dispatch_log, self._provider_consent = snapshot
+            self.sources, self.generations, self.sessions, self.dispatch_log, self._provider_consent, self._created_at = snapshot
             raise
 
     def consent(self) -> ProviderConsent | None:
@@ -51,6 +53,7 @@ class InMemoryAIRepository:
                 return False
             self.sources[generation_id] = record.request.envelope
             self.generations[generation_id] = record
+            self._created_at[generation_id] = datetime(2000, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=len(self._created_at))
             return True
 
     def save_generation(self, record: GenerationRecord) -> None:
@@ -90,6 +93,17 @@ class InMemoryAIRepository:
             if item.request.campaign_id == campaign_id
             and item.request.revision_id == revision_id
             and item.terminal_status == "complete"
+        )
+
+    def generation_rows(self, campaign_id: str, revision_id: str):
+        return tuple(
+            {
+                "record": item,
+                "created_at": self._created_at[generation_id],
+            }
+            for generation_id, item in self.generations.items()
+            if item.request.campaign_id == campaign_id
+            and item.request.revision_id == revision_id
         )
 
 
@@ -273,3 +287,19 @@ class PostgresAIRepository:
                 (campaign_id, revision_id),
             )
             return cursor.fetchone()[0]
+
+    def generation_rows(self, campaign_id: str, revision_id: str):
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT generation_id,created_at FROM hosted_ai_generation "
+                "WHERE campaign_id=%s AND revision_id=%s",
+                (campaign_id, revision_id),
+            )
+            identities = tuple(cursor.fetchall())
+        rows = []
+        for generation_id, created_at in identities:
+            record = self.get_generation(generation_id)
+            if record is None:
+                raise ValueError("unsafe_binding")
+            rows.append({"record": record, "created_at": created_at})
+        return tuple(rows)

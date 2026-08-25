@@ -1,0 +1,5 @@
+{
+  "fixture_name": "workflow_provenance_conflict",
+  "expected_category": "source_digest_conflict",
+  "description": "A stored generation or proposal whose source digest, context, subject, generation identity, or revision binding is inconsistent fails closed without workflow content."
+}

@@ -114,6 +114,12 @@ def _parse_query_value(value_type: str, value: str):
         raise AtlasSemanticError("unsafe_binding", "invalid status")
     if value_type == "history_direction" and value not in {"forward", "backward"}:
         raise AtlasSemanticError("unsafe_binding", "invalid history direction")
+    if value_type == "generation_action" and value not in {"ask", "check", "generate"}:
+        raise AtlasSemanticError("unsafe_binding", "invalid generation action")
+    if value_type == "generation_status" and value not in {"pending", "complete", "failed", "cancelled"}:
+        raise AtlasSemanticError("unsafe_binding", "invalid generation status")
+    if value_type == "proposal_status" and value not in {"draft", "rejected", "conflict", "published", "quarantined"}:
+        raise AtlasSemanticError("unsafe_binding", "invalid proposal status")
     if value_type == "text_4000" and len(value) > 4000:
         raise AtlasSemanticError("unsafe_binding", "query text is too long")
     if value_type == "cursor" and (not value or len(value) > 4096):
@@ -190,7 +196,7 @@ class AtlasContractTests(unittest.TestCase):
             (CONTRACT_ROOT.parents[1] / "index.json").read_text(encoding="utf-8")
         )
         self.assertEqual(
-            ["v2/index.json", "atlas/v1/index.json"],
+            ["v2/index.json", "atlas/v2/index.json"],
             [item["index"] for item in aggregate["packages"]],
         )
         self.assertIn("does not mutate", self.index["compatibility"])

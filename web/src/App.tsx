@@ -23,16 +23,14 @@ export function navigate(href: string, replace = false) {
   window.dispatchEvent(new Event(routeEvent));
 }
 
-const defaultProviderReadiness = () => httpSliceApi.readiness();
-
-export function App({ api, atlasApi = httpAtlasApi, providerReadiness = defaultProviderReadiness }: { api?: SliceApi; atlasApi?: AtlasApi; providerReadiness?: () => Promise<ProviderState> }) {
+export function App({ api = httpSliceApi, atlasApi = httpAtlasApi, providerReadiness }: { api?: SliceApi; atlasApi?: AtlasApi; providerReadiness?: () => Promise<ProviderState> }) {
   const location = useSyncExternalStore(subscribeRoute, routeSnapshot, () => "/");
   const atlasActive = location.split("?", 1)[0].startsWith("/campaigns/");
 
   return (
     <>
-      <ProposalWorkspace api={api} active={!atlasActive} navigate={navigate} />
-      {atlasActive && <AtlasApp api={atlasApi} readiness={providerReadiness} location={location} navigate={navigate} />}
+      <ProposalWorkspace api={api} active={!atlasActive} navigate={navigate} location={location} />
+      {atlasActive && <AtlasApp api={atlasApi} sliceApi={api} readiness={providerReadiness ?? api.readiness} location={location} navigate={navigate} />}
     </>
   );
 }

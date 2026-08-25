@@ -114,6 +114,21 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
                 "source_set_digest": generation["source_set_digest"],
                 "terminal_draft_digest": generation["terminal_content_digest"], "subject_id": "campaign-main"})
             proposal = app.create_proposal(generation_id, proposal_request)[1]
+            generation_collection = app.atlas_generation_collection(
+                campaign_id, revision, bundle.ordinal, bundle.tree_digest,
+                actions=("ask",), statuses=("complete",), record_id="campaign-main",
+                limit=50, cursor=None,
+            )[1]
+            proposal_collection = app.atlas_proposal_collection(
+                campaign_id, revision, bundle.ordinal, bundle.tree_digest,
+                statuses=("draft",), record_id="campaign-main",
+                limit=50, cursor=None,
+            )[1]
+            self.assertEqual([generation_id], [item["generation_id"] for item in generation_collection["items"]])
+            self.assertEqual([(proposal_id, 1)], [
+                (item["proposal_id"], item["proposal_version"])
+                for item in proposal_collection["items"]
+            ])
             approval = bind({"contract_name": "proposal_approval_request", "contract_version": 2,
                 "operation_request": operation("proposal_approve", operation_ids[3], keys[3],
                     expected_revision=revision, subject_id=proposal_id, intent_digest=proposal["diff_digest"]),
@@ -137,12 +152,52 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
                 atlas_repository=PostgresAtlasProjectionRepository(self.connect))
             readback = restarted.generation_view(generation_id)[1]
             self.assertEqual(ask["context"], readback["context"])
+            restarted_bundle = restarted.atlas_repository.get(campaign_id, revision)
+            restarted_proposals = restarted.atlas_proposal_collection(
+                campaign_id, revision, restarted_bundle.ordinal, restarted_bundle.tree_digest,
+                statuses=("published",), record_id=None, limit=50, cursor=None,
+            )[1]
+            self.assertEqual((proposal_id, published), (
+                restarted_proposals["items"][0]["proposal_id"],
+                restarted_proposals["items"][0]["published_revision_id"],
+            ))
             generation_replay = restarted.start_generation(campaign_id, revision, ask)
             self.assertEqual((200, False, ask["context"]), (
                 generation_replay[0], generation_replay[2], generation_replay[1]["context"],
             ))
             replay = restarted.approve_proposal(proposal_id, 1, approval)[1]
             self.assertEqual((published, True), (replay["published_revision"]["revision_id"], replay["exact_replay"]))
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute("SELECT count(*) FROM hosted_proposal_audit WHERE proposal_id=%s", (proposal_id,))
+                audit_count = cursor.fetchone()[0]
+            for stored_status in ("approved", "quarantined"):
+                with self.connect() as connection, connection.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE hosted_proposal_version SET status=%s WHERE proposal_id=%s AND version=1",
+                        (stored_status, proposal_id),
+                    )
+                read_only = restarted.atlas_proposal_collection(
+                    campaign_id, revision, restarted_bundle.ordinal, restarted_bundle.tree_digest,
+                    statuses=("published",), record_id=None, limit=50, cursor=None,
+                )[1]
+                self.assertEqual(("published", published), (
+                    read_only["items"][0]["status"],
+                    read_only["items"][0]["published_revision_id"],
+                ))
+                with self.connect() as connection, connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT status,published_revision_id FROM hosted_proposal_version "
+                        "WHERE proposal_id=%s AND version=1",
+                        (proposal_id,),
+                    )
+                    self.assertEqual((stored_status, published), cursor.fetchone())
+                    cursor.execute("SELECT count(*) FROM hosted_proposal_audit WHERE proposal_id=%s", (proposal_id,))
+                    self.assertEqual(audit_count, cursor.fetchone()[0])
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE hosted_proposal_version SET status='published' WHERE proposal_id=%s AND version=1",
+                    (proposal_id,),
+                )
             with self.connect() as connection, connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT request_digest,source_set_digest FROM hosted_ai_generation "
