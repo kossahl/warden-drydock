@@ -102,6 +102,9 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
 .change-kind { min-height: 1.7rem; font-size: .85rem; }
 .markdown { overflow-wrap: anywhere; }
 .markdown > :first-child { margin-top: 0; }
+.record-connection-list { display: grid; gap: .65rem; padding-left: 1.25rem; }
+.record-connection-list li { line-height: 1.5; }
+.connection-self-label { color: var(--muted); }
 .source-binding dl { display: grid; gap: .7rem; }
 .source-binding dl div { min-width: 0; }
 .source-binding dt { font-weight: 800; }

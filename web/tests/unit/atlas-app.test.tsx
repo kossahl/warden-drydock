@@ -66,16 +66,23 @@ describe("Campaign Atlas browser experience", () => {
     window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_two");
     const { container } = render(<App atlasApi={fakeAtlas()} providerReadiness={async () => readinessUnavailable} />);
     expect(await screen.findByRole("heading", { level: 1, name: "Station Keeper" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "brief" })).toHaveAttribute("href", "https://example.test/brief");
-    expect(screen.queryByRole("link", { name: "trap" })).not.toBeInTheDocument();
+    const recordContent = screen.getByRole("heading", { name: "Record content" }).closest("section")!;
+    const renderedContent = recordContent.querySelector(".markdown")!;
+    expect(within(renderedContent as HTMLElement).getByRole("link", { name: "brief" })).toHaveAttribute("href", "https://example.test/brief");
+    expect(within(renderedContent as HTMLElement).queryByRole("link", { name: "trap" })).not.toBeInTheDocument();
     expect(container.querySelector("script")).toBeNull();
-    fireEvent.click(screen.getByText("Exact source text"));
-    expect(screen.getByText(/javascript:alert/)).toBeVisible();
+    expect(await within(renderedContent as HTMLElement).findByText(/The keeper relies on/)).toBeVisible();
+    expect(within(renderedContent as HTMLElement).getByRole("link", { name: "Legacy Ship" })).toHaveAttribute("href", expect.stringContaining("revision=revision_two"));
+    expect(renderedContent).not.toHaveTextContent("`knows`");
+    expect(renderedContent).not.toHaveTextContent("[[record-two|Legacy Ship]]");
+    fireEvent.click(within(recordContent).getByText("Exact source text"));
+    expect(within(recordContent).getByText(/javascript:alert/)).toBeVisible();
+    expect(recordContent.querySelector("pre")).toHaveTextContent("- `knows` → [[record-two|Legacy Ship]] (`current`) — The keeper relies on Legacy Ship.");
     const relationships = screen.getByRole("heading", { name: "Relationships" }).closest("section")!;
     expect(within(relationships).getByRole("button", { name: "Map", pressed: true })).toBeVisible();
     expect(within(relationships).getAllByRole("link", { name: "Legacy Ship" })).toHaveLength(2);
     const card = relationships.querySelector(".relationship-card")!;
-    expect(card.firstElementChild).toHaveTextContent("Synthetic edge.");
+    expect(card.firstElementChild).toHaveTextContent("The keeper relies on Legacy Ship.");
     expect(card).toHaveTextContent("Related record: Legacy Ship");
     expect(card).toHaveTextContent("DirectionOutgoing");
     expect(card).toHaveTextContent("TypeKnows");
@@ -226,12 +233,50 @@ describe("Campaign Atlas browser experience", () => {
     expect(card).toHaveTextContent("Source: Legacy Ship");
     expect(card).toHaveTextContent("DirectionIncoming");
     expect(card).toHaveTextContent("TypeReports To");
+    const recordContent = screen.getByRole("heading", { name: "Record content" }).closest("section")!;
+    expect(within(recordContent).getByText("No explicit connections in this record.")).toBeVisible();
 
     const missing = { ...neighborhood, neighbors: [] };
     rerender(<App atlasApi={fakeAtlas({ neighborhood: vi.fn(async () => missing) })} providerReadiness={async () => readinessUnavailable} />);
-    expect(await screen.findByRole("alert", { name: "" })).toHaveTextContent("Relationship data could not be verified.");
+    await waitFor(() => {
+      const currentContent = screen.getByRole("heading", { name: "Record content" }).closest("section")!;
+      expect(within(currentContent).getByRole("alert")).toHaveTextContent("Connection details are unavailable for this revision.");
+    });
+    const relationshipSection = screen.getByRole("heading", { name: "Relationships" }).closest("section")!;
+    expect(within(relationshipSection).getByRole("alert")).toHaveTextContent("Relationship data could not be verified.");
     expect(screen.queryByRole("link", { name: "Legacy Ship" })).not.toBeInTheDocument();
     expect(screen.queryByText("record-two")).not.toBeInTheDocument();
+  });
+
+  it("builds Record content from every source-owned relationship page without showing backlinks", async () => {
+    const firstPage = {
+      ...neighborhood,
+      edges: [
+        { ...neighborhood.edges[0], edge_id: `edge_${"1".repeat(64)}`, occurrence_order: 1, context: "The keeper relies on Legacy Ship." },
+        { ...neighborhood.edges[0], edge_id: `edge_${"2".repeat(64)}`, occurrence_order: 2, source_record_id: "record-two", target_record_id: "record-one", context: "Legacy Ship answers to the keeper." },
+      ],
+      total_edges: 3,
+      next_cursor: "relationship_page_two",
+    };
+    const secondPage = {
+      ...neighborhood,
+      edges: [{ ...neighborhood.edges[0], edge_id: `edge_${"3".repeat(64)}`, occurrence_order: 3, context: "Legacy Ship carries the keeper's emergency beacon." }],
+      total_edges: 3,
+      next_cursor: null,
+      previous_cursor: "relationship_page_one",
+    };
+    const readNeighborhood = vi.fn(async (_campaign: string, _record: string, query: { cursor?: string }) => query.cursor === "relationship_page_two" ? secondPage : firstPage);
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_two&relationship_cursor=visible_page");
+    const { container } = render(<App atlasApi={fakeAtlas({ neighborhood: readNeighborhood })} providerReadiness={async () => readinessUnavailable} />);
+    const recordContent = (await screen.findByRole("heading", { name: "Record content" })).closest("section")!;
+    await waitFor(() => expect(recordContent.querySelectorAll(".record-connection-list > li")).toHaveLength(2));
+    const statements = recordContent.querySelectorAll(".record-connection-list > li");
+    expect(statements[0]).toHaveTextContent("The keeper relies on Legacy Ship.");
+    expect(statements[1]).toHaveTextContent("Legacy Ship carries the keeper's emergency beacon.");
+    expect(recordContent).not.toHaveTextContent("Legacy Ship answers to the keeper.");
+    expect(recordContent.querySelector(".markdown")).not.toHaveTextContent("[[record-two|Legacy Ship]]");
+    expect(readNeighborhood).toHaveBeenCalledWith("campaign_atlas", "record-one", expect.objectContaining({ cursor: "relationship_page_two" }));
+    expect(container.querySelector(".relationships")).toBeInTheDocument();
   });
 
   it("pins relationship target navigation to a historical viewed revision", async () => {

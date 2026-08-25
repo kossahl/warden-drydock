@@ -84,6 +84,22 @@ test("historical view stays selected until Open head", async ({ page }) => {
   await expect(page.getByText(/Viewed revision 2/)).toBeVisible();
 });
 
+test("Record content replaces Connections syntax with readable revision-pinned links", async ({ page }) => {
+  await installAtlasApi(page);
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const recordContent = page.getByRole("heading", { name: "Record content" }).locator("..");
+  const rendered = recordContent.locator(".markdown");
+  await expect(rendered.getByRole("heading", { name: "Connections" })).toBeVisible();
+  await expect(rendered).toContainText("The keeper relies on Legacy Ship.");
+  await expect(rendered).not.toContainText("`knows`");
+  await expect(rendered).not.toContainText("[[record-two|Legacy Ship]]");
+  await expect(rendered.getByRole("link", { name: "Legacy Ship" })).toHaveAttribute("href", expect.stringContaining("revision=revision_two"));
+  await recordContent.getByText("Exact source text").click();
+  await expect(recordContent.locator("pre")).toContainText("- `knows` → [[record-two|Legacy Ship]] (`current`) — The keeper relies on Legacy Ship.");
+  await expect(page.getByRole("heading", { name: "Relationships" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Relationship view" })).toBeVisible();
+});
+
 test("Atlas navigation and filters work by keyboard at 320 by 720 without page overflow", async ({ page }) => {
   const longName = `Legacy-${"ship".repeat(40)}`;
   const longContext = `Context-${"without-breaks".repeat(45)}`;
