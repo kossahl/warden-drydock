@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
+import { type AtlasApi, httpAtlasApi } from "./api/atlasClient";
 import { browserId, httpSliceApi, recordGenerationContext, type SliceApi } from "./api/client";
+import { ErrorState, Link, useResource } from "./atlas/AtlasCompletion";
 import { AuthorityBadge, RevisionStatus } from "./components/StatusPrimitives";
 import type { CampaignRevisionView, GenerationAction, GenerationContext, GenerationView, ProposalView, ProviderReadiness, RecordView } from "./contracts/v2";
 
@@ -16,7 +18,7 @@ async function exactRecordContext(record: RecordView): Promise<Extract<Generatio
   return context;
 }
 
-export function ProposalWorkspace({ api = httpSliceApi, active = true, navigate, location = "/" }: { api?: SliceApi; active?: boolean; navigate?: (href: string) => void; location?: string }) {
+export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi, active = true, navigate, location = "/" }: { api?: SliceApi; atlasApi?: AtlasApi; active?: boolean; navigate?: (href: string) => void; location?: string }) {
   const [readiness, setReadiness] = useState<ProviderReadiness | null>(null);
   const [campaign, setCampaign] = useState<CampaignRevisionView | null>(null);
   const [record, setRecord] = useState<RecordView | null>(null);
@@ -39,6 +41,7 @@ export function ProposalWorkspace({ api = httpSliceApi, active = true, navigate,
   const wasActive = useRef(active);
   const hydratedLocation = useRef("");
   const uncertainGeneration = useRef<{ action: GenerationAction; prompt: string; generationId: string } | null>(null);
+  const campaigns = useResource(active && !campaign ? () => atlasApi.campaigns() : null, [active, atlasApi, campaign]);
 
   const retryKey = (action: string) => retries.current[action] ??= browserId(`idem_${action}`);
   const stableId = (action: string, prefix: string) => actionIds.current[action] ??= browserId(prefix);
@@ -186,15 +189,28 @@ export function ProposalWorkspace({ api = httpSliceApi, active = true, navigate,
         {hydrating ? (
           <section className="card narrow" aria-busy="true"><h1>Opening persisted work</h1></section>
         ) : !campaign ? (
-          <section className="card narrow" aria-labelledby="create-heading">
-            <p className="eyebrow">Deterministic setup</p><h1 id="create-heading">Create a campaign</h1>
-            <p>Create one local synthetic campaign. Import is not part of this pilot.</p>
-            <form onSubmit={createCampaign}>
-              <label htmlFor="campaign-name">Campaign name</label>
-              <input id="campaign-name" name="campaign-name" required maxLength={120} defaultValue="Synthetic Campaign" />
-              <button disabled={disabled} type="submit">{busy === "campaign" ? "Creating…" : "Create campaign"}</button>
-            </form>
-          </section>
+          <div className="campaign-home">
+            <section aria-labelledby="campaigns-heading" aria-busy={campaigns.pending}>
+              <p className="eyebrow">Local campaigns</p><h1 id="campaigns-heading">Campaigns</h1>
+              {campaigns.pending && <p>Loading campaigns.</p>}
+              {!!campaigns.error && <ErrorState error={campaigns.error} retry={campaigns.retry} />}
+              {campaigns.value && !campaigns.value.campaigns.length && <p className="empty-state">No campaigns yet. Create the first campaign below.</p>}
+              {campaigns.value && campaigns.value.campaigns.length > 0 && <ul className="campaign-list">{campaigns.value.campaigns.map((item) => {
+                const href = `/campaigns/${encodeURIComponent(item.campaign_id)}?revision=${encodeURIComponent(item.head_revision.revision_id)}`;
+                const status = item.recovery_state === "ready" ? "Ready" : item.recovery_state === "rebuild_required" ? "Rebuild required" : "Integrity blocked";
+                return <li className="card campaign-card" key={item.campaign_id}><div><h2>{item.campaign_name}</h2><p>{item.adapter_id} · Revision {item.head_revision.ordinal}</p><p className={`campaign-state campaign-state--${item.recovery_state}`}>{status}</p></div>{navigate ? <Link href={href} navigate={navigate} className="button-link">Open campaign</Link> : <a className="button-link" href={href}>Open campaign</a>}</li>;
+              })}</ul>}
+            </section>
+            <section className="card create-campaign" aria-labelledby="create-heading">
+              <p className="eyebrow">Deterministic setup</p><h2 id="create-heading">Create a campaign</h2>
+              <p>Create a new local campaign. Import is not part of this pilot.</p>
+              <form onSubmit={createCampaign}>
+                <label htmlFor="campaign-name">Campaign name</label>
+                <input id="campaign-name" name="campaign-name" required maxLength={120} defaultValue="Synthetic Campaign" />
+                <button disabled={disabled} type="submit">{busy === "campaign" ? "Creating…" : "Create campaign"}</button>
+              </form>
+            </section>
+          </div>
         ) : record ? (
           <>
             <aside aria-label="Revision and authority" className="authority-strip">

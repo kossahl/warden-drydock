@@ -23,6 +23,16 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 .eyebrow { margin: 0 0 .25rem; color: #a9c8b9; font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; }
 main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem); }
 .narrow { max-width: 38rem; margin: 8vh auto 0; }
+.campaign-home { display: grid; gap: 2rem; }
+.campaign-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding: 0; list-style: none; }
+.campaign-card { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 1rem; margin: 0; }
+.campaign-card h2, .campaign-card p { margin: .25rem 0; overflow-wrap: anywhere; }
+.campaign-card .button-link { flex: 0 0 auto; }
+.campaign-state { font-weight: 700; }
+.campaign-state--ready { color: #9be7bd; }
+.campaign-state--rebuild_required { color: #f5df9f; }
+.campaign-state--integrity_blocked { color: #ffd5d1; }
+.create-campaign { max-width: 38rem; margin: 0; }
 .authority-strip { display: flex; flex-wrap: wrap; gap: .65rem; align-items: center; margin: calc(-1 * clamp(1.2rem, 4vw, 3rem)) calc(-1 * clamp(1.2rem, 4vw, 3rem)) 2rem; padding: .75rem clamp(1.2rem, 4vw, 3rem); border-bottom: 1px solid #365247; background: #15221d; }
 .revision-id { margin-bottom: 1.5rem; }
 .card { margin: 1rem 0; padding: clamp(1rem, 3vw, 1.5rem); border: 1px solid #365247; border-radius: .7rem; background: #101914; }
@@ -132,6 +142,9 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
   .search-form > div { grid-template-columns: 1fr 1fr; }
   .search-form input { grid-column: 1 / -1; }
   .revision-banner { align-items: flex-start; flex-direction: column; }
+  .campaign-list { grid-template-columns: 1fr; }
+  .campaign-card { align-items: stretch; flex-direction: column; }
+  .campaign-card .button-link { justify-content: center; }
 }
 @media (max-width: 59.999rem) {
   .workflow-panels { grid-template-columns: 1fr; }

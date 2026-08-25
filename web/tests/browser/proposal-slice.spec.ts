@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { installAtlasApi } from "./atlas-api";
 
 const digest = (value: string) => value.repeat(64);
 const source = { source_id: "campaign-main", authority: "canon", revision_id: "revision_alpha", order: 1, excerpt: "# Synthetic Campaign", excerpt_digest: digest("a") };
@@ -25,10 +26,11 @@ async function installApi(page: Page, mode: "happy" | "conflict" | "retry") {
     const path = url.pathname;
     if (path === "/api/v1/provider/readiness") return fulfillJson(route, { contract_name: "provider_readiness_response", contract_version: 2, provider_configured: true, provider_available: true, consent_current: consent, consent_identity_digest: digest("9"), ai_available: consent });
     if (path === "/api/v1/provider/consent") { consent = true; return fulfillJson(route, { contract_name: "provider_readiness_response", contract_version: 2, provider_configured: true, provider_available: true, consent_current: true, consent_identity_digest: digest("9"), ai_available: true }); }
+    if (path === "/api/v1/campaigns" && request.method() === "GET") return fulfillJson(route, { contract_name: "atlas_campaign_collection", contract_version: 2, campaigns: [{ campaign_id: "campaign_alpha", campaign_name: "Synthetic Campaign", adapter_id: "mothership", recovery_state: "ready", head_revision: { revision_id: "revision_alpha", ordinal: 1, tree_digest: digest("a") }, projected_revision: { revision_id: "revision_alpha", ordinal: 1, tree_digest: digest("a") } }] });
     if (path === "/api/v1/campaigns") return fulfillJson(route, campaign(), 201);
     if (/\/revisions\/revision_(alpha|beta)$/.test(path)) return fulfillJson(route, campaign(path.endsWith("beta") ? "revision_beta" : "revision_alpha"));
     if (path.includes("/records/")) return fulfillJson(route, record(path.includes("revision_beta") ? "revision_beta" : "revision_alpha"));
-    if (path.endsWith("/generations")) {
+    if (request.method() === "POST" && /^\/api\/v1\/campaigns\/[^/]+\/revisions\/[^/]+\/generations$/.test(path)) {
       const start = request.postDataJSON() as { generation_id: string; action: "ask" | "check" | "generate"; context: { scope: "campaign" } | { scope: "record"; record_id: string; content_digest: string }; session_id?: string };
       expect(start.action).toBe("generate");
       expect(start.context.scope).toBe("record");
@@ -63,6 +65,17 @@ async function createAndGenerate(page: Page) {
   await page.getByRole("radio", { name: "Generate" }).click();
   await page.getByRole("button", { name: "Submit Generate" }).click();
 }
+
+test("opens an ongoing campaign from the start page", async ({ page }) => {
+  await installAtlasApi(page);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1, name: "Campaigns" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Synthetic Atlas" })).toBeVisible();
+  await page.getByRole("link", { name: "Open campaign" }).click();
+  await expect(page).toHaveURL("/campaigns/campaign_atlas?revision=revision_two");
+  await expect(page.getByRole("heading", { level: 1, name: "Synthetic Atlas" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Browse records" })).toBeVisible();
+});
 
 test("creates, grounds, inspects exact diff, approves, and opens the validated revision", async ({ page }) => {
   await installApi(page, "happy");
