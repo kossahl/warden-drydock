@@ -29,7 +29,7 @@ export function App({ api = httpSliceApi, atlasApi = httpAtlasApi, providerReadi
 
   return (
     <>
-      <ProposalWorkspace api={api} active={!atlasActive} navigate={navigate} location={location} />
+      <ProposalWorkspace api={api} atlasApi={atlasApi} active={!atlasActive} navigate={navigate} location={location} />
       {atlasActive && <AtlasApp api={atlasApi} sliceApi={api} readiness={providerReadiness ?? api.readiness} location={location} navigate={navigate} />}
     </>
   );

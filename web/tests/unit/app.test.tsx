@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "../../src/App";
+import type { AtlasApi } from "../../src/api/atlasClient";
 import type { SliceApi } from "../../src/api/client";
-import type { CampaignRevisionView, GenerationEvent, GenerationView, ProposalApprovalResult, ProposalView, ProviderReadiness, RecordView } from "../../src/contracts/v2";
+import type { AtlasCampaignItem, CampaignRevisionView, GenerationEvent, GenerationView, ProposalApprovalResult, ProposalView, ProviderReadiness, RecordView } from "../../src/contracts/v2";
 
 const hex = (value: string) => value.repeat(64);
 const recordDigest = "6ae57d4640095550294f9f68b8390e483c43103bcabad485716afbea7680a6fd";
@@ -11,6 +12,8 @@ const record: RecordView = { contract_name: "record_view", contract_version: 2, 
 const pending: GenerationView = { contract_name: "generation_view", contract_version: 2, generation_id: "generation_alpha", campaign_id: "campaign_alpha", source_revision: "revision_alpha", action: "ask", context: { scope: "record", record_id: "campaign-main", content_digest: recordDigest }, session_id: null, draft_authority: "draft", status: "pending", sources: [{ source_id: "campaign-main", authority: "preparation", revision_id: "revision_alpha", order: 1, excerpt: "# Synthetic Campaign", excerpt_digest: hex("a") }], source_set_digest: hex("b"), last_sequence: 0, terminal_content: null, terminal_content_digest: null };
 const complete: GenerationView = { ...pending, status: "complete", last_sequence: 3, terminal_content: "The station is quiet.", terminal_content_digest: hex("c") };
 const proposal: ProposalView = { contract_name: "proposal_view", contract_version: 2, proposal_id: "proposal_alpha", proposal_version: 1, campaign_id: "campaign_alpha", generation_id: "generation_alpha", source_revision: "revision_alpha", base_revision: "revision_alpha", source_set_digest: hex("b"), terminal_draft_digest: hex("c"), artifact_kind: "proposal", status: "draft", exact_diff: [{ change_id: "change_alpha", subject_id: "campaign-main", change_type: "update", record_type: "campaign", from_authority: "preparation", to_authority: "preparation", before_content: "# Synthetic Campaign", after_content: "# Synthetic Campaign\n\n## Proposed addition\n\nThe station is quiet.", before_digest: hex("a"), after_digest: hex("d") }], diff_digest: hex("e"), proposal_payload_digest: hex("f"), validation_status: "passed", published_revision_id: null };
+const atlasCampaign: AtlasCampaignItem = { campaign_id: "campaign_alpha", campaign_name: "Synthetic Campaign", adapter_id: "mothership", recovery_state: "ready", head_revision: { revision_id: "revision_alpha", ordinal: 1, tree_digest: hex("a") }, projected_revision: { revision_id: "revision_alpha", ordinal: 1, tree_digest: hex("a") } };
+const fakeAtlas = (items: ReadonlyArray<AtlasCampaignItem> = []) => ({ campaigns: vi.fn(async () => ({ contract_name: "atlas_campaign_collection" as const, contract_version: 2 as const, campaigns: items })) }) as unknown as AtlasApi;
 
 function fakeApi(overrides: Partial<SliceApi> = {}): SliceApi {
   let activeGeneration = pending;
@@ -28,7 +31,7 @@ function fakeApi(overrides: Partial<SliceApi> = {}): SliceApi {
 }
 
 async function openRecord(api: SliceApi) {
-  render(<App api={api} />);
+  render(<App api={api} atlasApi={fakeAtlas()} />);
   await screen.findByText("Provider: Ready");
   fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
   await screen.findByRole("heading", { level: 1, name: "Synthetic Campaign" });
@@ -44,10 +47,36 @@ async function createDraftAndProposal(api: SliceApi) {
 }
 
 describe("proposal browser slice", () => {
+  it("lists ongoing campaigns before the create form and opens the exact head", async () => {
+    render(<App api={fakeApi()} atlasApi={fakeAtlas([atlasCampaign, { ...atlasCampaign, campaign_id: "campaign_blocked", campaign_name: "Blocked Campaign", recovery_state: "integrity_blocked" }])} />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Campaigns" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Synthetic Campaign" })).toBeVisible();
+    expect(screen.getAllByText("mothership · Revision 1")).toHaveLength(2);
+    expect(screen.getByText("Integrity blocked")).toBeVisible();
+    expect(screen.getAllByRole("link", { name: "Open campaign" })[0]).toHaveAttribute("href", "/campaigns/campaign_alpha?revision=revision_alpha");
+    expect(screen.getByRole("heading", { level: 2, name: "Create a campaign" })).toBeVisible();
+  });
+
+  it("shows a useful empty campaign state", async () => {
+    render(<App api={fakeApi()} atlasApi={fakeAtlas()} />);
+    expect(await screen.findByText("No campaigns yet. Create the first campaign below.")).toBeVisible();
+  });
+
+  it("keeps campaign creation available when the list fails and retries the read", async () => {
+    const campaigns = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ contract_name: "atlas_campaign_collection", contract_version: 2, campaigns: [atlasCampaign] });
+    const atlasApi = { campaigns } as unknown as AtlasApi;
+    render(<App api={fakeApi()} atlasApi={atlasApi} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Atlas read failed");
+    expect(screen.getByRole("button", { name: "Create campaign" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("heading", { name: "Synthetic Campaign" })).toBeVisible();
+    expect(campaigns).toHaveBeenCalledTimes(2);
+  });
+
   it("distinguishes provider setup, consent, and ready states", async () => {
     const setupRequired: ProviderReadiness = { ...readiness, provider_configured: false, provider_available: false, consent_current: false, consent_identity_digest: null, ai_available: false };
     const setupApi = fakeApi({ readiness: vi.fn(async () => setupRequired) });
-    render(<App api={setupApi} />);
+    render(<App api={setupApi} atlasApi={fakeAtlas()} />);
     await screen.findByText("Provider: Setup required");
     fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
     await screen.findByRole("heading", { level: 1, name: "Synthetic Campaign" });
@@ -56,12 +85,12 @@ describe("proposal browser slice", () => {
 
     cleanup();
     const consentRequired: ProviderReadiness = { ...readiness, consent_current: false, ai_available: false };
-    render(<App api={fakeApi({ readiness: vi.fn(async () => consentRequired) })} />);
+    render(<App api={fakeApi({ readiness: vi.fn(async () => consentRequired) })} atlasApi={fakeAtlas()} />);
     await screen.findByText("Provider: Consent required");
 
     cleanup();
     const unavailable: ProviderReadiness = { ...readiness, provider_available: false, consent_current: false, ai_available: false };
-    render(<App api={fakeApi({ readiness: vi.fn(async () => unavailable) })} />);
+    render(<App api={fakeApi({ readiness: vi.fn(async () => unavailable) })} atlasApi={fakeAtlas()} />);
     await screen.findByText("Provider: Unavailable");
     fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
     await screen.findByRole("heading", { level: 1, name: "Synthetic Campaign" });
@@ -69,7 +98,7 @@ describe("proposal browser slice", () => {
     expect(screen.getByRole("button", { name: "Submit Ask" })).toBeDisabled();
 
     cleanup();
-    render(<App api={fakeApi()} />);
+    render(<App api={fakeApi()} atlasApi={fakeAtlas()} />);
     await screen.findByText("Provider: Ready");
   });
 
@@ -77,7 +106,7 @@ describe("proposal browser slice", () => {
     let finishCreate!: (value: CampaignRevisionView) => void;
     const notConsented = { ...readiness, consent_current: false, ai_available: false };
     const api = fakeApi({ readiness: vi.fn(async () => notConsented), createCampaign: vi.fn(() => new Promise<CampaignRevisionView>((resolve) => { finishCreate = resolve; })) });
-    render(<App api={api} />);
+    render(<App api={api} atlasApi={fakeAtlas()} />);
     await screen.findByText("Provider: Consent required");
     fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
     expect(screen.getByRole("button", { name: "Creating…" })).toBeDisabled();
@@ -159,7 +188,7 @@ describe("proposal browser slice", () => {
     let proposalAttempts = 0;
     const createProposal = vi.fn(async () => { proposalAttempts += 1; if (proposalAttempts === 1) throw new Error("transport_lost"); return proposal; });
     const api = fakeApi({ createCampaign, startGeneration, readGeneration: vi.fn(async () => ({ ...complete, action: "generate" as const })), createProposal });
-    render(<App api={api} />);
+    render(<App api={api} atlasApi={fakeAtlas()} />);
     await screen.findByText("Provider: Ready");
     fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
     await screen.findByRole("alert");
@@ -254,7 +283,7 @@ describe("proposal browser slice", () => {
   });
 
   it("does not advertise deferred product capabilities", async () => {
-    render(<App api={fakeApi()} />);
+    render(<App api={fakeApi()} atlasApi={fakeAtlas()} />);
     await screen.findByText("Provider: Ready");
     for (const label of ["Import", "Export", "Player", "Billing", "VTT", "Audio"]) expect(screen.queryByRole("button", { name: label })).not.toBeInTheDocument();
   });
@@ -262,7 +291,7 @@ describe("proposal browser slice", () => {
   it("hydrates an exact proposal deep link through the existing general v2 reads", async () => {
     window.history.replaceState(null, "", "/?proposal=proposal_alpha&version=1");
     const api = fakeApi();
-    render(<App api={api} />);
+    render(<App api={api} atlasApi={fakeAtlas()} />);
     expect(await screen.findByRole("heading", { name: "Proposal version 1" })).toBeVisible();
     expect(api.readProposal).toHaveBeenCalledWith("proposal_alpha", 1);
     expect(api.readGeneration).toHaveBeenCalledWith("generation_alpha");
@@ -281,7 +310,7 @@ describe("proposal browser slice", () => {
     window.history.replaceState(null, "", "/?generation=generation_alpha");
     const loadedCampaign = historical ? { ...campaign, head_revision: "revision_beta" } : campaign;
     const api = fakeApi({ readGeneration: vi.fn(async () => loadedGeneration), readRevision: vi.fn(async () => loadedCampaign) });
-    render(<App api={api} />);
+    render(<App api={api} atlasApi={fakeAtlas()} />);
     await screen.findByRole("heading", { name: loadedGeneration.context.scope === "campaign" ? "Campaign Draft" : "Grounded Draft" });
     expect(screen.queryByRole("button", { name: "Create proposal for Synthetic Campaign" })).toBe(proposalAllowed ? screen.getByRole("button", { name: "Create proposal for Synthetic Campaign" }) : null);
     if (historical) expect(screen.getByRole("link", { name: "Open head to create a proposal." })).toBeVisible();
@@ -293,7 +322,7 @@ describe("proposal browser slice", () => {
     window.history.replaceState(null, "", "/?proposal=proposal_alpha&version=1");
     const currentHead = { ...campaign, head_revision: "revision_beta" };
     const api = fakeApi({ readRevision: vi.fn(async () => currentHead), readGeneration: vi.fn(async (): Promise<GenerationView> => ({ ...complete, action: "generate" })) });
-    render(<App api={api} />);
+    render(<App api={api} atlasApi={fakeAtlas()} />);
     expect(await screen.findByRole("heading", { name: "Proposal version 1" })).toBeVisible();
     expect(screen.getByText("Stale base, not published")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve exact diff" })).not.toBeInTheDocument();
