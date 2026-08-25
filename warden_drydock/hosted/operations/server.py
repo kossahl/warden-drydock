@@ -39,6 +39,8 @@ _ROUTES = {
     "atlas_neighborhood": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/records/([^/]+)/neighborhood$"),
     "atlas_history": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/history$"),
     "atlas_workflow": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/workflow-summary$"),
+    "atlas_generations": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/generations$"),
+    "atlas_proposals": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/proposals$"),
 }
 
 
@@ -281,6 +283,16 @@ class Handler(SimpleHTTPRequestHandler):
             elif match := _ROUTES["atlas_workflow"].fullmatch(path):
                 query = self._atlas_binding_query(raw_query)
                 status, payload = app.atlas_workflow_summary(match.group(1), **query)
+            elif match := _ROUTES["atlas_generations"].fullmatch(path):
+                query = self._atlas_generation_collection_query(raw_query)
+                status, payload = app.atlas_generation_collection(
+                    match.group(1), **query,
+                )
+            elif match := _ROUTES["atlas_proposals"].fullmatch(path):
+                query = self._atlas_proposal_collection_query(raw_query)
+                status, payload = app.atlas_proposal_collection(
+                    match.group(1), **query,
+                )
             else:
                 raise HTTPFailure(404, "not_found", "route_not_found", "routing")
             self._send_json(status, payload)
@@ -358,6 +370,49 @@ class Handler(SimpleHTTPRequestHandler):
             "revision_id": str(query["revision_id"]),
             "ordinal": require_int(query["revision_ordinal"], minimum=1, maximum=2_147_483_647),
             "tree_digest": str(query["tree_digest"]),
+        }
+
+    @staticmethod
+    def _atlas_generation_collection_query(raw_query: str) -> dict[str, object]:
+        query = parse_flat_query(
+            raw_query,
+            singleton=frozenset({
+                "revision_id", "revision_ordinal", "tree_digest", "record_id",
+                "limit", "cursor",
+            }),
+            repeated=frozenset({"action", "status"}),
+            required=frozenset({"revision_id", "revision_ordinal", "tree_digest", "limit"}),
+        )
+        return {
+            "revision_id": str(query["revision_id"]),
+            "ordinal": require_int(query["revision_ordinal"], minimum=1, maximum=2_147_483_647),
+            "tree_digest": str(query["tree_digest"]),
+            "actions": tuple(query.get("action", ())),
+            "statuses": tuple(query.get("status", ())),
+            "record_id": str(query["record_id"]) if "record_id" in query else None,
+            "limit": require_int(query["limit"], minimum=1, maximum=100),
+            "cursor": str(query["cursor"]) if "cursor" in query else None,
+        }
+
+    @staticmethod
+    def _atlas_proposal_collection_query(raw_query: str) -> dict[str, object]:
+        query = parse_flat_query(
+            raw_query,
+            singleton=frozenset({
+                "revision_id", "revision_ordinal", "tree_digest", "record_id",
+                "limit", "cursor",
+            }),
+            repeated=frozenset({"status"}),
+            required=frozenset({"revision_id", "revision_ordinal", "tree_digest", "limit"}),
+        )
+        return {
+            "revision_id": str(query["revision_id"]),
+            "ordinal": require_int(query["revision_ordinal"], minimum=1, maximum=2_147_483_647),
+            "tree_digest": str(query["tree_digest"]),
+            "statuses": tuple(query.get("status", ())),
+            "record_id": str(query["record_id"]) if "record_id" in query else None,
+            "limit": require_int(query["limit"], minimum=1, maximum=100),
+            "cursor": str(query["cursor"]) if "cursor" in query else None,
         }
 
     def _reject_unsupported(self) -> None:

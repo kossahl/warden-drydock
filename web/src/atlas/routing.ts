@@ -1,4 +1,4 @@
-import type { AtlasAuthority, AtlasStatusFilter } from "../contracts/v1";
+import type { AtlasAuthority, AtlasStatusFilter } from "../contracts/v2";
 
 export type AtlasRouteKind = "overview" | "records" | "record" | "history" | "invalid";
 export interface AtlasRoute {
@@ -11,6 +11,9 @@ export interface AtlasRoute {
   authority: AtlasAuthority | null;
   status: AtlasStatusFilter | null;
   cursor: string | null;
+  relationshipCursor: string | null;
+  generationCursor: string | null;
+  proposalCursor: string | null;
 }
 
 const authorities = new Set<AtlasAuthority>(["preparation", "canon", "revealed"]);
@@ -39,6 +42,9 @@ export function parseAtlasRoute(location: string): AtlasRoute {
     authority: authority && authorities.has(authority as AtlasAuthority) ? authority as AtlasAuthority : null,
     status: status && statuses.has(status as AtlasStatusFilter) ? status as AtlasStatusFilter : null,
     cursor: url.searchParams.get("cursor"),
+    relationshipCursor: url.searchParams.get("relationship_cursor"),
+    generationCursor: url.searchParams.get("generation_cursor"),
+    proposalCursor: url.searchParams.get("proposal_cursor"),
   };
 }
 
@@ -49,6 +55,9 @@ export interface AtlasUrlState {
   authority?: AtlasAuthority | null;
   status?: AtlasStatusFilter | null;
   cursor?: string | null;
+  relationshipCursor?: string | null;
+  generationCursor?: string | null;
+  proposalCursor?: string | null;
 }
 
 export function atlasHref(campaignId: string, destination: "overview" | "records" | "history", state: AtlasUrlState) {
@@ -70,5 +79,8 @@ function addState(path: string, state: AtlasUrlState, includeLibrary: boolean) {
     if (state.status) params.set("status", state.status);
     if (state.cursor) params.set("cursor", state.cursor);
   }
+  if (state.relationshipCursor) params.set("relationship_cursor", state.relationshipCursor);
+  if (state.generationCursor) params.set("generation_cursor", state.generationCursor);
+  if (state.proposalCursor) params.set("proposal_cursor", state.proposalCursor);
   return `${path}?${params.toString()}`;
 }

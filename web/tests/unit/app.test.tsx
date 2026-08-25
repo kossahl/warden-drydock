@@ -4,17 +4,27 @@ import type { SliceApi } from "../../src/api/client";
 import type { CampaignRevisionView, GenerationEvent, GenerationView, ProposalApprovalResult, ProposalView, ProviderReadiness, RecordView } from "../../src/contracts/v2";
 
 const hex = (value: string) => value.repeat(64);
+const recordDigest = "6ae57d4640095550294f9f68b8390e483c43103bcabad485716afbea7680a6fd";
 const readiness: ProviderReadiness = { contract_name: "provider_readiness_response", contract_version: 2, provider_configured: true, provider_available: true, consent_current: true, consent_identity_digest: hex("9"), ai_available: true };
 const campaign: CampaignRevisionView = { contract_name: "campaign_revision_view", contract_version: 2, campaign_id: "campaign_alpha", campaign_name: "Synthetic Campaign", adapter_id: "mothership", viewed_revision: { revision_id: "revision_alpha", ordinal: 1, tree_digest: hex("a"), validation_status: "passed" }, head_revision: "revision_alpha", records: [{ record_id: "campaign-main", record_type: "campaign", name: "Synthetic Campaign", authority: "preparation" }] };
 const record: RecordView = { contract_name: "record_view", contract_version: 2, campaign_id: "campaign_alpha", revision_id: "revision_alpha", record_id: "campaign-main", record_type: "campaign", name: "Synthetic Campaign", authority: "preparation", content: "# Synthetic Campaign" };
-const pending: GenerationView = { contract_name: "generation_view", contract_version: 2, generation_id: "generation_alpha", campaign_id: "campaign_alpha", source_revision: "revision_alpha", action: "ask", context: { scope: "record", record_id: "campaign-main", content_digest: hex("a") }, session_id: null, draft_authority: "draft", status: "pending", sources: [{ source_id: "campaign-main", authority: "preparation", revision_id: "revision_alpha", order: 1, excerpt: "# Synthetic Campaign", excerpt_digest: hex("a") }], source_set_digest: hex("b"), last_sequence: 0, terminal_content: null, terminal_content_digest: null };
+const pending: GenerationView = { contract_name: "generation_view", contract_version: 2, generation_id: "generation_alpha", campaign_id: "campaign_alpha", source_revision: "revision_alpha", action: "ask", context: { scope: "record", record_id: "campaign-main", content_digest: recordDigest }, session_id: null, draft_authority: "draft", status: "pending", sources: [{ source_id: "campaign-main", authority: "preparation", revision_id: "revision_alpha", order: 1, excerpt: "# Synthetic Campaign", excerpt_digest: hex("a") }], source_set_digest: hex("b"), last_sequence: 0, terminal_content: null, terminal_content_digest: null };
 const complete: GenerationView = { ...pending, status: "complete", last_sequence: 3, terminal_content: "The station is quiet.", terminal_content_digest: hex("c") };
 const proposal: ProposalView = { contract_name: "proposal_view", contract_version: 2, proposal_id: "proposal_alpha", proposal_version: 1, campaign_id: "campaign_alpha", generation_id: "generation_alpha", source_revision: "revision_alpha", base_revision: "revision_alpha", source_set_digest: hex("b"), terminal_draft_digest: hex("c"), artifact_kind: "proposal", status: "draft", exact_diff: [{ change_id: "change_alpha", subject_id: "campaign-main", change_type: "update", record_type: "campaign", from_authority: "preparation", to_authority: "preparation", before_content: "# Synthetic Campaign", after_content: "# Synthetic Campaign\n\n## Proposed addition\n\nThe station is quiet.", before_digest: hex("a"), after_digest: hex("d") }], diff_digest: hex("e"), proposal_payload_digest: hex("f"), validation_status: "passed", published_revision_id: null };
 
 function fakeApi(overrides: Partial<SliceApi> = {}): SliceApi {
-  return {
-    readiness: vi.fn(async () => readiness), consent: vi.fn(async () => readiness), createCampaign: vi.fn(async () => campaign), readRevision: vi.fn(async () => campaign), readRecord: vi.fn(async () => record), startGeneration: vi.fn(async () => pending), resumeGeneration: vi.fn(async (): Promise<GenerationEvent[]> => [{ contract_name: "generation_event", contract_version: 2, generation_id: "generation_alpha", sequence: 2, event_type: "delta", draft_fragment: "The station is quiet.", retryable: null }]), readGeneration: vi.fn(async () => complete), createProposal: vi.fn(async () => proposal), correctProposal: vi.fn(async () => ({ ...proposal, proposal_version: 2 })), rejectProposal: vi.fn(async (): Promise<ProposalView> => ({ ...proposal, status: "rejected" })), approveProposal: vi.fn(async (): Promise<ProposalApprovalResult> => ({ contract_name: "proposal_approval_result", contract_version: 2, proposal: { ...proposal, status: "published", published_revision_id: "revision_beta" }, outcome: "published", published_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1"), validation_status: "passed" }, error: null, exact_replay: false })), ...overrides,
+  let activeGeneration = pending;
+  const defaults: SliceApi = {
+    readiness: vi.fn(async () => readiness), consent: vi.fn(async () => readiness), createCampaign: vi.fn(async () => campaign), readRevision: vi.fn(async () => campaign), readRecord: vi.fn(async () => record),
+    startGeneration: vi.fn(async (campaignId, revisionId, action, _prompt, generationId, context) => {
+      activeGeneration = { ...pending, generation_id: generationId, campaign_id: campaignId, source_revision: revisionId, action, context };
+      return activeGeneration;
+    }),
+    resumeGeneration: vi.fn(async (): Promise<GenerationEvent[]> => [{ contract_name: "generation_event", contract_version: 2, generation_id: activeGeneration.generation_id, sequence: 2, event_type: "delta", draft_fragment: "The station is quiet.", retryable: null }]),
+    readGeneration: vi.fn(async (): Promise<GenerationView> => ({ ...complete, ...activeGeneration, status: "complete", last_sequence: 3, terminal_content: complete.terminal_content, terminal_content_digest: complete.terminal_content_digest })),
+    createProposal: vi.fn(async () => proposal), readProposal: vi.fn(async () => proposal), correctProposal: vi.fn(async () => ({ ...proposal, proposal_version: 2 })), rejectProposal: vi.fn(async (): Promise<ProposalView> => ({ ...proposal, status: "rejected" })), approveProposal: vi.fn(async (): Promise<ProposalApprovalResult> => ({ contract_name: "proposal_approval_result", contract_version: 2, proposal: { ...proposal, status: "published", published_revision_id: "revision_beta" }, outcome: "published", published_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1"), validation_status: "passed" }, error: null, exact_replay: false })),
   };
+  return { ...defaults, ...overrides };
 }
 
 async function openRecord(api: SliceApi) {
@@ -26,9 +36,10 @@ async function openRecord(api: SliceApi) {
 
 async function createDraftAndProposal(api: SliceApi) {
   await openRecord(api);
-  fireEvent.click(screen.getByRole("button", { name: "Ask grounded question" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Generate" }));
+  fireEvent.click(screen.getByRole("button", { name: "Submit Generate" }));
   await screen.findByText("The station is quiet.");
-  fireEvent.click(screen.getByRole("button", { name: "Create proposal" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create proposal for Synthetic Campaign" }));
   await screen.findByRole("heading", { name: "Exact diff" });
 }
 
@@ -41,7 +52,7 @@ describe("proposal browser slice", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
     await screen.findByRole("heading", { level: 1, name: "Synthetic Campaign" });
     expect(screen.queryByRole("button", { name: "Allow grounded AI" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ask grounded question" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Submit Ask" })).toBeDisabled();
 
     cleanup();
     const consentRequired: ProviderReadiness = { ...readiness, consent_current: false, ai_available: false };
@@ -55,7 +66,7 @@ describe("proposal browser slice", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
     await screen.findByRole("heading", { level: 1, name: "Synthetic Campaign" });
     expect(screen.queryByRole("button", { name: "Allow grounded AI" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ask grounded question" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Submit Ask" })).toBeDisabled();
 
     cleanup();
     render(<App api={fakeApi()} />);
@@ -72,7 +83,7 @@ describe("proposal browser slice", () => {
     expect(screen.getByRole("button", { name: "Creating…" })).toBeDisabled();
     finishCreate(campaign);
     await screen.findByRole("button", { name: "Allow grounded AI" });
-    expect(screen.getByRole("button", { name: "Ask grounded question" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Submit Ask" })).toBeDisabled();
   });
 
   it("creates a campaign, identifies sources, and keeps Draft and proposal separate from canon", async () => {
@@ -85,7 +96,7 @@ describe("proposal browser slice", () => {
     expect(screen.getAllByText("revision_alpha").length).toBeGreaterThan(1);
     expect(screen.getByRole("heading", { name: "Proposal version 1" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Complete before and after content" })).toHaveTextContent("Before · preparation");
-    expect(screen.getByRole("heading", { name: "Ask about this revision" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Grounded AI for this revision" })).toBeInTheDocument();
     expect(screen.queryByText("Canon question")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Complete before and after content" })).toHaveTextContent("## Proposed addition");
   });
@@ -94,7 +105,7 @@ describe("proposal browser slice", () => {
     let attempts = 0;
     const api = fakeApi({ resumeGeneration: vi.fn(async () => { attempts += 1; if (attempts === 1) throw new Error("provider_retryable_failure"); return []; }) });
     await openRecord(api);
-    fireEvent.click(screen.getByRole("button", { name: "Ask grounded question" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit Ask" }));
     await screen.findByRole("alert");
     expect(screen.getByRole("button", { name: "Resume stream after event 0" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Resume stream after event 0" }));
@@ -104,7 +115,7 @@ describe("proposal browser slice", () => {
   it("keeps an empty pending stream resumable", async () => {
     const api = fakeApi({ resumeGeneration: vi.fn(async () => []), readGeneration: vi.fn(async () => pending) });
     await openRecord(api);
-    fireEvent.click(screen.getByRole("button", { name: "Ask grounded question" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit Ask" }));
     expect(await screen.findByRole("button", { name: "Resume stream after event 0" })).toBeEnabled();
     expect(screen.getByText("Stream pending. Last event 0.")).toBeInTheDocument();
   });
@@ -113,10 +124,10 @@ describe("proposal browser slice", () => {
     const failed = { ...pending, status: "failed" as const };
     const api = fakeApi({ resumeGeneration: vi.fn(async () => []), readGeneration: vi.fn(async () => failed) });
     await openRecord(api);
-    fireEvent.click(screen.getByRole("button", { name: "Ask grounded question" }));
-    await screen.findByText("The generation failed. Submit a new question to retry.");
+    fireEvent.click(screen.getByRole("button", { name: "Submit Ask" }));
+    await screen.findByText("The generation failed. Start a new explicit request to run another inference.");
     expect(screen.queryByRole("button", { name: /Resume stream/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ask grounded question" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Submit Ask" })).toBeEnabled();
   });
 
   it("resumes after the last event observed by the browser", async () => {
@@ -133,7 +144,7 @@ describe("proposal browser slice", () => {
       readGeneration: vi.fn(async () => { reads += 1; return reads === 1 ? { ...pending, last_sequence: 3 } : { ...complete, terminal_content: "First. Third." }; }),
     });
     await openRecord(api);
-    fireEvent.click(screen.getByRole("button", { name: "Ask grounded question" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit Ask" }));
     const button = await screen.findByRole("button", { name: "Resume stream after event 2" });
     fireEvent.click(button);
     await screen.findByText(/First\. Third\./);
@@ -144,10 +155,10 @@ describe("proposal browser slice", () => {
     let campaignAttempts = 0;
     const createCampaign = vi.fn(async () => { campaignAttempts += 1; if (campaignAttempts === 1) throw new Error("transport_lost"); return campaign; });
     let askAttempts = 0;
-    const startGeneration = vi.fn(async (_campaignId: string, _revisionId: string, _action: string, _prompt: string, _generationId: string, _context: object) => { askAttempts += 1; if (askAttempts === 1) throw new Error("transport_lost"); return pending; });
+    const startGeneration = vi.fn(async (_campaignId: string, _revisionId: string, action: GenerationView["action"], _prompt: string, generationId: string, context: GenerationView["context"]) => { askAttempts += 1; if (askAttempts === 1) throw new Error("transport_lost"); return { ...pending, generation_id: generationId, action, context }; });
     let proposalAttempts = 0;
     const createProposal = vi.fn(async () => { proposalAttempts += 1; if (proposalAttempts === 1) throw new Error("transport_lost"); return proposal; });
-    const api = fakeApi({ createCampaign, startGeneration, createProposal });
+    const api = fakeApi({ createCampaign, startGeneration, readGeneration: vi.fn(async () => ({ ...complete, action: "generate" as const })), createProposal });
     render(<App api={api} />);
     await screen.findByText("Provider: Ready");
     fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
@@ -156,15 +167,16 @@ describe("proposal browser slice", () => {
     await screen.findByRole("heading", { level: 1, name: "Synthetic Campaign" });
     expect(createCampaign.mock.calls[0].slice(1)).toEqual(createCampaign.mock.calls[1].slice(1));
 
-    fireEvent.click(screen.getByRole("button", { name: "Ask grounded question" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Generate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit Generate" }));
     await screen.findByRole("alert");
-    fireEvent.click(screen.getByRole("button", { name: "Ask grounded question" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit Generate" }));
     await screen.findByText("The station is quiet.");
     expect(startGeneration.mock.calls[0][4]).toBe(startGeneration.mock.calls[1][4]);
 
-    fireEvent.click(screen.getByRole("button", { name: "Create proposal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create proposal for Synthetic Campaign" }));
     await screen.findByRole("alert");
-    fireEvent.click(screen.getByRole("button", { name: "Create proposal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create proposal for Synthetic Campaign" }));
     await screen.findByRole("heading", { name: "Exact diff" });
     expect(createProposal.mock.calls[0].slice(2)).toEqual(createProposal.mock.calls[1].slice(2));
   });
@@ -245,5 +257,49 @@ describe("proposal browser slice", () => {
     render(<App api={fakeApi()} />);
     await screen.findByText("Provider: Ready");
     for (const label of ["Import", "Export", "Player", "Billing", "VTT", "Audio"]) expect(screen.queryByRole("button", { name: label })).not.toBeInTheDocument();
+  });
+
+  it("hydrates an exact proposal deep link through the existing general v2 reads", async () => {
+    window.history.replaceState(null, "", "/?proposal=proposal_alpha&version=1");
+    const api = fakeApi();
+    render(<App api={api} />);
+    expect(await screen.findByRole("heading", { name: "Proposal version 1" })).toBeVisible();
+    expect(api.readProposal).toHaveBeenCalledWith("proposal_alpha", 1);
+    expect(api.readGeneration).toHaveBeenCalledWith("generation_alpha");
+    expect(api.readRevision).toHaveBeenCalledWith("campaign_alpha", "revision_alpha");
+    expect(api.readRecord).toHaveBeenCalledWith("campaign_alpha", "revision_alpha", "campaign-main");
+    window.history.replaceState(null, "", "/");
+  });
+
+  it.each([
+    ["Ask", { ...complete, action: "ask" as const }, false, false],
+    ["Check", { ...complete, action: "check" as const }, false, false],
+    ["head record Generate", { ...complete, action: "generate" as const }, true, false],
+    ["campaign Generate", { ...complete, action: "generate" as const, context: { scope: "campaign" as const } }, false, false],
+    ["historical record Generate", { ...complete, action: "generate" as const }, false, true],
+  ])("gates exact Draft deep links for %s", async (_label, loadedGeneration, proposalAllowed, historical) => {
+    window.history.replaceState(null, "", "/?generation=generation_alpha");
+    const loadedCampaign = historical ? { ...campaign, head_revision: "revision_beta" } : campaign;
+    const api = fakeApi({ readGeneration: vi.fn(async () => loadedGeneration), readRevision: vi.fn(async () => loadedCampaign) });
+    render(<App api={api} />);
+    await screen.findByRole("heading", { name: loadedGeneration.context.scope === "campaign" ? "Campaign Draft" : "Grounded Draft" });
+    expect(screen.queryByRole("button", { name: "Create proposal for Synthetic Campaign" })).toBe(proposalAllowed ? screen.getByRole("button", { name: "Create proposal for Synthetic Campaign" }) : null);
+    if (historical) expect(screen.getByRole("link", { name: "Open head to create a proposal." })).toBeVisible();
+    else expect(screen.queryByRole("link", { name: "Open head to create a proposal." })).not.toBeInTheDocument();
+    cleanup(); window.history.replaceState(null, "", "/");
+  });
+
+  it("preserves a stale proposal deep link and suppresses approval", async () => {
+    window.history.replaceState(null, "", "/?proposal=proposal_alpha&version=1");
+    const currentHead = { ...campaign, head_revision: "revision_beta" };
+    const api = fakeApi({ readRevision: vi.fn(async () => currentHead), readGeneration: vi.fn(async (): Promise<GenerationView> => ({ ...complete, action: "generate" })) });
+    render(<App api={api} />);
+    expect(await screen.findByRole("heading", { name: "Proposal version 1" })).toBeVisible();
+    expect(screen.getByText("Stale base, not published")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Approve exact diff" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject proposal" })).toBeEnabled();
+    expect(screen.getAllByText("revision_alpha").length).toBeGreaterThan(0);
+    expect(api.approveProposal).not.toHaveBeenCalled();
+    window.history.replaceState(null, "", "/");
   });
 });

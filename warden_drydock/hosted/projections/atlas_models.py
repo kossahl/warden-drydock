@@ -431,7 +431,7 @@ def encode_cursor(binding: dict[str, object]) -> str:
     envelope = {
         "binding": binding,
         "digest": hashlib.sha256(canonical).hexdigest(),
-        "version": 1,
+        "version": 2,
     }
     return _base64url_encode(
         json.dumps(
@@ -446,7 +446,7 @@ def decode_cursor(value: str) -> dict[str, object]:
         if set(envelope) != {"binding", "digest", "version"}:
             raise ValueError
         binding = envelope["binding"]
-        if envelope["version"] != 1 or not isinstance(binding, dict):
+        if envelope["version"] != 2 or not isinstance(binding, dict):
             raise ValueError
         canonical = json.dumps(
             binding, ensure_ascii=False, separators=(",", ":"), sort_keys=True

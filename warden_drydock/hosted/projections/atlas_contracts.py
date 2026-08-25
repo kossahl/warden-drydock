@@ -11,6 +11,9 @@ from .atlas_models import (
 )
 
 
+ATLAS_HTTP_CONTRACT_VERSION = 2
+
+
 def revision_ref(bundle: AtlasProjectionBundle) -> dict[str, object]:
     return {
         "revision_id": bundle.revision_id,
@@ -60,7 +63,7 @@ def campaign_collection_contract(
 ) -> dict[str, object]:
     return {
         "contract_name": "atlas_campaign_collection",
-        "contract_version": 1,
+        "contract_version": ATLAS_HTTP_CONTRACT_VERSION,
         "campaigns": [
             {
                 "campaign_id": head.campaign_id,
@@ -97,7 +100,7 @@ def overview_contract(
     )
     return {
         "contract_name": "atlas_overview",
-        "contract_version": 1,
+        "contract_version": ATLAS_HTTP_CONTRACT_VERSION,
         "binding": revision_binding(viewed, head),
         "campaign_name": viewed.campaign_name,
         "adapter_id": viewed.adapter_id,
@@ -129,7 +132,7 @@ def workflow_summary_contract(
         raise ValueError("unsafe_binding")
     return {
         "contract_name": "atlas_workflow_summary",
-        "contract_version": 1,
+        "contract_version": ATLAS_HTTP_CONTRACT_VERSION,
         "binding": revision_binding(viewed, head),
         "draft_generation_count": draft_generation_count,
         "proposal_counts": {key: proposal_counts[key] for key in sorted(required)},
@@ -145,7 +148,7 @@ def record_library_contract(
     query = result.query
     return {
         "contract_name": "atlas_record_library_result",
-        "contract_version": 1,
+        "contract_version": ATLAS_HTTP_CONTRACT_VERSION,
         "binding": revision_binding(viewed, head),
         "normalized_query": query.query.casefold(),
         "filters": {
@@ -171,7 +174,7 @@ def record_detail_contract(
     payload["content"] = record.content
     return {
         "contract_name": "atlas_record_detail",
-        "contract_version": 1,
+        "contract_version": ATLAS_HTTP_CONTRACT_VERSION,
         "binding": revision_binding(viewed, head),
         "record": payload,
     }
@@ -184,7 +187,7 @@ def neighborhood_contract(
 ) -> dict[str, object]:
     return {
         "contract_name": "atlas_depth_1_neighborhood",
-        "contract_version": 1,
+        "contract_version": ATLAS_HTTP_CONTRACT_VERSION,
         "binding": revision_binding(viewed, head),
         "depth": 1,
         "limit": value.query.limit,
@@ -256,7 +259,7 @@ def approved_history_contract(
 ) -> dict[str, object]:
     return {
         "contract_name": "atlas_approved_history_collection",
-        "contract_version": 1,
+        "contract_version": ATLAS_HTTP_CONTRACT_VERSION,
         "binding": revision_binding(viewed, head),
         "subject_record_id": result.query.subject_record_id,
         "limit": result.query.limit,

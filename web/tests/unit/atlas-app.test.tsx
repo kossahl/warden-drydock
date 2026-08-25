@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "../../src/App";
 import type { AtlasApi } from "../../src/api/atlasClient";
-import { ApiError } from "../../src/api/client";
-import { binding, campaigns, detail, fullHistory, headRevision, neighborhood, newestFiveHistory, oldRevision, overview, readinessUnavailable, recordHistory, records, workflow } from "../fixtures/atlas";
+import { ApiError, type SliceApi } from "../../src/api/client";
+import type { GenerationView, ProposalView, ProviderReadiness } from "../../src/contracts/v2";
+import { binding, campaigns, detail, fullHistory, generations, headRevision, neighborhood, newestFiveHistory, oldRevision, overview, proposals, readinessUnavailable, recordHistory, records, workflow } from "../fixtures/atlas";
 
 function fakeAtlas(overrides: Partial<AtlasApi> = {}): AtlasApi {
   return {
@@ -14,6 +15,8 @@ function fakeAtlas(overrides: Partial<AtlasApi> = {}): AtlasApi {
     neighborhood: vi.fn(async () => neighborhood),
     history: vi.fn(async (_campaign, query) => query.limit === 5 ? newestFiveHistory : query.subject_record_id ? recordHistory : fullHistory),
     workflow: vi.fn(async () => workflow),
+    generations: vi.fn(async () => generations),
+    proposals: vi.fn(async () => proposals),
     ...overrides,
   };
 }
@@ -21,6 +24,11 @@ function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((finish) => { resolve = finish; });
   return { promise, resolve };
+}
+const ready: ProviderReadiness = { contract_name: "provider_readiness_response", contract_version: 2, provider_configured: true, provider_available: true, consent_current: true, consent_identity_digest: "9".repeat(64), ai_available: true };
+function generationApi(context: GenerationView["context"], action: GenerationView["action"] = "generate", sourceRevision = "revision_two") {
+  const complete: GenerationView = { contract_name: "generation_view", contract_version: 2, generation_id: "generation_ui", campaign_id: "campaign_atlas", source_revision: sourceRevision, action, context, session_id: null, draft_authority: "draft", status: "complete", sources: [{ source_id: "record-one", authority: "canon", revision_id: sourceRevision, order: 1, excerpt: "Pinned excerpt", excerpt_digest: "1".repeat(64) }], source_set_digest: "2".repeat(64), last_sequence: 1, terminal_content: "A grounded Draft.", terminal_content_digest: "3".repeat(64) };
+  return { readiness: vi.fn(async () => ready), consent: vi.fn(async () => ready), startGeneration: vi.fn(async () => ({ ...complete, status: "pending", terminal_content: null, terminal_content_digest: null })), resumeGeneration: vi.fn(async () => []), readGeneration: vi.fn(async () => complete), createProposal: vi.fn(async () => ({ proposal_id: "proposal_ui", proposal_version: 1 } as ProposalView)) } as unknown as SliceApi;
 }
 
 describe("Campaign Atlas browser experience", () => {
@@ -36,8 +44,9 @@ describe("Campaign Atlas browser experience", () => {
     expect(await within(recent).findAllByRole("listitem")).toHaveLength(5);
     expect(within(recent).getAllByRole("heading", { level: 3 }).map((node) => node.textContent)).toEqual(["Revision 6", "Revision 5", "Revision 4", "Revision 3", "Revision 2"]);
     expect(api.history).toHaveBeenCalledWith("campaign_atlas", expect.objectContaining({ limit: 5, direction: "backward" }));
-    expect(screen.queryByRole("button", { name: /Ask|Check|Generate/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Non-canon work" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Submit Ask" })).toBeDisabled();
+    expect(screen.getByRole("heading", { name: "Drafts" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Proposals" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Accepted (legacy) (1)" })).toBeVisible();
   });
 
@@ -62,7 +71,9 @@ describe("Campaign Atlas browser experience", () => {
     expect(container.querySelector("script")).toBeNull();
     fireEvent.click(screen.getByText("Exact source text"));
     expect(screen.getByText(/javascript:alert/)).toBeVisible();
-    expect(screen.getByText("1 explicit relationship. Relationship map and list controls are reserved for the next Atlas package.")).toBeVisible();
+    const relationships = screen.getByRole("heading", { name: "Relationships" }).closest("section")!;
+    expect(within(relationships).getByRole("button", { name: "Map", pressed: true })).toBeVisible();
+    expect(within(relationships).getAllByRole("link", { name: "Open Legacy Ship" })).toHaveLength(2);
   });
 
   it("keeps a historical revision selected until Open head", async () => {
@@ -126,7 +137,7 @@ describe("Campaign Atlas browser experience", () => {
     window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/private-record?revision=revision_two");
     const recordApi = fakeAtlas({ record: vi.fn(async () => { throw new ApiError(404, "not_found"); }) });
     render(<App atlasApi={recordApi} providerReadiness={async () => readinessUnavailable} />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("requested Atlas view was not found");
+    expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent("requested Atlas view was not found");
     expect(screen.queryByText("private-record")).not.toBeInTheDocument();
   });
 
@@ -152,7 +163,7 @@ describe("Campaign Atlas browser experience", () => {
     expect(await screen.findByText("No records match this search and filter combination.")).toBeVisible();
   });
 
-  it("activates server cursors, clears them on filters, and keeps prior results while loading", async () => {
+  it("activates server cursors, clears them on filters, and suppresses stale results while loading", async () => {
     const pending = deferred<typeof records>();
     const filtered = deferred<typeof records>();
     let calls = 0;
@@ -162,7 +173,7 @@ describe("Campaign Atlas browser experience", () => {
     await screen.findByText("2 matching records.");
     fireEvent.click(screen.getByRole("link", { name: "Next" }));
     expect(window.location.search).toContain("cursor=cursor_next");
-    expect(screen.getByRole("link", { name: "Station Keeper" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Station Keeper" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Records" }).closest("section")).toHaveAttribute("aria-busy", "true");
     await act(async () => pending.resolve({ ...records, previous_cursor: "cursor_previous", next_cursor: null }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Records" }).closest("section")).toHaveAttribute("aria-busy", "false"));
@@ -175,5 +186,115 @@ describe("Campaign Atlas browser experience", () => {
     window.history.replaceState(null, "", "/campaigns/campaign_atlas/history?revision=revision_two");
     render(<App atlasApi={fakeAtlas({ history: vi.fn(async () => removed) })} providerReadiness={async () => readinessUnavailable} />);
     expect(await screen.findByRole("link", { name: "Removed record record-one" })).toHaveAttribute("href", expect.stringContaining("revision=revision_one"));
+  });
+
+  it("preserves duplicate and self relationship occurrences and resets only the relationship cursor on navigation", async () => {
+    const edges = [
+      { ...neighborhood.edges[0], edge_id: `edge_${"1".repeat(64)}`, occurrence_order: 1 },
+      { ...neighborhood.edges[0], edge_id: `edge_${"2".repeat(64)}`, occurrence_order: 2, context: "Second occurrence." },
+      { ...neighborhood.edges[0], edge_id: `edge_${"3".repeat(64)}`, occurrence_order: 3, source_record_id: "record-one", target_record_id: "record-one", relationship: "remembers", context: "Self occurrence." },
+    ];
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_two&q=station&type=npc&cursor=library_page&relationship_cursor=edge_page&generation_cursor=draft_page&proposal_cursor=proposal_page");
+    const { container } = render(<App atlasApi={fakeAtlas({ neighborhood: vi.fn(async () => ({ ...neighborhood, edges, total_edges: 3 })) })} providerReadiness={async () => readinessUnavailable} />);
+    await screen.findByRole("heading", { name: "Station Keeper", level: 1 });
+    expect(container.querySelectorAll(".relationship-list > li")).toHaveLength(3);
+    expect(container.querySelectorAll(".relationship-focus .relationship-card")).toHaveLength(1);
+    const neighbor = container.querySelector<HTMLAnchorElement>(".relationship-list a")!;
+    expect(neighbor.href).toContain("q=station"); expect(neighbor.href).toContain("type=npc"); expect(neighbor.href).toContain("cursor=library_page"); expect(neighbor.href).not.toContain("relationship_cursor"); expect(neighbor.href).not.toContain("generation_cursor"); expect(neighbor.href).not.toContain("proposal_cursor");
+    expect(screen.getByRole("group", { name: "Relationship view" })).toBeVisible();
+    const listButton = screen.getByRole("button", { name: "List" }); fireEvent.click(listButton); expect(listButton).toHaveFocus(); expect(listButton).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows persisted workflow bindings and publication-safe status links", async () => {
+    const generationRows = { ...generations, items: [{ generation_id: "generation_one", action: "check" as const, context: { scope: "campaign" as const }, source_revision: headRevision, source_set_digest: "4".repeat(64), status: "complete" as const, retryable: null, created_at: "2026-08-25T08:00:00Z" }, { generation_id: "generation_failed", action: "ask" as const, context: { scope: "campaign" as const }, source_revision: headRevision, source_set_digest: "5".repeat(64), status: "failed" as const, retryable: true, created_at: "2026-08-25T07:00:00Z" }] };
+    const proposalRows = { ...proposals, items: [{ proposal_id: "proposal_one", proposal_version: 2, generation_id: "generation_two", action: "generate" as const, context: { scope: "record" as const, record_id: "record-one", content_digest: detail.record.content_digest }, subject_record_id: "record-one", subject_content_digest: detail.record.content_digest, source_revision: headRevision, base_revision: oldRevision, status: "conflict" as const, validation_status: "passed" as const, published_revision_id: null, created_at: "2026-08-25T08:01:00Z" }] };
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas?revision=revision_two");
+    render(<App atlasApi={fakeAtlas({ generations: vi.fn(async () => generationRows), proposals: vi.fn(async () => proposalRows) })} providerReadiness={async () => readinessUnavailable} />);
+    expect(await screen.findByText("Draft ready, not canon")).toBeVisible();
+    expect(screen.getByText("Conflict, not published")).toBeVisible();
+    expect(screen.getAllByRole("link", { name: "Open Draft" })[0]).toHaveAttribute("href", "/?generation=generation_one");
+    expect(screen.getByRole("link", { name: "Review proposal" })).toHaveAttribute("href", "/?proposal=proposal_one&version=2");
+    expect(screen.getByText("Provider reported this failure as retryable. Starting another inference requires a new explicit request.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Retry (Draft|generation)/ })).not.toBeInTheDocument();
+  });
+
+  it("starts an explicit record Generate with the exact pinned digest and no session", async () => {
+    const slice = generationApi({ scope: "record", record_id: "record-one", content_digest: detail.record.content_digest });
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+    render(<App api={slice} atlasApi={fakeAtlas()} />);
+    await screen.findByRole("heading", { name: "Station Keeper", level: 1 });
+    fireEvent.click(screen.getByRole("radio", { name: "Generate" }));
+    expect(slice.startGeneration).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Generation brief"), { target: { value: "Add a consequence" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit Generate" }));
+    await screen.findByText("A grounded Draft.");
+    expect(slice.startGeneration).toHaveBeenCalledWith("campaign_atlas", "revision_two", "generate", "Add a consequence", expect.any(String), { scope: "record", record_id: "record-one", content_digest: detail.record.content_digest });
+    expect(screen.getByRole("button", { name: "Review as proposal for Station Keeper" })).toBeVisible();
+  });
+
+  it("replays an uncertain start with the same immutable generation request", async () => {
+    const slice = generationApi({ scope: "record", record_id: "record-one", content_digest: detail.record.content_digest }, "ask");
+    vi.mocked(slice.startGeneration).mockRejectedValueOnce(new Error("transport_lost"));
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+    render(<App api={slice} atlasApi={fakeAtlas()} />);
+    await screen.findByRole("heading", { name: "Station Keeper", level: 1 });
+    fireEvent.change(screen.getByLabelText("Question"), { target: { value: "What changed?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit Ask" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry exact start request" }));
+    await screen.findByText("A grounded Draft.");
+    expect(slice.startGeneration).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(slice.startGeneration).mock.calls[0]).toEqual(vi.mocked(slice.startGeneration).mock.calls[1]);
+  });
+
+  it("clears Grounded AI state when navigating from one record binding to another", async () => {
+    const secondDetail = { ...detail, record: { ...detail.record, record_id: "record-two", name: "Legacy Ship", content_digest: "8".repeat(64) } };
+    const secondNeighborhood = { ...neighborhood, focus: secondDetail.record, neighbors: [detail.record], edges: [{ ...neighborhood.edges[0], source_record_id: "record-two", target_record_id: "record-one" }] };
+    const atlas = fakeAtlas({ record: vi.fn(async (_campaign, recordId) => recordId === "record-two" ? secondDetail : detail), neighborhood: vi.fn(async (_campaign, recordId) => recordId === "record-two" ? secondNeighborhood : neighborhood) });
+    const slice = generationApi({ scope: "record", record_id: "record-one", content_digest: detail.record.content_digest });
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+    render(<App api={slice} atlasApi={atlas} />);
+    await screen.findByRole("heading", { name: "Station Keeper", level: 1 });
+    fireEvent.click(screen.getByRole("radio", { name: "Generate" }));
+    fireEvent.change(screen.getByLabelText("Generation brief"), { target: { value: "Draft for record one" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit Generate" }));
+    await screen.findByText("A grounded Draft.");
+    fireEvent.click(screen.getAllByRole("link", { name: "Open Legacy Ship" })[0]);
+    await screen.findByRole("heading", { name: "Legacy Ship", level: 1 });
+    expect(screen.queryByText("A grounded Draft.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Review as proposal/ })).not.toBeInTheDocument();
+  });
+
+  it("clears a historical Draft when opening the head revision", async () => {
+    const slice = generationApi({ scope: "record", record_id: "record-one", content_digest: detail.record.content_digest }, "generate", "revision_one");
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_one");
+    render(<App api={slice} atlasApi={fakeAtlas()} />);
+    await screen.findByRole("heading", { name: "Station Keeper", level: 1 });
+    fireEvent.click(screen.getByRole("radio", { name: "Generate" }));
+    fireEvent.change(screen.getByLabelText("Generation brief"), { target: { value: "Historical draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit Generate" }));
+    await screen.findByText("A grounded Draft.");
+    fireEvent.click(screen.getByRole("link", { name: "Open head to create a proposal." }));
+    await waitFor(() => expect(window.location.search).toBe("?revision=revision_two"));
+    expect(screen.queryByText("A grounded Draft.")).not.toBeInTheDocument();
+  });
+
+  it("uses a new proposal identity for a new generation after an uncertain proposal result", async () => {
+    const slice = generationApi({ scope: "record", record_id: "record-one", content_digest: detail.record.content_digest });
+    vi.mocked(slice.createProposal).mockRejectedValueOnce(new Error("transport_lost"));
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+    render(<App api={slice} atlasApi={fakeAtlas()} />);
+    await screen.findByRole("heading", { name: "Station Keeper", level: 1 });
+    fireEvent.click(screen.getByRole("radio", { name: "Generate" }));
+    fireEvent.change(screen.getByLabelText("Generation brief"), { target: { value: "First draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit Generate" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review as proposal for Station Keeper" }));
+    await screen.findByRole("alert");
+    fireEvent.change(screen.getByLabelText("Generation brief"), { target: { value: "Second draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit Generate" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review as proposal for Station Keeper" }));
+    await waitFor(() => expect(slice.createProposal).toHaveBeenCalledTimes(2));
+    const calls = vi.mocked(slice.createProposal).mock.calls;
+    expect(calls[0][2]).not.toBe(calls[1][2]);
+    expect(calls[0][3]).not.toBe(calls[1][3]);
   });
 });

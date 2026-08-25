@@ -139,10 +139,10 @@ runtime a dependency of campaign repositories.
   mutation; any promotion to canon must be visible in that mutation.
 - Retrieval is deterministic before provider generation. Embeddings are
   deferred until measured misses establish a need.
-- The useful campaign workspace requires AI. Initial onboarding therefore gates
-  workspace access on provider configuration and explicit consent to transmit
+- AI actions require provider configuration and explicit consent to transmit
   the minimal retrieved campaign excerpts. Provider changes or material
-  data-handling changes require renewed consent.
+  data-handling changes require renewed consent. Deterministic Atlas reads stay
+  available when setup, consent, provider availability, or generation fails.
 - The selected provider is chosen through a documented bake-off. Provider
   secrets and workflow-only data never become campaign content.
 - The Campaign Atlas consists of the record library, a focused neighborhood

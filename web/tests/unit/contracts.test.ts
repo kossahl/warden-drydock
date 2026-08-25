@@ -1,6 +1,6 @@
-import atlasExamples from "../../../docs/contracts/hosted/http/atlas/v1/examples.json";
-import atlasSchema from "../../../docs/contracts/hosted/http/atlas/v1/atlas.schema.json";
-import { campaigns, detail, fullHistory, neighborhood, overview, records, workflow } from "../fixtures/atlas";
+import atlasExamples from "../../../docs/contracts/hosted/http/atlas/v2/examples.json";
+import atlasSchema from "../../../docs/contracts/hosted/http/atlas/v2/atlas.schema.json";
+import { campaigns, detail, fullHistory, generations, neighborhood, overview, proposals, records, workflow } from "../fixtures/atlas";
 
 type SchemaNode = {
   $ref?: string;
@@ -40,7 +40,7 @@ function validateSchema(value: unknown, node: SchemaNode, path = "$."): void {
   if (node.items && Array.isArray(value)) value.forEach((item, index) => validateSchema(item, node.items!, `${path}${index}.`));
 }
 
-describe("hosted contract v1 parity", () => {
+describe("hosted Atlas contract v2 parity", () => {
   it("keeps every consumed Atlas response fixture aligned with the committed closed examples", () => {
     const consumed = {
       atlas_campaign_collection: ["campaign_collection", campaigns],
@@ -50,6 +50,8 @@ describe("hosted contract v1 parity", () => {
       atlas_depth_1_neighborhood: ["neighborhood", neighborhood],
       atlas_approved_history_collection: ["history_collection", fullHistory],
       atlas_workflow_summary: ["workflow_summary", workflow],
+      atlas_generation_collection: ["generation_collection", generations],
+      atlas_proposal_collection: ["proposal_collection", proposals],
     } as const;
     const examples = new Map(atlasExamples.examples.map((example) => [example.contract_name, example]));
     for (const [contractName, [definitionName, typedFixture]] of Object.entries(consumed)) {

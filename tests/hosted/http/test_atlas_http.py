@@ -91,11 +91,12 @@ class FlatAtlasQueryTests(unittest.TestCase):
                     required=frozenset({"revision_id"}),
                 )
 
-    def test_removed_and_forbidden_generation_routes_are_not_registered(self) -> None:
+    def test_removed_asks_and_mutating_atlas_generation_routes_are_not_registered(self) -> None:
         patterns = tuple(item.pattern for item in _ROUTES.values())
         self.assertNotIn("ask", _ROUTES)
         self.assertFalse(any("/asks" in item for item in patterns))
-        self.assertFalse(any("atlas/generations" in item for item in patterns))
+        self.assertIn("atlas_generations", _ROUTES)
+        self.assertFalse(any("/atlas/generations/" in item for item in patterns))
 
 
 class AtlasApplicationTests(unittest.TestCase):
@@ -275,6 +276,8 @@ class AtlasApplicationTests(unittest.TestCase):
             (f"/campaigns/campaign_atlas/atlas/records/campaign-main/neighborhood?{binding}&depth=1&limit=50", "atlas_depth_1_neighborhood"),
             (f"/campaigns/campaign_atlas/atlas/history?{binding}&limit=50", "atlas_approved_history_collection"),
             (f"/campaigns/campaign_atlas/atlas/workflow-summary?{binding}", "atlas_workflow_summary"),
+            (f"/campaigns/campaign_atlas/atlas/generations?{binding}&limit=50", "atlas_generation_collection"),
+            (f"/campaigns/campaign_atlas/atlas/proposals?{binding}&limit=50", "atlas_proposal_collection"),
         )
         for route, contract_name in routes:
             with self.subTest(route=route), urllib.request.urlopen(base + route) as response:
@@ -287,6 +290,7 @@ class AtlasApplicationTests(unittest.TestCase):
             f"/campaigns/campaign_atlas/atlas/overview?{binding}&revision_id=revision_other",
             "/campaigns/campaign_atlas/atlas/overview?revision_id=%GG",
             f"/campaigns/campaign_atlas/atlas/records?{binding}",
+            f"/campaigns/campaign_atlas/atlas/proposals?{binding}&action=generate&limit=50",
         )
         for route in invalid:
             with self.subTest(invalid=route), self.assertRaises(urllib.error.HTTPError) as caught:
@@ -322,7 +326,7 @@ class AtlasApplicationTests(unittest.TestCase):
             "contract_name": "generation_start_request", "contract_version": 2,
             "generation_id": "generation_record", "campaign_id": "campaign_atlas",
             "source_revision": viewed["revision_id"], "action": "check",
-            "prompt": "Check the campaign record.",
+            "prompt": "What is this?",
             "context": {"scope": "record", "record_id": "campaign-main", "content_digest": "0" * 64},
         }
         with self.assertRaises(HTTPFailure) as caught:
@@ -339,6 +343,7 @@ class AtlasApplicationTests(unittest.TestCase):
         self.assertEqual((202, True, request["context"], 0), (
             status, dispatch, response["context"], self.provider.calls,
         ))
+        self.assertEqual("campaign-main", response["sources"][0]["source_id"])
         changed = deepcopy(request)
         changed["action"] = "generate"
         with self.assertRaises(HTTPFailure) as replay:
