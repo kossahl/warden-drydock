@@ -1,4 +1,5 @@
-import type { AtlasAuthority, AtlasCampaignCollection, AtlasHistoryCollection, AtlasNeighborhood, AtlasOverview, AtlasRecordDetail, AtlasRecordLibraryResult, AtlasRevisionRef, AtlasStatusFilter, AtlasWorkflowSummary, CampaignRevisionView } from "../contracts/v1";
+import type { AtlasAuthority, AtlasCampaignCollection, AtlasHistoryCollection, AtlasNeighborhood, AtlasOverview, AtlasRecordDetail, AtlasRecordLibraryResult, AtlasRevisionRef, AtlasStatusFilter, AtlasWorkflowSummary } from "../contracts/v1";
+import type { CampaignRevisionView } from "../contracts/v2";
 import { ApiError } from "./client";
 
 export interface AtlasRevisionQuery { revision_id: string; revision_ordinal: number; tree_digest: string; }

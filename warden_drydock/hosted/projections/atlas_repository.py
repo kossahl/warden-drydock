@@ -45,6 +45,9 @@ class InMemoryAtlasProjectionRepository:
     def replace(self, bundle: AtlasProjectionBundle) -> None:
         self.bundles[(bundle.campaign_id, bundle.revision_id)] = bundle
 
+    def delete(self, campaign_id: str, revision_id: str) -> None:
+        self.bundles.pop((campaign_id, revision_id), None)
+
     def get(self, campaign_id: str, revision_id: str) -> AtlasProjectionBundle:
         try:
             return self.bundles[(campaign_id, revision_id)]
@@ -268,6 +271,16 @@ class PostgresAtlasProjectionRepository:
             if persisted_records != expected_records or persisted_edges != expected_edges:
                 raise ValueError("persisted Atlas projection content mismatch")
 
+    def delete(self, campaign_id: str, revision_id: str) -> None:
+        require_public_id(campaign_id, "campaign_id")
+        require_public_id(revision_id, "revision_id")
+        with self._transaction() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM hosted_atlas_projection_checkpoint "
+                "WHERE campaign_id=%s AND revision_id=%s",
+                (campaign_id, revision_id),
+            )
+
     @staticmethod
     def _raw_status(kind: str | None, value: str | None) -> RawStatus | None:
         return RawStatus(StatusKind(kind), value) if kind is not None else None
@@ -429,6 +442,7 @@ class AtlasQueryService:
         }
 
     def record_library(self, query: RecordLibraryQuery) -> RecordLibraryResult:
+        self.validate_record_library_cursor(query)
         bundle = self.repository.get(query.campaign_id, query.revision_id)
         if bundle.tree_digest != query.tree_digest:
             raise ValueError("invalid_cursor_binding")
@@ -496,6 +510,18 @@ class AtlasQueryService:
             previous_cursor=previous_cursor,
         )
 
+    @classmethod
+    def validate_record_library_cursor(cls, query: RecordLibraryQuery) -> None:
+        if query.cursor is None:
+            return
+        binding = decode_cursor(query.cursor)
+        direction = binding.get("direction")
+        boundary = binding.get("boundary_record_id")
+        if not isinstance(boundary, str) or direction not in {"forward", "backward"}:
+            raise ValueError("invalid_cursor_binding")
+        if binding != cls._record_binding(query, direction, boundary):
+            raise ValueError("invalid_cursor_binding")
+
     def record_detail(
         self, campaign_id: str, revision_id: str, record_id: str
     ) -> AtlasRecord:
@@ -508,25 +534,24 @@ class AtlasQueryService:
 
     @staticmethod
     def _edge_binding(
-        bundle: AtlasProjectionBundle,
-        focus_record_id: str,
-        limit: int,
+        query: NeighborhoodQuery,
         direction: str,
         boundary: str,
     ) -> dict[str, object]:
         return {
             "boundary_edge_id": boundary,
-            "campaign_id": bundle.campaign_id,
+            "campaign_id": query.campaign_id,
             "direction": direction,
-            "focus_record_id": focus_record_id,
+            "focus_record_id": query.focus_record_id,
             "kind": "depth_1_neighborhood",
-            "limit": limit,
-            "revision_id": bundle.revision_id,
+            "limit": query.limit,
+            "revision_id": query.revision_id,
             "sort": "source_occurrence_edge",
-            "tree_digest": bundle.tree_digest,
+            "tree_digest": query.tree_digest,
         }
 
     def neighborhood(self, query: NeighborhoodQuery) -> AtlasNeighborhood:
+        self.validate_neighborhood_cursor(query)
         focus = self.record_detail(
             query.campaign_id, query.revision_id, query.focus_record_id
         )
@@ -544,10 +569,6 @@ class AtlasQueryService:
             direction = binding.get("direction")
             boundary = binding.get("boundary_edge_id")
             if not isinstance(boundary, str) or direction not in {"forward", "backward"}:
-                raise ValueError("invalid_cursor_binding")
-            if binding != self._edge_binding(
-                bundle, query.focus_record_id, query.limit, direction, boundary
-            ):
                 raise ValueError("invalid_cursor_binding")
             edge_ids = [item.edge_id for item in all_edges]
             try:
@@ -577,9 +598,7 @@ class AtlasQueryService:
             next_cursor=(
                 encode_cursor(
                     self._edge_binding(
-                        bundle,
-                        query.focus_record_id,
-                        query.limit,
+                        query,
                         "forward",
                         edges[-1].edge_id,
                     )
@@ -590,9 +609,7 @@ class AtlasQueryService:
             previous_cursor=(
                 encode_cursor(
                     self._edge_binding(
-                        bundle,
-                        query.focus_record_id,
-                        query.limit,
+                        query,
                         "backward",
                         edges[0].edge_id,
                     )
@@ -602,14 +619,26 @@ class AtlasQueryService:
             ),
         )
 
+    @classmethod
+    def validate_neighborhood_cursor(cls, query: NeighborhoodQuery) -> None:
+        if query.cursor is None:
+            return
+        binding = decode_cursor(query.cursor)
+        direction = binding.get("direction")
+        boundary = binding.get("boundary_edge_id")
+        if not isinstance(boundary, str) or direction not in {"forward", "backward"}:
+            raise ValueError("invalid_cursor_binding")
+        if binding != cls._edge_binding(query, direction, boundary):
+            raise ValueError("invalid_cursor_binding")
+
     @staticmethod
     def _history_binding(
-        query: ApprovedHistoryQuery, direction: str, boundary: int
+        query: ApprovedHistoryQuery, boundary: int
     ) -> dict[str, object]:
         return {
             "boundary_ordinal": boundary,
             "campaign_id": query.campaign_id,
-            "direction": direction,
+            "direction": query.direction,
             "kind": "approved_history",
             "limit": query.limit,
             "revision_id": query.revision_id,
@@ -621,6 +650,7 @@ class AtlasQueryService:
     def approved_history(
         self, query: ApprovedHistoryQuery
     ) -> ApprovedHistoryResult:
+        self.validate_history_cursor(query)
         target = self.repository.get(query.campaign_id, query.revision_id)
         if target.tree_digest != query.tree_digest:
             raise ValueError("invalid_cursor_binding")
@@ -639,29 +669,28 @@ class AtlasQueryService:
                     continue
                 entry = replace(entry, changes=changes)
             entries.append(entry)
-        filtered = tuple(sorted(entries, key=lambda item: item.ordinal))
+        filtered = tuple(sorted(
+            entries,
+            key=lambda item: item.ordinal,
+            reverse=query.direction == "backward",
+        ))
         start, end = 0, min(query.limit, len(filtered))
         if query.cursor is not None:
             binding = decode_cursor(query.cursor)
-            direction = binding.get("direction")
             boundary = binding.get("boundary_ordinal")
             if (
                 not isinstance(boundary, int)
                 or isinstance(boundary, bool)
-                or direction not in {"forward", "backward"}
             ):
                 raise ValueError("invalid_cursor_binding")
-            if binding != self._history_binding(query, direction, boundary):
+            if binding != self._history_binding(query, boundary):
                 raise ValueError("invalid_cursor_binding")
             ordinals = [item.ordinal for item in filtered]
             try:
                 index = ordinals.index(boundary)
             except ValueError as exc:
                 raise ValueError("invalid_cursor_binding") from exc
-            if direction == "forward":
-                start, end = index + 1, min(index + 1 + query.limit, len(filtered))
-            else:
-                start, end = max(0, index - query.limit), index
+            start, end = index + 1, min(index + 1 + query.limit, len(filtered))
         page = filtered[start:end]
         return ApprovedHistoryResult(
             query=replace(query, cursor=None),
@@ -669,16 +698,21 @@ class AtlasQueryService:
             total=len(filtered),
             next_cursor=(
                 encode_cursor(
-                    self._history_binding(query, "forward", page[-1].ordinal)
+                    self._history_binding(query, page[-1].ordinal)
                 )
                 if page and end < len(filtered)
                 else None
             ),
-            previous_cursor=(
-                encode_cursor(
-                    self._history_binding(query, "backward", page[0].ordinal)
-                )
-                if page and start > 0
-                else None
-            ),
+            previous_cursor=None,
         )
+
+    @classmethod
+    def validate_history_cursor(cls, query: ApprovedHistoryQuery) -> None:
+        if query.cursor is None:
+            return
+        binding = decode_cursor(query.cursor)
+        boundary = binding.get("boundary_ordinal")
+        if not isinstance(boundary, int) or isinstance(boundary, bool):
+            raise ValueError("invalid_cursor_binding")
+        if binding != cls._history_binding(query, boundary):
+            raise ValueError("invalid_cursor_binding")

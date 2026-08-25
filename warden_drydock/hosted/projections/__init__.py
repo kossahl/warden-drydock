@@ -5,7 +5,6 @@ from .atlas_rebuild import AtlasProjectionRebuilder
 from .atlas_contracts import (
     approved_history_contract,
     campaign_collection_contract,
-    contextual_generation_contract,
     neighborhood_contract,
     overview_contract,
     record_detail_contract,
@@ -23,7 +22,6 @@ __all__ = [
     "AtlasQueryService",
     "approved_history_contract",
     "campaign_collection_contract",
-    "contextual_generation_contract",
     "InMemoryAtlasProjectionRepository",
     "InMemoryProjectionRepository",
     "PostgresAtlasProjectionRepository",

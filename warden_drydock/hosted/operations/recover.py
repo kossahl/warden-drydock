@@ -25,15 +25,90 @@ def _query(database_url: str, sql: str) -> list[tuple[str, ...]]:
     return [tuple(line.split("\t")) for line in result.stdout.splitlines() if line]
 
 
+def _clear_pending_publications(
+    database_url: str, store: FileSnapshotStore
+) -> None:
+    """Quarantine incomplete pre-head publications so the prior head can recover."""
+    inventory = store.inventory()
+    by_revision = {(item.campaign_id, item.revision_id): item for item in inventory}
+    intents = _query(
+        database_url,
+        "SELECT campaign_id,revision_id,intent_token,status,COALESCE(parent_revision,''),ordinal::text,tree_digest,change_digest,intent_id "
+        "FROM hosted_publication_intent WHERE status IN ('pending','quarantined') ORDER BY campaign_id,ordinal",
+    )
+    if not intents:
+        return
+    heads = dict(_query(
+        database_url,
+        "SELECT campaign_id,revision_id FROM hosted_campaign_head ORDER BY campaign_id",
+    ))
+    statements = ["BEGIN", "SELECT pg_advisory_xact_lock(8231649237462)"]
+    cleanup: list[tuple[object, str]] = []
+    for row in intents:
+        campaign_id, revision_id, token, status, parent, ordinal, tree_digest, change_digest, intent_id = row
+        manifest = by_revision.get((campaign_id, revision_id))
+        if manifest is not None:
+            binding = (
+                manifest.publication_intent_token,
+                manifest.parent_revision or "",
+                str(manifest.ordinal),
+                manifest.tree_digest,
+                manifest.change_digest,
+            )
+            if binding != (token, parent, ordinal, tree_digest, change_digest):
+                raise RuntimeError("pending_snapshot_intent_binding_mismatch")
+            cleanup.append((manifest, status))
+        if status == "pending":
+            if heads.get(campaign_id) != (parent or None):
+                raise RuntimeError("pending_publication_parent_is_not_current_head")
+            if parent:
+                statements.append(
+                    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM hosted_campaign_head WHERE campaign_id="
+                    + _literal(campaign_id) + " AND revision_id=" + _literal(parent)
+                    + ") THEN RAISE EXCEPTION 'campaign head changed during pending cleanup'; END IF; END $$"
+                )
+            else:
+                statements.append(
+                    "DO $$ BEGIN IF EXISTS (SELECT 1 FROM hosted_campaign_head WHERE campaign_id="
+                    + _literal(campaign_id)
+                    + ") THEN RAISE EXCEPTION 'campaign head changed during pending cleanup'; END IF; END $$"
+                )
+        statements.append(
+            "DELETE FROM hosted_atlas_projection_checkpoint WHERE campaign_id="
+            + _literal(campaign_id) + " AND revision_id=" + _literal(revision_id)
+        )
+    statements.append("COMMIT")
+    subprocess.run(
+        ["psql", database_url, "-X", "-v", "ON_ERROR_STOP=1", "-f", "-"],
+        input=";\n".join(statements) + ";\n", text=True, check=True,
+    )
+    for manifest, status in cleanup:
+        if status == "pending":
+            store.discard_unpublished_snapshot(manifest)
+        else:
+            store.quarantine_snapshot(
+                manifest.tree_digest, manifest.campaign_id,
+                manifest.revision_id,
+                "quarantined publication cleared during operator recovery",
+            )
+
+
 def recover(database_url: str, snapshot_root: pathlib.Path) -> None:
     store = FileSnapshotStore(snapshot_root)
+    _clear_pending_publications(database_url, store)
     inventory = store.inventory()
     by_revision = {(item.campaign_id, item.revision_id): item for item in inventory}
     intents = _query(
         database_url,
         "SELECT campaign_id,revision_id,intent_token,status,COALESCE(parent_revision,''),ordinal::text,tree_digest,change_digest FROM hosted_publication_intent ORDER BY campaign_id,ordinal",
     )
-    if any(row[3] == "pending" for row in intents):
+    remaining_snapshots = {
+        (item.campaign_id, item.revision_id) for item in inventory
+    }
+    if any(
+        row[3] == "pending" and (row[0], row[1]) in remaining_snapshots
+        for row in intents
+    ):
         raise RuntimeError("pending_publication_intent_requires_operator_recovery")
     finalized = {
         (row[0], row[1], row[2], row[4] or None, int(row[5]), row[6], row[7])

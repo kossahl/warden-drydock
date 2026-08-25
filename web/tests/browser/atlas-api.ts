@@ -14,7 +14,7 @@ export async function installAtlasApi(page: Page, options: { failOverviewOnce?: 
     if (request.method() !== "GET") return route.fallback();
     if (path === "/api/v1/provider/readiness") return json(route, readinessUnavailable);
     if (path === "/api/v1/campaigns") return json(route, campaigns);
-    if (/\/revisions\/revision_(one|two)$/.test(path)) return json(route, { contract_name: "campaign_revision_view", contract_version: 1, campaign_id: "campaign_atlas", campaign_name: "Synthetic Atlas", adapter_id: "mothership", viewed_revision: path.endsWith("one") ? oldRevision : headRevision, head_revision: headRevision.revision_id, records: [] });
+    if (/\/revisions\/revision_(one|two)$/.test(path)) return json(route, { contract_name: "campaign_revision_view", contract_version: 2, campaign_id: "campaign_atlas", campaign_name: "Synthetic Atlas", adapter_id: "mothership", viewed_revision: path.endsWith("one") ? oldRevision : headRevision, head_revision: headRevision.revision_id, records: [] });
     if (path.endsWith("/atlas/overview")) {
       overviewAttempts += 1;
       if (options.failOverviewOnce && overviewAttempts === 1) return json(route, { error: { code: "service_unavailable" } }, 503);

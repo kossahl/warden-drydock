@@ -278,13 +278,16 @@ class GroundedAIServiceTests(unittest.TestCase):
                 with self.assertRaises(ConsentRequired):
                     self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
 
-    def test_live_generation_forces_base_revision_and_confirmed_facts(self):
+    def test_live_generation_requires_exact_base_revision_and_uses_confirmed_facts(self):
         live = LiveSessionService(self.repository)
         session = live.start("session_one", "campaign_one", "revision_one", "controller_one")
         live.capture("session_one", "controller_one", 1, session.workflow_version, event_id="question_one", device_id="device_one", operation_id="operation_one", device_order=1, capture_type=CaptureType.UNRESOLVED_QUESTION, text="Secret question")
         live.capture("session_one", "controller_one", 1, session.workflow_version, event_id="fact_one", device_id="device_one", operation_id="operation_two", device_order=2, capture_type=CaptureType.CONFIRMED_FACT, text="Door opened")
         self.service.record_consent(explicit=True)
-        record = self.service.start("generation_one", "campaign_one", "revision_new", Action.CHECK, "Check", session_id="session_one")
+        with self.assertRaisesRegex(ValueError, "unsafe_binding"):
+            self.service.start("generation_stale", "campaign_one", "revision_new", Action.CHECK, "Check", session_id="session_one")
+        self.assertEqual([], self.repository.dispatch_log)
+        record = self.service.start("generation_one", "campaign_one", "revision_one", Action.CHECK, "Check", session_id="session_one")
         self.assertEqual("revision_one", record.request.revision_id)
         texts = [item.text for item in record.request.envelope.excerpts]
         self.assertIn("Door opened", texts)

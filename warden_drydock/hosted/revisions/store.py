@@ -110,3 +110,20 @@ class FileSnapshotStore:
             (target / "quarantine-reason.txt").write_text(reason + "\n", encoding="utf-8")
         elif source.exists():
             shutil.rmtree(source)
+
+    def discard_unpublished_snapshot(self, manifest: SnapshotManifest) -> None:
+        """Remove one verified, non-canonical publication candidate for exact retry."""
+        if self.verify(
+            manifest.tree_digest, manifest.campaign_id, manifest.revision_id
+        ) != manifest:
+            raise SnapshotIntegrityError("unpublished snapshot binding mismatch")
+        target = (
+            self.snapshots / manifest.tree_digest / manifest.campaign_id
+            / manifest.revision_id
+        )
+        shutil.rmtree(target)
+        for parent in (target.parent, target.parent.parent):
+            try:
+                parent.rmdir()
+            except OSError:
+                break

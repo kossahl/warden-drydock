@@ -1,6 +1,6 @@
 import { atlasHistoryUrl, atlasOverviewUrl, atlasRecordsUrl } from "../../src/api/atlasClient";
 import { ContractClient, frontendCapabilities, type ContractTransport } from "../../src/api/client";
-import type { ContractEnvelope, OperationRequest } from "../../src/contracts/v1";
+import type { ContractEnvelope, OperationRequest } from "../../src/contracts/v2";
 
 describe("typed contract client authority boundary", () => {
   it("contains only read and observation capabilities", () => {
@@ -25,14 +25,14 @@ describe("typed contract client authority boundary", () => {
       },
     };
     const client = new ContractClient(transport);
-    expect(() => client.read("atlas_read", { contract_name: "campaign_atlas", contract_version: 2 as 1 })).toThrow(
+    expect(() => client.read("atlas_read", { contract_name: "campaign_atlas", contract_version: 1 as 2 })).toThrow(
       "unsupported_contract_version",
     );
     expect(called).toBe(false);
   });
 
   it("submits only a versioned API operation intent through the application service", async () => {
-    const submit = vi.fn(async () => ({ contract_name: "operation_result", contract_version: 1 as const }));
+    const submit = vi.fn(async () => ({ contract_name: "operation_result", contract_version: 2 as const }));
     const transport: ContractTransport = {
       async send<Response extends ContractEnvelope<string>>(): Promise<Response> {
         throw new Error("unexpected read");
@@ -41,7 +41,7 @@ describe("typed contract client authority boundary", () => {
     };
     const request: OperationRequest = {
       contract_name: "operation_request",
-      contract_version: 1,
+      contract_version: 2,
       request_id: "request_alpha",
       operation: "proposal_approve",
       idempotency_key: "idem_alpha",

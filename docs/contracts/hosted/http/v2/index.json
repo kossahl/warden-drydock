@@ -1,0 +1,12 @@
+{
+  "contract_name": "hosted_http_contract_index",
+  "contract_version": 2,
+  "schema": "http.schema.json",
+  "routes": "routes.json",
+  "examples": "examples.json",
+  "semantic_invariants": "semantic-invariants.json",
+  "scope": "local_single_warden_browser_slice",
+  "compatibility": "This complete v2 package is the only active general hosted HTTP API. The immutable v1 package remains at its stable path for historical traceability but is not an active runtime contract.",
+  "extends_transport_contracts": true,
+  "mutates_transport_contracts": false
+}

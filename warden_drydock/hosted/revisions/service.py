@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from .canonical import canonicalize_tree
 from .models import (
@@ -20,7 +21,12 @@ class RevisionService:
         self.store = store
         self.repository = repository
 
-    def publish(self, source: Path, intent: PublicationIntent, *, framework_version: str, adapter_version: str, validation_contract_digest: str) -> SnapshotManifest:
+    def publish(
+        self, source: Path, intent: PublicationIntent, *, framework_version: str,
+        adapter_version: str, validation_contract_digest: str,
+        before_finalize: Callable[[SnapshotManifest], object] | None = None,
+        rollback: Callable[[SnapshotManifest], object] | None = None,
+    ) -> SnapshotManifest:
         files, tree_digest = canonicalize_tree(source)
         if tree_digest != intent.tree_digest:
             raise SnapshotIntegrityError("publication intent tree digest mismatch")
@@ -35,10 +41,21 @@ class RevisionService:
         )
         self.repository.add_intent(intent)
         self.store.put_if_absent(source, manifest)
-        self.reconcile_manifest(manifest)
+        try:
+            self.reconcile_manifest(manifest, before_finalize=before_finalize)
+        except Exception:
+            if rollback is not None:
+                try:
+                    rollback(manifest)
+                except Exception:
+                    pass
+            raise
         return manifest
 
-    def reconcile_manifest(self, manifest: SnapshotManifest) -> bool:
+    def reconcile_manifest(
+        self, manifest: SnapshotManifest, *,
+        before_finalize: Callable[[SnapshotManifest], object] | None = None,
+    ) -> bool:
         stored_manifest = self.store.verify(
             manifest.tree_digest, manifest.campaign_id, manifest.revision_id
         )
@@ -59,6 +76,18 @@ class RevisionService:
                 if intent.status is not IntentStatus.FINALIZED:
                     self.repository.quarantine_intent(intent.intent_id)
             raise PublicationIntentError("snapshot publication intent is not uniquely matched")
+        if before_finalize is not None:
+            try:
+                before_finalize(manifest)
+            except Exception:
+                self.store.quarantine_snapshot(
+                    manifest.tree_digest,
+                    manifest.campaign_id,
+                    manifest.revision_id,
+                    "publication preparation failed",
+                )
+                self.repository.quarantine_intent(exact[0].intent_id)
+                raise
         try:
             return self.repository.finalize_head(exact[0])
         except (PublicationIntentError, StaleHeadError) as exc:

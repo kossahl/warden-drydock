@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
-import { browserId, httpSliceApi, type SliceApi } from "./api/client";
+import { browserId, httpSliceApi, recordGenerationContext, type SliceApi } from "./api/client";
 import { AuthorityBadge, RevisionStatus } from "./components/StatusPrimitives";
-import type { CampaignRevisionView, GenerationView, ProposalView, ProviderReadiness, RecordView } from "./contracts/v1";
+import type { CampaignRevisionView, GenerationView, ProposalView, ProviderReadiness, RecordView } from "./contracts/v2";
 
 type BusyAction = "campaign" | "consent" | "ask" | "proposal" | "correct" | "reject" | "approve" | null;
 
@@ -61,7 +61,7 @@ export function ProposalWorkspace({ api = httpSliceApi, active = true, navigate 
   async function resumeStream(current: GenerationView) {
     setBusy("ask"); setError(null); setStreamInterrupted(false);
     try {
-      const events = await api.resumeAsk(current.generation_id, observedSequence.current);
+      const events = await api.resumeGeneration(current.generation_id, observedSequence.current);
       if (events.length) {
         observedSequence.current = Math.max(observedSequence.current, ...events.map((item) => item.sequence));
         setLastObservedSequence(observedSequence.current);
@@ -80,7 +80,8 @@ export function ProposalWorkspace({ api = httpSliceApi, active = true, navigate 
     setBusy("ask"); setError(null); setGeneration(null); setProposal(null); setStreamDraft(""); observedSequence.current = 0; setLastObservedSequence(0);
     const prompt = new FormData(event.currentTarget).get("question")?.toString().trim() ?? "";
     try {
-      const started = await api.startAsk(campaign.campaign_id, record.revision_id, prompt, stableId("ask", "generation"));
+      const context = await recordGenerationContext(record);
+      const started = await api.startGeneration(campaign.campaign_id, record.revision_id, "ask", prompt, stableId("ask", "generation"), context);
       setGeneration(started); setAnnouncement("Sources pinned. Grounded Draft is streaming.");
       await resumeStream(started);
     } catch (failure) { failAction(failure); }
@@ -174,7 +175,7 @@ export function ProposalWorkspace({ api = httpSliceApi, active = true, navigate 
             </section>
 
             {generation && (
-              <section className="card sources" aria-labelledby="sources-heading"><h2 id="sources-heading">Sources</h2><p>Source set <code>{generation.source_set_digest}</code></p><ol>{generation.sources.map((source) => <li key={source.source_id}><code>{source.source_id}</code> <AuthorityBadge authority={source.authority} /> Revision <code>{source.revision_id}</code><details><summary>Inspect excerpt</summary><pre>{source.excerpt}</pre></details></li>)}</ol></section>
+              <section className="card sources" aria-labelledby="sources-heading"><h2 id="sources-heading">Sources</h2><p>Action <code>{generation.action}</code>. Context <code>{generation.context.scope === "record" ? `record:${generation.context.record_id}` : "campaign"}</code>. Session <code>{generation.session_id ?? "none"}</code>.</p>{generation.context.scope === "record" && <p>Bound content digest <code>{generation.context.content_digest}</code></p>}<p>Source set <code>{generation.source_set_digest}</code></p><ol>{generation.sources.map((source) => <li key={source.source_id}><code>{source.source_id}</code> <AuthorityBadge authority={source.authority} /> Revision <code>{source.revision_id}</code><details><summary>Inspect excerpt</summary><pre>{source.excerpt}</pre></details></li>)}</ol></section>
             )}
 
             {currentDraft && (

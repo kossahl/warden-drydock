@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 import unittest
+from urllib.parse import quote, unquote_to_bytes
 
 from jsonschema import Draft202012Validator
 
@@ -12,6 +14,12 @@ from warden_drydock.hosted.projections.atlas_models import edge_id
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_ROOT = ROOT / "docs" / "contracts" / "hosted" / "http" / "atlas" / "v1"
+
+_PUBLIC_ID = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+_DOMAIN_ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_DIGEST = re.compile(r"^[a-f0-9]{64}$")
+_STATUS = {"idea", "draft", "review", "canon", "revealed", "archived", "accepted", "missing", "unknown"}
+_AUTHORITY = {"preparation", "canon", "revealed"}
 
 
 class AtlasSemanticError(ValueError):
@@ -38,6 +46,93 @@ def _walk(value):
             yield from _walk(child)
 
 
+def _strict_decode(value: str) -> str:
+    if re.search(r"%(?![0-9A-Fa-f]{2})", value):
+        raise AtlasSemanticError("unsafe_binding", "malformed percent encoding")
+    try:
+        return unquote_to_bytes(value.replace("+", " ")).decode("utf-8", "strict")
+    except UnicodeDecodeError as exc:
+        raise AtlasSemanticError("unsafe_binding", "malformed UTF-8 query encoding") from exc
+
+
+def _parse_query(route: dict, raw_query: str, cursor_binding: dict | None = None) -> dict:
+    specifications = {item["name"]: item for item in route["query_parameters"]}
+    values: dict[str, list[str]] = {}
+    if raw_query:
+        for pair in raw_query.split("&"):
+            if "=" not in pair:
+                raise AtlasSemanticError("unsafe_binding", "query pair has no value")
+            raw_name, raw_value = pair.split("=", 1)
+            name, value = _strict_decode(raw_name), _strict_decode(raw_value)
+            if name not in specifications:
+                raise AtlasSemanticError("unsafe_binding", "unknown query parameter")
+            values.setdefault(name, []).append(value)
+
+    result = {}
+    for name, specification in specifications.items():
+        supplied = values.get(name, [])
+        if specification["cardinality"] == "singleton" and len(supplied) > 1:
+            raise AtlasSemanticError("unsafe_binding", "duplicate singleton parameter")
+        if specification["required"] and (not supplied or supplied == [""]):
+            raise AtlasSemanticError("unsafe_binding", "required query parameter is empty")
+        if not supplied:
+            if "default" in specification:
+                result[name] = specification["default"]
+            continue
+        if specification["cardinality"] == "repeatable":
+            if any("," in item for item in supplied):
+                raise AtlasSemanticError("unsafe_binding", "comma-packed filter is invalid")
+            parsed = [_parse_query_value(specification["type"], item) for item in supplied]
+            result[name] = sorted(set(parsed))
+        else:
+            result[name] = _parse_query_value(specification["type"], supplied[0])
+
+    if cursor_binding is not None:
+        current = {key: value for key, value in result.items() if key != "cursor"}
+        if current != cursor_binding:
+            raise AtlasSemanticError("invalid_cursor_binding", "cursor query binding changed")
+    return result
+
+
+def _parse_query_value(value_type: str, value: str):
+    if value_type in {"integer_1_or_greater", "integer_1_through_100", "constant_1"}:
+        if not value.isascii() or not value.isdigit() or value.startswith("0"):
+            raise AtlasSemanticError("unsafe_binding", "invalid integer query parameter")
+        parsed = int(value)
+        if parsed < 1 or value_type == "constant_1" and parsed != 1 or value_type == "integer_1_through_100" and parsed > 100:
+            raise AtlasSemanticError("unsafe_binding", "integer query parameter is out of range")
+        return parsed
+    if value_type == "public_id" and not _PUBLIC_ID.fullmatch(value):
+        raise AtlasSemanticError("unsafe_binding", "invalid public identifier")
+    if value_type == "domain_id" and not _DOMAIN_ID.fullmatch(value):
+        raise AtlasSemanticError("unsafe_binding", "invalid domain identifier")
+    if value_type == "sha256" and not _DIGEST.fullmatch(value):
+        raise AtlasSemanticError("unsafe_binding", "invalid digest")
+    if value_type == "authority" and value not in _AUTHORITY:
+        raise AtlasSemanticError("unsafe_binding", "invalid authority")
+    if value_type == "raw_status_filter" and value not in _STATUS:
+        raise AtlasSemanticError("unsafe_binding", "invalid status")
+    if value_type == "history_direction" and value not in {"forward", "backward"}:
+        raise AtlasSemanticError("unsafe_binding", "invalid history direction")
+    if value_type == "text_4000" and len(value) > 4000:
+        raise AtlasSemanticError("unsafe_binding", "query text is too long")
+    if value_type == "cursor" and (not value or len(value) > 4096):
+        raise AtlasSemanticError("unsafe_binding", "invalid cursor")
+    return value
+
+
+def _serialize_query(route: dict, values: dict) -> str:
+    pairs = []
+    for specification in route["query_parameters"]:
+        name = specification["name"]
+        if name not in values or values[name] == specification.get("default", object()):
+            continue
+        items = values[name] if specification["cardinality"] == "repeatable" else [values[name]]
+        for value in items:
+            pairs.append(f"{quote(name, safe='')}={quote(str(value), safe='')}")
+    return "&".join(pairs)
+
+
 def validate_semantics(instance: dict) -> None:
     for value in _walk(instance):
         if not isinstance(value, dict):
@@ -57,11 +152,6 @@ def validate_semantics(instance: dict) -> None:
             digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
             if digest != value["content_digest"]:
                 raise AtlasSemanticError("unsafe_binding", "content digest mismatch")
-    if instance["contract_name"] == "atlas_contextual_generation":
-        if (instance["focus_record_id"] is None) != (
-            instance["focus_content_digest"] is None
-        ):
-            raise AtlasSemanticError("unsafe_binding", "focus binding is incomplete")
     if instance["contract_name"] == "atlas_deterministic_cursor":
         if _canonical_digest(instance["binding"]) != instance["digest"]:
             raise AtlasSemanticError(
@@ -79,7 +169,8 @@ def validate_semantics(instance: dict) -> None:
             seen.add(edge["edge_id"])
     if instance["contract_name"] == "atlas_approved_history_collection":
         ordinals = [item["revision"]["ordinal"] for item in instance["entries"]]
-        if ordinals != sorted(ordinals) or len(ordinals) != len(set(ordinals)):
+        reverse = instance["direction"] == "backward"
+        if ordinals != sorted(ordinals, reverse=reverse) or len(ordinals) != len(set(ordinals)):
             raise AtlasSemanticError("unsafe_binding", "history ordinal order mismatch")
         for entry in instance["entries"]:
             if (entry["proposal_id"] is None) != (entry["proposal_version"] is None):
@@ -99,11 +190,11 @@ class AtlasContractTests(unittest.TestCase):
             (CONTRACT_ROOT.parents[1] / "index.json").read_text(encoding="utf-8")
         )
         self.assertEqual(
-            ["v1/index.json", "atlas/v1/index.json"],
+            ["v2/index.json", "atlas/v1/index.json"],
             [item["index"] for item in aggregate["packages"]],
         )
         self.assertIn("does not mutate", self.index["compatibility"])
-        self.assertEqual(5, len(self.index["negative_fixtures"]))
+        self.assertEqual(4, len(self.index["negative_fixtures"]))
         self.assertTrue(all((CONTRACT_ROOT / item).is_file() for item in self.index["negative_fixtures"]))
 
     def test_all_contract_objects_are_closed_positive_and_unique(self) -> None:
@@ -114,8 +205,18 @@ class AtlasContractTests(unittest.TestCase):
                 self.assertEqual([], list(validator.iter_errors(instance)))
                 validate_semantics(instance)
                 names.append(instance["contract_name"])
-        self.assertEqual(12, len(names))
+        self.assertEqual(11, len(names))
         self.assertEqual(len(names), len(set(names)))
+
+    def test_atlas_exposes_no_generation_http_contract(self) -> None:
+        corpus = "\n".join(
+            (CONTRACT_ROOT / relative).read_text(encoding="utf-8")
+            for relative in ("atlas.schema.json", "routes.json", "examples.json", "semantic-invariants.json")
+        )
+        self.assertNotIn("atlas_contextual_generation", corpus)
+        self.assertNotIn("contextual_generation", self.schema["$defs"])
+        routes = json.loads((CONTRACT_ROOT / "routes.json").read_text(encoding="utf-8"))
+        self.assertTrue(all("generation" not in item["path"] for item in routes["routes"]))
 
     def test_routes_pin_all_atlas_read_destinations_without_handlers(self) -> None:
         routes = json.loads((CONTRACT_ROOT / "routes.json").read_text(encoding="utf-8"))
@@ -142,6 +243,58 @@ class AtlasContractTests(unittest.TestCase):
         self.assertEqual(
             "atlas_approved_history_query", by_id["atlas_approved_history"]["request"]
         )
+
+    def test_flat_query_parser_and_serializer_match_every_route(self) -> None:
+        routes_document = json.loads((CONTRACT_ROOT / "routes.json").read_text(encoding="utf-8"))
+        routes = {item["id"]: item for item in routes_document["routes"]}
+        fixtures = json.loads(
+            (CONTRACT_ROOT / self.index["query_serialization_fixtures"]).read_text(encoding="utf-8")
+        )
+        self.assertEqual(set(routes), {item["route"] for item in fixtures["positive"]})
+        for fixture in fixtures["positive"]:
+            route = routes[fixture["route"]]
+            parsed = _parse_query(route, fixture["raw_query"])
+            with self.subTest(fixture=fixture["name"]):
+                self.assertEqual(fixture["expected"], parsed)
+                self.assertEqual(parsed, _parse_query(route, _serialize_query(route, parsed)))
+
+    def test_ambiguous_or_rebound_flat_queries_fail_closed(self) -> None:
+        routes = {
+            item["id"]: item
+            for item in json.loads((CONTRACT_ROOT / "routes.json").read_text(encoding="utf-8"))["routes"]
+        }
+        fixtures = json.loads(
+            (CONTRACT_ROOT / self.index["query_serialization_fixtures"]).read_text(encoding="utf-8")
+        )
+        for fixture in fixtures["negative"]:
+            with self.subTest(fixture=fixture["name"]):
+                with self.assertRaises(AtlasSemanticError) as caught:
+                    _parse_query(
+                        routes[fixture["route"]],
+                        fixture["raw_query"],
+                        fixture.get("cursor_binding"),
+                    )
+                self.assertEqual(fixture["expected_category"], caught.exception.category)
+
+    def test_history_direction_and_summary_only_boundary_are_explicit(self) -> None:
+        routes = {
+            item["id"]: item
+            for item in json.loads((CONTRACT_ROOT / "routes.json").read_text(encoding="utf-8"))["routes"]
+        }
+        history = {item["name"]: item for item in routes["atlas_approved_history"]["query_parameters"]}
+        self.assertEqual("forward", history["direction"]["default"])
+        self.assertTrue(history["limit"]["required"])
+        self.assertEqual("summary_only_no_item_content", routes["atlas_workflow_summary"]["response_scope"])
+        workflow = self.schema["$defs"]["workflow_summary"]
+        self.assertNotIn("items", workflow["properties"])
+
+        fixtures = json.loads(
+            (CONTRACT_ROOT / self.index["query_serialization_fixtures"]).read_text(encoding="utf-8")
+        )
+        newest = next(item for item in fixtures["positive"] if item["name"] == "overview_newest_five_history")
+        returned = sorted(newest["available_approved_ordinals"], reverse=True)[: newest["expected"]["limit"]]
+        self.assertEqual(newest["expected_returned_ordinals"], returned)
+        self.assertEqual(1, newest["http_page_requests"])
 
     def test_semantic_rules_pin_algorithms_and_boundaries(self) -> None:
         invariants = json.loads(

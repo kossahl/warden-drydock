@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run",
     "test:browser": "npm run build && playwright test",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit -p tsconfig.build.json && vite build",
     "build:reproducible": "node scripts/verify-reproducible-build.mjs",
     "preview": "vite preview"
   },
