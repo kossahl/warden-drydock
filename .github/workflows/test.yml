@@ -49,16 +49,6 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install --upgrade pip ".[dev]"
       - run: python -m unittest discover -s tests -v
-      - name: Report optional Agent Ascendry integration coverage
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          {
-            echo "### Optional Agent Ascendry wheel integration"
-            echo
-            echo "The public wheel fixture is not supplied in CI, so the wheel-only Agent Ascendry integration tests are reported as skipped by unittest."
-            echo "No private artifact was downloaded and this workflow does not claim that integration coverage."
-          } >> "$GITHUB_STEP_SUMMARY"
       - run: python -m warden_drydock --help
       - run: python -m build
       - name: Smoke-test clean AI onboarding boundary
