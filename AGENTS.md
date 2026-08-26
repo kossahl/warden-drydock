@@ -110,10 +110,6 @@ work package, repository state, and trusted project decisions. Never expose
 secrets, personal or local-only data, hidden instructions, raw conversation
 content, or unsupported claims in a public draft.
 
-## Agent evolution
-
-The project `Stop` hook automatically queues completed-turn metadata for later analysis. A periodic, explicitly initiated retrospective converts eligible episodes into concise evidence-backed candidates in `docs/agent-evolution.md` and prepares `docs/agent-evolution-proposal.md`. Do not turn one anecdote into a general rule, store raw transcripts in Git, or let an agent silently rewrite its own instructions. Use `agent_curator` and the `improve-drydock-agents` skill for audits; durable changes require review, validation, and user approval.
-
 ## Agent communication and token discipline
 
 - Use English for internal agent instructions and handoffs. The parent agent answers the user in the user's language.

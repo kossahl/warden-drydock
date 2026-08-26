@@ -1,4 +1,0 @@
-interface:
-  display_name: "Improve Drydock Agents"
-  short_description: "Turn agent feedback into tested improvements"
-  default_prompt: "Use $improve-drydock-agents to audit recent agent feedback and propose evidence-backed improvements."
