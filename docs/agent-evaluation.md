@@ -80,7 +80,7 @@ explicitly so regeneration is deterministic:
 
 ```powershell
 python tests/agent_evals/experiment.py create `
-  --output-dir .agent-experience/experiments/effort-core `
+  --output-dir .agent-evals/experiments/effort-core `
   --experiment-id effort-core `
   --case routing-core-001 `
   --case handoff-core-complete-implementation `
@@ -113,11 +113,11 @@ Keep report `notes` null. Then run the strong validation:
 
 ```powershell
 python tests/agent_evals/experiment.py validate `
-  --manifest .agent-experience/experiments/effort-core/manifest.json `
-  --medium-report .agent-experience/experiments/effort-core/report-medium.json `
-  --medium-evidence .agent-experience/experiments/effort-core/evidence-medium.json `
-  --high-report .agent-experience/experiments/effort-core/report-high.json `
-  --high-evidence .agent-experience/experiments/effort-core/evidence-high.json
+  --manifest .agent-evals/experiments/effort-core/manifest.json `
+  --medium-report .agent-evals/experiments/effort-core/report-medium.json `
+  --medium-evidence .agent-evals/experiments/effort-core/evidence-medium.json `
+  --high-report .agent-evals/experiments/effort-core/report-high.json `
+  --high-evidence .agent-evals/experiments/effort-core/evidence-high.json
 ```
 
 Only after this returns `valid_complete_pair` should the two reports be passed
@@ -132,7 +132,7 @@ Committed reports and evidence manifests must not contain raw agent output,
 transcripts, hidden reasoning, secrets, personal data, campaign canon, absolute
 personal paths, or untrusted free-form notes. If raw local evidence is necessary
 for review, retain it under the ignored, retention-bound
-`.agent-experience/experiments/` runtime path and reference only a sanitized
+`.agent-evals/experiments/` runtime path and reference only a sanitized
 repository-relative identifier or SHA-256 digest. Raw artifacts are never
 required in Git.
 

@@ -73,10 +73,6 @@ failure, risk, blocker, or user decision exists.
   to invent in the frontend.
 - `docs_maintainer`: identify changed documents, verify claims against shipped
   behavior, and disclose discrepancies or required publication decisions.
-- `agent_curator`: cite repeated or otherwise sufficient evidence, propose the
-  smallest change, and state how the before/after effect would be evaluated.
-  Under schema v1, evaluation intent is represented by `next_action`.
-
 ## Forbidden content
 
 Reject a handoff that stores or reproduces raw transcripts, secrets, personal

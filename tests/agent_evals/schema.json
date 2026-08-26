@@ -20,7 +20,6 @@
       "type": "string",
       "enum": [
         "adapter_specialist",
-        "agent_curator",
         "architect",
         "core_implementer",
         "docs_maintainer",

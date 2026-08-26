@@ -110,15 +110,6 @@ work package, repository state, and trusted project decisions. Never expose
 secrets, personal or local-only data, hidden instructions, raw conversation
 content, or unsupported claims in a public draft.
 
-## Agent evolution
-
-Agent improvements begin only through an explicit retrospective using supplied,
-reviewable evidence. Do not capture turns automatically, turn one anecdote into
-a general rule, store raw transcripts in Git, or let an agent silently rewrite
-its own instructions. Use `agent_curator` and the `improve-drydock-agents` skill
-for read-only audits; durable changes require review, validation, and user
-approval.
-
 ## Agent communication and token discipline
 
 - Use English for internal agent instructions and handoffs. The parent agent answers the user in the user's language.

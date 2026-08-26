@@ -169,36 +169,6 @@
       }
     },
     {
-      "case_id": "routing-curator-001",
-      "prompt": "Audit repeated agent routing failures and propose the smallest evidence-backed prompt change without editing it.",
-      "expected": {
-        "delegation": "required",
-        "valid_agents": ["agent_curator"],
-        "forbidden_agents": ["product_strategist"],
-        "sequence": null,
-        "rationale": "Repeated agent-performance evidence and prompt refinement belong to the read-only curator."
-      },
-      "metadata": {
-        "source": "synthetic",
-        "tags": ["agent_evolution", "positive"]
-      }
-    },
-    {
-      "case_id": "routing-curator-002",
-      "prompt": "Review candidate lessons for duplication and stale assumptions, then provide a before-and-after evaluation plan.",
-      "expected": {
-        "delegation": "required",
-        "valid_agents": ["agent_curator"],
-        "forbidden_agents": ["docs_maintainer"],
-        "sequence": null,
-        "rationale": "Consolidating evidence into proposed agent improvements is curator work, not routine documentation."
-      },
-      "metadata": {
-        "source": "synthetic",
-        "tags": ["agent_evolution", "positive"]
-      }
-    },
-    {
       "case_id": "routing-design-001",
       "prompt": "Turn the approved campaign-workspace brief into information architecture, responsive flows, wireframes, UI states, and accessibility acceptance criteria without writing production code.",
       "expected": {
@@ -309,7 +279,7 @@
       "expected": {
         "delegation": "forbidden",
         "valid_agents": [],
-        "forbidden_agents": ["adapter_specialist", "agent_curator", "architect", "core_implementer", "docs_maintainer", "hosted_backend_implementer", "product_designer", "product_strategist", "reviewer", "test_engineer", "web_frontend_implementer"],
+        "forbidden_agents": ["adapter_specialist", "architect", "core_implementer", "docs_maintainer", "hosted_backend_implementer", "product_designer", "product_strategist", "reviewer", "test_engineer", "web_frontend_implementer"],
         "sequence": null,
         "rationale": "A simple status response should be answered directly by the parent without delegation overhead."
       },
@@ -324,7 +294,7 @@
       "expected": {
         "delegation": "forbidden",
         "valid_agents": [],
-        "forbidden_agents": ["adapter_specialist", "agent_curator", "architect", "core_implementer", "docs_maintainer", "hosted_backend_implementer", "product_designer", "product_strategist", "reviewer", "test_engineer", "web_frontend_implementer"],
+        "forbidden_agents": ["adapter_specialist", "architect", "core_implementer", "docs_maintainer", "hosted_backend_implementer", "product_designer", "product_strategist", "reviewer", "test_engineer", "web_frontend_implementer"],
         "sequence": null,
         "rationale": "A clarification about the conversation needs no specialist agent."
       },
@@ -335,11 +305,11 @@
     },
     {
       "case_id": "routing-parent-003",
-      "prompt": "List the eleven configured development-agent names already provided in this conversation.",
+      "prompt": "List the ten configured development-agent names already provided in this conversation.",
       "expected": {
         "delegation": "forbidden",
         "valid_agents": [],
-        "forbidden_agents": ["adapter_specialist", "agent_curator", "architect", "core_implementer", "docs_maintainer", "hosted_backend_implementer", "product_designer", "product_strategist", "reviewer", "test_engineer", "web_frontend_implementer"],
+        "forbidden_agents": ["adapter_specialist", "architect", "core_implementer", "docs_maintainer", "hosted_backend_implementer", "product_designer", "product_strategist", "reviewer", "test_engineer", "web_frontend_implementer"],
         "sequence": null,
         "rationale": "Restating available conversation context is a direct parent responsibility."
       },
@@ -406,21 +376,6 @@
       "metadata": {
         "source": "synthetic",
         "tags": ["multi_stage", "sequence"]
-      }
-    },
-    {
-      "case_id": "routing-sequence-003",
-      "prompt": "Evaluate recurring handoff failures, prepare an agent-instruction improvement, apply it only after approval, and review the result.",
-      "expected": {
-        "delegation": "required",
-        "valid_agents": ["agent_curator", "reviewer"],
-        "forbidden_agents": ["core_implementer"],
-        "sequence": ["agent_curator", "reviewer"],
-        "rationale": "The curator proposes but cannot approve or apply its own durable change; an independent review follows parent-controlled application."
-      },
-      "metadata": {
-        "source": "synthetic",
-        "tags": ["agent_evolution", "multi_stage", "sequence"]
       }
     },
     {

@@ -8,7 +8,6 @@ from pathlib import Path
 DATASET_PATH = Path(__file__).with_name("routing_cases.json")
 KNOWN_AGENTS = {
     "adapter_specialist",
-    "agent_curator",
     "architect",
     "core_implementer",
     "docs_maintainer",

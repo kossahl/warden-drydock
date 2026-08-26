@@ -11,7 +11,6 @@ ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 REQUIRED_AGENTS = {
     "adapter_specialist",
-    "agent_curator",
     "architect",
     "core_implementer",
     "docs_maintainer",
@@ -123,7 +122,6 @@ class HandoffFixtureTests(unittest.TestCase):
     def test_role_specific_concept_coverage(self):
         required_by_agent = {
             "adapter_specialist": {"generated_artifact_impact", "migration_follow_up"},
-            "agent_curator": {"evidence", "next_action"},
             "architect": {"affected_invariants", "alternatives"},
             "core_implementer": {"changed_files", "verification"},
             "docs_maintainer": {"changed_files", "verification"},
