@@ -84,8 +84,26 @@ test("historical view stays selected until Open head", async ({ page }) => {
   await expect(page.getByText(/Viewed revision 2/)).toBeVisible();
 });
 
-test("Atlas navigation and filters work by keyboard at 320 by 720 without page overflow", async ({ page }) => {
+test("Record content replaces Connections syntax with readable revision-pinned links", async ({ page }) => {
   await installAtlasApi(page);
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const recordContent = page.getByRole("heading", { name: "Record content" }).locator("..");
+  const rendered = recordContent.locator(".markdown");
+  await expect(rendered.getByRole("heading", { name: "Connections" })).toBeVisible();
+  await expect(rendered).toContainText("The keeper relies on Legacy Ship.");
+  await expect(rendered).not.toContainText("`knows`");
+  await expect(rendered).not.toContainText("[[record-two|Legacy Ship]]");
+  await expect(rendered.getByRole("link", { name: "Legacy Ship" })).toHaveAttribute("href", expect.stringContaining("revision=revision_two"));
+  await recordContent.getByText("Exact source text").click();
+  await expect(recordContent.locator("pre")).toContainText("- `knows` → [[record-two|Legacy Ship]] (`current`) — The keeper relies on Legacy Ship.");
+  await expect(page.getByRole("heading", { name: "Relationships" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Relationship view" })).toBeVisible();
+});
+
+test("Atlas navigation and filters work by keyboard at 320 by 720 without page overflow", async ({ page }) => {
+  const longName = `Legacy-${"ship".repeat(40)}`;
+  const longContext = `Context-${"without-breaks".repeat(45)}`;
+  await installAtlasApi(page, { neighborhood: { ...neighborhood, neighbors: neighborhood.neighbors.map((item) => ({ ...item, name: longName })), edges: neighborhood.edges.map((edge) => ({ ...edge, context: longContext })) } });
   await page.setViewportSize({ width: 320, height: 720 });
   await page.goto("/campaigns/campaign_atlas/records?revision=revision_two&cursor=stale_cursor");
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
@@ -104,6 +122,15 @@ test("Atlas navigation and filters work by keyboard at 320 by 720 without page o
   await expect(page.getByRole("button", { name: "Map" })).toBeHidden();
   await expect(page.locator(".relationship-list")).toBeVisible();
   await expect(page.locator(".relationship-list > li")).toHaveCount(1);
+  await expect(page.locator(".relationship-list > li").first().locator("p").first()).toHaveText(longContext);
+  const relationshipWidths = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
+  expect(relationshipWidths.scroll).toBeLessThanOrEqual(relationshipWidths.client);
+  await page.setViewportSize({ width: 640, height: 900 });
+  await page.evaluate(() => { document.documentElement.style.zoom = "2"; });
+  const zoomedWidths = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
+  expect(zoomedWidths.scroll).toBeLessThanOrEqual(zoomedWidths.client);
+  await page.evaluate(() => { document.documentElement.style.zoom = ""; });
+  await page.setViewportSize({ width: 320, height: 720 });
   await page.goto("/campaigns/campaign_atlas/records?revision=revision_two");
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await tabTo(page, page.getByRole("link", { name: "Approved history" }));
@@ -147,7 +174,19 @@ test("wide relationship map and ordered list preserve duplicate and self occurre
   await expect(rows.nth(0)).toContainText("First duplicate.");
   await expect(rows.nth(1)).toContainText("Second duplicate.");
   await expect(rows.nth(2)).toContainText("Self occurrence.");
-  const neighbor = rows.nth(0).getByRole("link", { name: "Open Legacy Ship" });
+  await expect(rows.nth(0).locator("p").first()).toHaveText("First duplicate.");
+  await expect(rows.nth(0)).toContainText("Related record: Legacy Ship");
+  await expect(rows.nth(0)).toContainText("DirectionOutgoing");
+  await expect(rows.nth(0)).toContainText("TypeKnows");
+  await expect(rows.nth(0)).toContainText("StateCurrent");
+  const selfTarget = rows.nth(2).getByRole("link", { name: "Station Keeper" });
+  await expect(selfTarget).toHaveAttribute("href", expect.stringContaining("revision=revision_two"));
+  await selfTarget.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { level: 1, name: "Station Keeper" })).toBeFocused();
+  await expect(page).not.toHaveURL(/relationship_cursor|generation_cursor|proposal_cursor/);
+  await controls.getByRole("button", { name: "List" }).click();
+  const neighbor = rows.nth(0).getByRole("link", { name: "Legacy Ship" });
   await neighbor.focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { level: 1, name: "Legacy Ship" })).toBeFocused();

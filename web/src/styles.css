@@ -102,6 +102,9 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
 .change-kind { min-height: 1.7rem; font-size: .85rem; }
 .markdown { overflow-wrap: anywhere; }
 .markdown > :first-child { margin-top: 0; }
+.record-connection-list { display: grid; gap: .65rem; padding-left: 1.25rem; }
+.record-connection-list li { line-height: 1.5; }
+.connection-self-label { color: var(--muted); }
 .source-binding dl { display: grid; gap: .7rem; }
 .source-binding dl div { min-width: 0; }
 .source-binding dt { font-weight: 800; }
@@ -126,6 +129,12 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
 .relationship-focus { border-color: #f4c95d !important; background: #18180e; }
 .relationship-card, .relationship-list li { min-width: 0; margin: .7rem 0; padding: .7rem; border: 1px solid #5b7b6d; border-radius: .35rem; overflow-wrap: anywhere; }
 .relationship-card p, .relationship-list p { margin: .3rem 0; }
+.relationship-context { font-size: 1.05rem; line-height: 1.5; }
+.relationship-target { margin-top: .7rem !important; }
+.relationship-metadata { display: flex; flex-wrap: wrap; gap: .35rem 1rem; margin: .7rem 0 0; color: #c7d8d0; font-size: .9rem; }
+.relationship-metadata div { display: flex; gap: .3rem; min-width: 0; }
+.relationship-metadata dt { font-weight: 700; }
+.relationship-metadata dd { margin: 0; }
 .relationship-list { padding-left: 1.5rem; }
 .wide-hidden { display: none; }
 

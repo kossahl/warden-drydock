@@ -27,10 +27,11 @@ function inline(value: string): ReactNode[] {
   return nodes;
 }
 
-export function SafeMarkdown({ source }: { source: string }) {
+export function SafeMarkdown({ source, connections }: { source: string; connections?: ReactNode }) {
   const blocks: ReactNode[] = [];
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   let index = 0;
+  let replacedConnections = false;
   while (index < lines.length) {
     const line = lines[index];
     if (!line.trim()) { index += 1; continue; }
@@ -38,6 +39,18 @@ export function SafeMarkdown({ source }: { source: string }) {
     if (heading) {
       const content = inline(heading[2]);
       const level = heading[1].length;
+      if (!replacedConnections && level === 2 && heading[2].trim().toLowerCase() === "connections" && connections !== undefined) {
+        const start = index;
+        replacedConnections = true;
+        index += 1;
+        while (index < lines.length) {
+          const nextHeading = /^(#{1,4})\s+(.+)$/.exec(lines[index]);
+          if (nextHeading && nextHeading[1].length <= level) break;
+          index += 1;
+        }
+        blocks.push(<section className="record-connections" key={`connections-${start}`}><h3>{content}</h3>{connections}</section>);
+        continue;
+      }
       blocks.push(level === 1 ? <h2 key={index}>{content}</h2> : level === 2 ? <h3 key={index}>{content}</h3> : <h4 key={index}>{content}</h4>);
       index += 1;
       continue;
