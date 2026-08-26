@@ -90,6 +90,17 @@ describe("Campaign Atlas browser experience", () => {
     expect(card).not.toHaveTextContent("Station Keeper knows Legacy Ship");
   });
 
+  it("replaces an uppercase Connections heading without exposing its DSL", async () => {
+    const uppercaseDetail = { ...detail, record: { ...detail.record, content: detail.record.content.replace("## Connections", "## CONNECTIONS") } };
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+    render(<App atlasApi={fakeAtlas({ record: vi.fn(async () => uppercaseDetail) })} providerReadiness={async () => readinessUnavailable} />);
+    const recordContent = (await screen.findByRole("heading", { name: "Record content" })).closest("section")!;
+    const renderedContent = recordContent.querySelector(".markdown")!;
+    expect(within(renderedContent as HTMLElement).getByRole("heading", { name: "CONNECTIONS" })).toBeVisible();
+    expect(await within(renderedContent as HTMLElement).findByRole("link", { name: "Legacy Ship" })).toBeVisible();
+    expect(renderedContent).not.toHaveTextContent("[[record-two|Legacy Ship]]");
+  });
+
   it("keeps a historical revision selected until Open head", async () => {
     window.history.replaceState(null, "", "/campaigns/campaign_atlas?revision=revision_one");
     const api = fakeAtlas({ overview: vi.fn(async () => ({ ...overview, binding: { ...binding, viewed_revision: oldRevision } })) });

@@ -39,7 +39,7 @@ export function SafeMarkdown({ source, connections }: { source: string; connecti
     if (heading) {
       const content = inline(heading[2]);
       const level = heading[1].length;
-      if (!replacedConnections && level === 2 && heading[2].trim().toLocaleLowerCase() === "connections" && connections !== undefined) {
+      if (!replacedConnections && level === 2 && heading[2].trim().toLowerCase() === "connections" && connections !== undefined) {
         const start = index;
         replacedConnections = true;
         index += 1;
