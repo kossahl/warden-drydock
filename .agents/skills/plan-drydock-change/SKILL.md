@@ -9,10 +9,11 @@ Convert an idea into a decision and an executable plan without inventing evidenc
 
 ## Establish the problem
 
-1. Read `README.md`, `docs/project-brief.md`, `docs/product-decisions.md`, `docs/conversation-handoff.md`, all accepted ADRs, and the relevant implementation paths.
-2. State the user problem, affected user, current friction, and cost of leaving it unchanged.
-3. Separate repository evidence, user-provided evidence, assumptions, and unknowns.
-4. Ask for a product decision when an unknown would materially change scope or behavior. Otherwise proceed with an explicit assumption.
+1. Read `README.md`, `docs/project-brief.md`, `docs/product-decisions.md`, all accepted ADRs, and the relevant implementation paths.
+2. For Hosted MVP work, also read the private GitHub Project README, the assigned versioned Work Package, and its verified remote `master` baseline. GitHub Project state replaces conversation-only handoffs.
+3. State the user problem, affected user, current friction, and cost of leaving it unchanged.
+4. Separate repository evidence, user-provided evidence, assumptions, and unknowns.
+5. Ask for a product decision when an unknown would materially change scope or behavior. Otherwise proceed with an explicit assumption.
 
 ## Evaluate the opportunity
 
