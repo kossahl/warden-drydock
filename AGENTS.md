@@ -14,9 +14,10 @@ Read:
 4. all accepted ADRs in `docs/adr/`
 
 These files describe the implemented product and its accepted technical
-boundaries. Future Hosted MVP planning lives in the private GitHub Project;
-before delegated Hosted MVP work, the parent also provides its Project README,
-the assigned versioned Work Package, and a verified remote `master` baseline.
+boundaries. Future Hosted MVP planning lives in the private GitHub Project.
+Before Hosted MVP work, the orchestrating task reads its Project README,
+selects one eligible versioned Work Package, and verifies the remote `master`
+baseline. No conversation-only handoff is authoritative.
 
 ## Product rule
 

@@ -130,6 +130,8 @@ boundaries:
 
 Future Hosted MVP planning, Work Packages, status, and private design references
 live in the [Warden Drydock Hosted MVP Project](https://github.com/users/kossahl/projects/1).
+OpenCode contributors can use the project-local orchestration described in
+[`docs/opencode-development.md`](docs/opencode-development.md).
 
 ## MVP status
 
