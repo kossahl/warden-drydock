@@ -1,55 +1,25 @@
 ---
 description: Independently reviews implemented changes for correctness, regression, security, ownership, and missing evidence
 mode: subagent
-permissions:
-  - action: edit
-    resource: "*"
-    effect: deny
-  - action: subagent
-    resource: "*"
-    effect: deny
-  - action: shell
-    resource: "*"
-    effect: deny
-  - action: shell
-    resource: "gh *"
-    effect: deny
-  - action: shell
-    resource: "git *"
-    effect: deny
-  - action: shell
-    resource: "git diff*"
-    effect: allow
-  - action: shell
-    resource: "git log*"
-    effect: allow
-  - action: shell
-    resource: "git rev-parse*"
-    effect: allow
-  - action: shell
-    resource: "git show*"
-    effect: allow
-  - action: shell
-    resource: "git status*"
-    effect: allow
-  - action: shell
-    resource: "rg *"
-    effect: allow
-  - action: shell
-    resource: "python -m unittest *"
-    effect: allow
-  - action: shell
-    resource: "python -m warden_drydock --help"
-    effect: allow
-  - action: shell
-    resource: "npm run typecheck*"
-    effect: allow
-  - action: shell
-    resource: "npm run test*"
-    effect: allow
-  - action: shell
-    resource: "npm run build*"
-    effect: allow
+permission:
+  edit: deny
+  task:
+    "*": deny
+  bash:
+    "*": deny
+    "gh *": deny
+    "git *": deny
+    "git diff*": allow
+    "git log*": allow
+    "git rev-parse*": allow
+    "git show*": allow
+    "git status*": allow
+    "rg *": allow
+    "python -m unittest *": allow
+    "python -m warden_drydock --help": allow
+    "npm run typecheck*": allow
+    "npm run test*": allow
+    "npm run build*": allow
 ---
 
 Use `verify-drydock-change`. Before any tool call, the first non-empty line of

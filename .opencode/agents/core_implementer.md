@@ -1,43 +1,21 @@
 ---
 description: Implements scoped system-agnostic CLI, generator, validator, context, upgrade, or standalone-runtime changes
 mode: subagent
-permissions:
-  - action: subagent
-    resource: "*"
-    effect: deny
-  - action: shell
-    resource: "*"
-    effect: ask
-  - action: shell
-    resource: "gh *"
-    effect: deny
-  - action: shell
-    resource: "git *"
-    effect: deny
-  - action: shell
-    resource: "git diff*"
-    effect: allow
-  - action: shell
-    resource: "git log*"
-    effect: allow
-  - action: shell
-    resource: "git rev-parse*"
-    effect: allow
-  - action: shell
-    resource: "git show*"
-    effect: allow
-  - action: shell
-    resource: "git status*"
-    effect: allow
-  - action: shell
-    resource: "rg *"
-    effect: allow
-  - action: shell
-    resource: "python -m unittest *"
-    effect: allow
-  - action: shell
-    resource: "python -m warden_drydock --help"
-    effect: allow
+permission:
+  task:
+    "*": deny
+  bash:
+    "*": ask
+    "gh *": deny
+    "git *": deny
+    "git diff*": allow
+    "git log*": allow
+    "git rev-parse*": allow
+    "git show*": allow
+    "git status*": allow
+    "rg *": allow
+    "python -m unittest *": allow
+    "python -m warden_drydock --help": allow
 ---
 
 Before any tool call or edit, the first non-empty line of your first response

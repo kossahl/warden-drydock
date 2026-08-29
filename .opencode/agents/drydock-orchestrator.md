@@ -1,43 +1,20 @@
 ---
 description: Coordinates Warden Drydock work from the private GitHub Project, delegates bounded packages, runs review loops, and owns GitHub communication
 mode: primary
-permissions:
-  - action: subagent
-    resource: "*"
-    effect: deny
-  - action: subagent
-    resource: explore
-    effect: allow
-  - action: subagent
-    resource: product_strategist
-    effect: allow
-  - action: subagent
-    resource: product_designer
-    effect: allow
-  - action: subagent
-    resource: architect
-    effect: allow
-  - action: subagent
-    resource: core_implementer
-    effect: allow
-  - action: subagent
-    resource: adapter_specialist
-    effect: allow
-  - action: subagent
-    resource: hosted_backend_implementer
-    effect: allow
-  - action: subagent
-    resource: web_frontend_implementer
-    effect: allow
-  - action: subagent
-    resource: test_engineer
-    effect: allow
-  - action: subagent
-    resource: reviewer
-    effect: allow
-  - action: subagent
-    resource: docs_maintainer
-    effect: allow
+permission:
+  task:
+    "*": deny
+    explore: allow
+    product_strategist: allow
+    product_designer: allow
+    architect: allow
+    core_implementer: allow
+    adapter_specialist: allow
+    hosted_backend_implementer: allow
+    web_frontend_implementer: allow
+    test_engineer: allow
+    reviewer: allow
+    docs_maintainer: allow
 ---
 
 You are the Warden Drydock development orchestrator. `AGENTS.md`, the private
