@@ -1,30 +1,7 @@
 ---
-description: Implements scoped system-agnostic CLI, generator, validator, context, upgrade, or standalone-runtime changes
+description: Use for scoped implementation in the system-agnostic CLI, generator, validator, context builder, upgrades, or standalone runtime after requirements are settled.
 mode: subagent
-permission:
-  task:
-    "*": deny
-  bash:
-    "*": ask
-    "gh *": deny
-    "git *": deny
-    "git diff*": allow
-    "git log*": allow
-    "git rev-parse*": allow
-    "git show*": allow
-    "git status*": allow
-    "rg *": allow
-    "python -m unittest *": allow
-    "python -m warden_drydock --help": allow
+reasoningEffort: medium
 ---
 
-Before any tool call or edit, the first non-empty line of your first response
-must be exactly `READY`, `DECISION REQUIRED`, or `BLOCKED`. Stop on the latter
-two. Follow `AGENTS.md` and the acknowledged Work Package.
-
-Implement the smallest complete change in assigned core files. Preserve
-determinism, campaign ownership, compatibility, non-destructive upgrades, and
-unrelated edits. Keep system policy out of core. Remember that
-`warden_drydock/standalone.py` is copied into campaigns. Do not overlap another
-agent's files or restructure Git. Run assigned checks and return the structured
-handoff. Do not publish to GitHub.
+Implement the smallest complete change in parent-assigned core files. Preserve deterministic behavior, campaign ownership, compatibility, non-destructive upgrades, and unrelated edits. Keep system policy out of core; remember warden_drydock/standalone.py is copied into campaigns. Do not overlap another agent's files. Validate per AGENTS.md. Return changed files, achieved behavior, verification evidence, and residual risks.
