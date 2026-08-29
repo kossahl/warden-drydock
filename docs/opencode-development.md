@@ -1,8 +1,10 @@
 # OpenCode development setup
 
-Warden Drydock includes project-local OpenCode V2 configuration under
-`.opencode/`. GitHub Project 1 remains the plan and status source. The OpenCode
-files only define how a task reads and executes that plan.
+Warden Drydock includes project-local OpenCode configuration under `.opencode/`.
+The files use OpenCode V1-compatible syntax so the desktop application can load
+them. OpenCode V2 also reads supported V1 configuration and normalizes it in
+memory. GitHub Project 1 remains the plan and status source. The OpenCode files
+only define how a task reads and executes that plan.
 
 ## Start work
 
@@ -60,10 +62,10 @@ commands, so agent instructions and approval review remain part of the boundary.
 
 ## Validation limitation
 
-The configuration follows the current official OpenCode V2 Markdown agent,
-permission, command, instruction, and skill formats. The `opencode` executable
-was not available in the shell used to prepare this configuration, so a fresh
-OpenCode session must perform the final discovery check:
+The configuration follows the current official OpenCode V1 Markdown agent and
+permission formats. The `opencode` executable was not available in the shell
+used to prepare this configuration, so a fresh OpenCode session must perform
+the final discovery check:
 
 1. confirm `drydock-orchestrator` is the default agent;
 2. confirm all ten role agents appear;
@@ -73,8 +75,9 @@ OpenCode session must perform the final discovery check:
 
 Official references:
 
-- https://opencode.ai/v2/docs/agents
-- https://opencode.ai/v2/docs/permissions
-- https://opencode.ai/v2/docs/commands
-- https://opencode.ai/v2/docs/instructions
+- https://opencode.ai/docs/agents
+- https://opencode.ai/docs/permissions
+- https://opencode.ai/docs/commands
+- https://opencode.ai/docs/instructions
 - https://opencode.ai/docs/skills
+- https://opencode.ai/v2/docs/migrate-v1

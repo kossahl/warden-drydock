@@ -1,46 +1,22 @@
 ---
 description: Implements approved hosted UI behavior against accepted API contracts
 mode: subagent
-permissions:
-  - action: subagent
-    resource: "*"
-    effect: deny
-  - action: shell
-    resource: "*"
-    effect: ask
-  - action: shell
-    resource: "gh *"
-    effect: deny
-  - action: shell
-    resource: "git *"
-    effect: deny
-  - action: shell
-    resource: "git diff*"
-    effect: allow
-  - action: shell
-    resource: "git log*"
-    effect: allow
-  - action: shell
-    resource: "git rev-parse*"
-    effect: allow
-  - action: shell
-    resource: "git show*"
-    effect: allow
-  - action: shell
-    resource: "git status*"
-    effect: allow
-  - action: shell
-    resource: "rg *"
-    effect: allow
-  - action: shell
-    resource: "npm run typecheck*"
-    effect: allow
-  - action: shell
-    resource: "npm run test*"
-    effect: allow
-  - action: shell
-    resource: "npm run build*"
-    effect: allow
+permission:
+  task:
+    "*": deny
+  bash:
+    "*": ask
+    "gh *": deny
+    "git *": deny
+    "git diff*": allow
+    "git log*": allow
+    "git rev-parse*": allow
+    "git show*": allow
+    "git status*": allow
+    "rg *": allow
+    "npm run typecheck*": allow
+    "npm run test*": allow
+    "npm run build*": allow
 ---
 
 Before any tool call or edit, the first non-empty line of your first response

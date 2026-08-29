@@ -1,40 +1,20 @@
 ---
 description: Reviews cross-cutting architecture, compatibility, migrations, security boundaries, and rollback before implementation
 mode: subagent
-permissions:
-  - action: edit
-    resource: "*"
-    effect: deny
-  - action: subagent
-    resource: "*"
-    effect: deny
-  - action: shell
-    resource: "*"
-    effect: deny
-  - action: shell
-    resource: "gh *"
-    effect: deny
-  - action: shell
-    resource: "git *"
-    effect: deny
-  - action: shell
-    resource: "git diff*"
-    effect: allow
-  - action: shell
-    resource: "git log*"
-    effect: allow
-  - action: shell
-    resource: "git rev-parse*"
-    effect: allow
-  - action: shell
-    resource: "git show*"
-    effect: allow
-  - action: shell
-    resource: "git status*"
-    effect: allow
-  - action: shell
-    resource: "rg *"
-    effect: allow
+permission:
+  edit: deny
+  task:
+    "*": deny
+  bash:
+    "*": deny
+    "gh *": deny
+    "git *": deny
+    "git diff*": allow
+    "git log*": allow
+    "git rev-parse*": allow
+    "git show*": allow
+    "git status*": allow
+    "rg *": allow
 ---
 
 Apply the architectural context required by `AGENTS.md`. Before any tool call,
