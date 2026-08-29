@@ -41,14 +41,13 @@ Agent files do not select a provider or model. Subagents inherit the active
 session model. OpenCode discovers the canonical skills directly from
 `.agents/skills`; OpenCode-specific copies are not maintained.
 
-Architect, Product Strategist, and Reviewer cannot edit files. Other role
-agents may edit only their assigned Work Package ownership. Direct GitHub and
-Git mutation commands are denied to subagents. Known read and verification
-commands are allowlisted; other shell commands require approval. The
-orchestrator owns Git and GitHub operations and invokes the Reviewer after
-implementation until no actionable findings remain. These controls reduce
-accidental authority use; they are not a sandbox against deliberately wrapped
-commands, so agent instructions and approval review remain part of the boundary.
+OpenCode mirrors the role descriptions and instructions in `.codex/agents`; the
+Codex definitions are authoritative. Architect, Product Strategist, and
+Reviewer remain read-only roles. Other role agents do not receive additional
+OpenCode command restrictions. Git and GitHub ownership remains the process
+rule in `AGENTS.md`: the parent or orchestrator owns branches, commits, pull
+requests, and public communication. The orchestrator invokes the Reviewer after
+implementation until no actionable findings remain.
 
 ## Boundaries
 
