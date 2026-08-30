@@ -480,10 +480,17 @@ class EngineSourceLoaderTests(unittest.TestCase):
         self.assertLess(len([item for item in envelope.excerpts if item.source_id.startswith("npc-")]), 20)
 
     def test_source_envelope_enforces_excerpt_and_aggregate_bounds(self):
-        records = [Record(f"source-{index}", "canon", str(index) * 20000) for index in range(6)]
+        records = [Record(f"source-{index}", "canon", f"record-{index}:" + str(index) * 20000) for index in range(6)]
         envelope = DeterministicSourceSelector().select("campaign_one", "revision_one", records)
-        self.assertTrue(all(len(item.text) <= 8000 for item in envelope.excerpts))
+        self.assertEqual(
+            ["source-0", "source-1", "source-2", "source-3"],
+            [item.source_id for item in envelope.excerpts],
+        )
         self.assertLessEqual(sum(len(item.text) for item in envelope.excerpts), 32000)
+        content_by_id = {record.subject_id: record.content for record in records}
+        for item in envelope.excerpts:
+            self.assertLessEqual(len(item.text), 8000)
+            self.assertEqual(content_by_id[item.source_id][:8000], item.text)
         repeated = DeterministicSourceSelector().select("campaign_one", "revision_one", reversed(records))
         self.assertEqual(envelope.source_set_digest, repeated.source_set_digest)
 
