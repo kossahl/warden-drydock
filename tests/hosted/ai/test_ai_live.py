@@ -278,20 +278,37 @@ class GroundedAIServiceTests(unittest.TestCase):
                 with self.assertRaises(ConsentRequired):
                     self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
 
-    def test_live_generation_requires_exact_base_revision_and_uses_confirmed_facts(self):
+    def _live_session_with_question_and_fact(self):
         live = LiveSessionService(self.repository)
         session = live.start("session_one", "campaign_one", "revision_one", "controller_one")
         live.capture("session_one", "controller_one", 1, session.workflow_version, event_id="question_one", device_id="device_one", operation_id="operation_one", device_order=1, capture_type=CaptureType.UNRESOLVED_QUESTION, text="Secret question")
         live.capture("session_one", "controller_one", 1, session.workflow_version, event_id="fact_one", device_id="device_one", operation_id="operation_two", device_order=2, capture_type=CaptureType.CONFIRMED_FACT, text="Door opened")
+        return live
+
+    def test_live_generation_rejects_stale_base_revision_as_unsafe_binding(self):
+        self._live_session_with_question_and_fact()
         self.service.record_consent(explicit=True)
         with self.assertRaisesRegex(ValueError, "unsafe_binding"):
             self.service.start("generation_stale", "campaign_one", "revision_new", Action.CHECK, "Check", session_id="session_one")
         self.assertEqual([], self.repository.dispatch_log)
+        self.assertEqual([], self.provider.calls)
+        self.assertIsNone(self.repository.get_generation("generation_stale"))
+
+    def test_live_generation_grounds_only_in_confirmed_facts(self):
+        self._live_session_with_question_and_fact()
+        self.service.record_consent(explicit=True)
         record = self.service.start("generation_one", "campaign_one", "revision_one", Action.CHECK, "Check", session_id="session_one")
+        envelope = record.request.envelope
         self.assertEqual("revision_one", record.request.revision_id)
-        texts = [item.text for item in record.request.envelope.excerpts]
-        self.assertIn("Door opened", texts)
-        self.assertNotIn("Secret question", texts)
+        self.assertEqual("revision_one", envelope.revision_id)
+        self.assertEqual("session_one", envelope.session_id)
+        self.assertEqual({"station", "plan", "fact_one"}, {item.source_id for item in envelope.excerpts})
+        fact = next(item for item in envelope.excerpts if item.source_id == "fact_one")
+        self.assertEqual("table_fact", fact.authority)
+        self.assertEqual("Door opened", fact.text)
+        self.assertNotIn("question_one", [item.source_id for item in envelope.excerpts])
+        self.assertNotIn("Secret question", [item.text for item in envelope.excerpts])
+        self.assertEqual(["generation_one"], self.repository.dispatch_log)
 
     def test_events_after_terminal_fail_closed(self):
         self.service.provider = FakeProvider(events=[("completion", None), ("delta", "late")])
