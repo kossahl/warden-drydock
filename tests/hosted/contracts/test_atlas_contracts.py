@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -44,6 +45,13 @@ def _walk(value):
     elif isinstance(value, list):
         for child in value:
             yield from _walk(child)
+
+
+def _value_at_path(instance: dict, path: str) -> object:
+    value = instance
+    for part in path.split("."):
+        value = value[part]
+    return value
 
 
 def _strict_decode(value: str) -> str:
@@ -206,13 +214,45 @@ class AtlasContractTests(unittest.TestCase):
     def test_all_contract_objects_are_closed_positive_and_unique(self) -> None:
         validator = Draft202012Validator(self.schema)
         names = []
+        by_name = {}
         for instance in self.examples:
             with self.subTest(contract=instance["contract_name"]):
                 self.assertEqual([], list(validator.iter_errors(instance)))
                 validate_semantics(instance)
                 names.append(instance["contract_name"])
+                by_name[instance["contract_name"]] = instance
         self.assertEqual(11, len(names))
         self.assertEqual(len(names), len(set(names)))
+
+        detail = deepcopy(by_name["atlas_record_detail"])
+        detail["record"]["content"] += "\n# tampered\n"
+        self.assertEqual([], list(validator.iter_errors(detail)))
+        with self.assertRaises(AtlasSemanticError) as caught:
+            validate_semantics(detail)
+        self.assertEqual("content digest mismatch", str(caught.exception))
+
+        result = deepcopy(by_name["atlas_record_library_result"])
+        result["items"][0]["authority"] = "preparation"
+        self.assertEqual([], list(validator.iter_errors(result)))
+        with self.assertRaises(AtlasSemanticError) as caught:
+            validate_semantics(result)
+        self.assertEqual("status authority mismatch", str(caught.exception))
+
+        renamed = deepcopy(by_name["atlas_record_detail"])
+        renamed["contract_name"] = "atlas_made_up"
+        self.assertTrue(list(validator.iter_errors(renamed)))
+
+        routes = json.loads(
+            (CONTRACT_ROOT / "routes.json").read_text(encoding="utf-8")
+        )["routes"]
+        route = next(item for item in routes if item["id"] == "atlas_record_library")
+        flat = {
+            specification["name"]: _value_at_path(
+                by_name["atlas_record_library_query"], specification["maps_to"]
+            )
+            for specification in route["query_parameters"]
+        }
+        self.assertEqual(flat, _parse_query(route, _serialize_query(route, flat)))
 
     def test_atlas_exposes_no_generation_http_contract(self) -> None:
         corpus = "\n".join(
