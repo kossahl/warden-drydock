@@ -75,6 +75,19 @@ class HostedHttpV2ContractTests(unittest.TestCase):
                     if isinstance(value, dict) and "contract_version" in value:
                         self.assertEqual(2, value["contract_version"])
 
+        base = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "provider_readiness")
+        )
+        unexpected = deepcopy(base)
+        unexpected["unexpected_property"] = True
+        with self.subTest(mutation="unexpected_top_level_property"):
+            self.assertTrue(list(validator.iter_errors(unexpected)))
+        for version in (1, 3):
+            mutated = deepcopy(base)
+            mutated["contract_version"] = version
+            with self.subTest(mutation="contract_version", version=version):
+                self.assertTrue(list(validator.iter_errors(mutated)))
+
     def test_unrelated_payloads_copy_v1_semantics(self) -> None:
         v1_schema = json.loads((V1_ROOT / "http.schema.json").read_text(encoding="utf-8"))
         excluded = {"ask_start_request", "generation_view", "generation_context"}
