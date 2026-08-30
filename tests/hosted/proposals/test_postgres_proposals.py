@@ -128,12 +128,12 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
     def test_reconciliation_rejects_unverified_or_mismatched_manifest(self):
         item = self.draft("bad_reconcile")
         quarantined = self.repository.replace_status(self.repository.claim(item), ProposalStatus.QUARANTINED)
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "not a verified snapshot manifest"):
             self.service.reconcile(quarantined, "private/path")
         wrong = SnapshotManifest("campaign_other", "revision_other", item.base_revision, 2,
             "b" * 64, (FileHash("record.md", "c" * 64),), "0.3.0", "1.0.0",
             "d" * 64, item.diff_digest, "token_publish")
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "binding mismatch"):
             self.service.reconcile(quarantined, wrong)
         self.assertEqual(ProposalStatus.QUARANTINED, self.repository.get(item.proposal_id, 1).status)
 
