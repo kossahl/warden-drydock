@@ -322,6 +322,25 @@ class HostedContractPackageTests(unittest.TestCase):
                 self.assertIn("contract_version", schema["required"])
                 self.assertEqual(schema["properties"]["contract_version"]["const"], 1)
 
+                example = json.loads((CONTRACT_ROOT / family["example"]).read_text(encoding="utf-8"))
+                validator = Draft202012Validator(schema)
+                with_extra_property = deepcopy(example)
+                with_extra_property["unexpected_top_level_property"] = "rejected"
+                self.assertTrue(
+                    [error for error in validator.iter_errors(with_extra_property) if error.validator == "additionalProperties"],
+                    "unknown top-level property must be rejected",
+                )
+                with_wrong_version = deepcopy(example)
+                with_wrong_version["contract_version"] = 2
+                self.assertTrue(
+                    [
+                        error
+                        for error in validator.iter_errors(with_wrong_version)
+                        if error.validator == "const" and "contract_version" in error.absolute_path
+                    ],
+                    "contract_version other than 1 must be rejected",
+                )
+
     def test_semantic_invariants_are_indexed_and_bound_to_schemas(self):
         relative = self.index["semantic_invariants"]
         specification = json.loads((CONTRACT_ROOT / relative).read_text(encoding="utf-8"))
