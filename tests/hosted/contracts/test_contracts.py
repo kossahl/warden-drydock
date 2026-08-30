@@ -285,6 +285,38 @@ def validate(instance, schema):
         raise failures[0]
 
 
+def _contradicting_example(family, example):
+    broken = deepcopy(example)
+    if family == "api":
+        broken["payload_digest"] = "b" * 64
+        return broken, "idempotency_digest_conflict"
+    if family == "atlas":
+        broken["head_revision"] = "../head"
+        return broken, "unsafe_binding"
+    if family == "engine":
+        broken["publication"] = True
+        return broken, "capability_rejected"
+    if family == "snapshot":
+        broken["publication_intent"]["classification"] = "quarantined"
+        return broken, "publication_intent_failure"
+    if family == "retrieval":
+        broken["citations"][0]["order"] = 2
+        return broken, "retrieval_consistency_failure"
+    if family == "provider":
+        broken["events"][1]["sequence"] = 1
+        return broken, "stream_sequence_conflict"
+    if family == "live":
+        broken["end_barrier"]["end_operation_id"] = "operation_none"
+        return broken, "live_barrier_conflict"
+    if family == "proposal":
+        broken["proposal"]["status"] = "approved"
+        return broken, "proposal_approval_conflict"
+    if family == "operations":
+        broken["reconciliation"]["classification"] = "quarantined"
+        return broken, "publication_intent_failure"
+    raise AssertionError(f"no counterexample for family {family}")
+
+
 class HostedContractPackageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -343,6 +375,10 @@ class HostedContractPackageTests(unittest.TestCase):
             example = json.loads((CONTRACT_ROOT / family["example"]).read_text(encoding="utf-8"))
             with self.subTest(family=family["family"]):
                 validate(example, schema)
+                broken, expected_category = _contradicting_example(family["family"], example)
+                failures = list(contract_errors(broken, schema))
+                self.assertTrue(failures, "contradicting example unexpectedly validated")
+                self.assertIn(expected_category, {failure.category for failure in failures})
 
     def test_every_negative_fixture_fails_at_expected_binding(self):
         fixture_paths = [fixture for family in self.index["families"] for fixture in family["negative_fixtures"]]
