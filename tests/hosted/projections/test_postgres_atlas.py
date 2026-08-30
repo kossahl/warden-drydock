@@ -146,7 +146,9 @@ class PostgresAtlasIntegrationTests(unittest.TestCase):
                 )
             )
         try:
-            with self.assertRaises(Exception):
+            with self.assertRaisesRegex(
+                psycopg.errors.RaiseException, "forced Atlas rollback"
+            ):
                 rebuilder.rebuild(first)
             self.assertEqual(
                 first_bundle,
