@@ -80,6 +80,7 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
         self.assertEqual(ProposalStatus.PUBLISHED, self.service.approve(item, **self.binding(item)).status)
         self.assertEqual(1, len(self.publish_calls))
         self.assertEqual(8, len(results))
+        self.assertEqual(len(results), results.count("conflict") + 1)
 
     def test_approve_reject_and_approve_correct_have_single_winner(self):
         item = self.draft("reject")
