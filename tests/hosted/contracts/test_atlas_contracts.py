@@ -227,6 +227,8 @@ class AtlasContractTests(unittest.TestCase):
     def test_routes_pin_all_atlas_read_destinations_without_handlers(self) -> None:
         routes = json.loads((CONTRACT_ROOT / "routes.json").read_text(encoding="utf-8"))
         self.assertFalse(routes["implemented_by_this_package"])
+        self.assertTrue(all(item["method"] == "GET" for item in routes["routes"]))
+        self.assertTrue(all("handler" not in item for item in routes["routes"]))
         self.assertEqual(
             {
                 "atlas_campaign_list",
@@ -239,15 +241,46 @@ class AtlasContractTests(unittest.TestCase):
             },
             {item["id"] for item in routes["routes"]},
         )
-        self.assertTrue(
-            all("invalid_cursor_binding" in json.dumps(item) for item in routes["routes"] if item["id"] in {"atlas_record_library", "atlas_neighborhood", "atlas_approved_history"})
-        )
         by_id = {item["id"]: item for item in routes["routes"]}
+        cursor_bound = {"atlas_record_library", "atlas_neighborhood", "atlas_approved_history"}
+        self.assertEqual(
+            cursor_bound,
+            {
+                item["id"]
+                for item in routes["routes"]
+                if "invalid_cursor_binding" in item["error_status"].get("422", [])
+            },
+        )
+        cursor_rule = next(
+            rule
+            for rule in json.loads(
+                (CONTRACT_ROOT / "semantic-invariants.json").read_text(encoding="utf-8")
+            )["rules"]
+            if rule["id"] == "atlas_cursor_binding"
+        )
+        self.assertEqual("invalid_cursor_binding", cursor_rule["category"])
+        for route_id in cursor_bound:
+            with self.subTest(route=route_id):
+                self.assertIn(by_id[route_id]["response"], cursor_rule["applies_to"])
         self.assertEqual(
             "atlas_depth_1_neighborhood_query", by_id["atlas_neighborhood"]["request"]
         )
         self.assertEqual(
             "atlas_approved_history_query", by_id["atlas_approved_history"]["request"]
+        )
+        neighborhood = by_id["atlas_neighborhood"]
+        exemplar = next(
+            item for item in self.examples
+            if item["contract_name"] == "atlas_depth_1_neighborhood_query"
+        )
+        flat = {}
+        for specification in neighborhood["query_parameters"]:
+            value = exemplar
+            for part in specification["maps_to"].split("."):
+                value = value[part]
+            flat[specification["name"]] = value
+        self.assertEqual(
+            flat, _parse_query(neighborhood, _serialize_query(neighborhood, flat))
         )
 
     def test_flat_query_parser_and_serializer_match_every_route(self) -> None:
