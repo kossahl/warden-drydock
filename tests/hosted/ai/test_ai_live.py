@@ -234,8 +234,10 @@ class GroundedAIServiceTests(unittest.TestCase):
         one = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         two = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         self.assertIs(one, two)
+        self.assertEqual(one.request, two.request)
+        self.assertEqual(one.request.envelope.source_set_digest, self.repository.sources["generation_one"].source_set_digest)
         self.assertEqual(["generation_one"], self.repository.dispatch_log)
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "idempotency_digest_conflict"):
             self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "Changed")
 
     def test_concurrent_exact_replay_has_one_provider_dispatch(self):
