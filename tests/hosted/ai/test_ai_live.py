@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -79,6 +79,19 @@ class ObservingProvider(FakeProvider):
         record = self.repository.get_generation(generation_id)
         if record is None or len(record.events) != count:
             raise AssertionError("stream event was not persisted incrementally")
+
+
+class PausedProvider(FakeProvider):
+    def __init__(self, entered, release):
+        super().__init__()
+        self.entered = entered
+        self.release = release
+
+    def stream(self, request):
+        self.calls.append(request)
+        self.entered.set()
+        self.release.wait(5)
+        yield from self.events
 
 
 class GroundedAIServiceTests(unittest.TestCase):
@@ -239,12 +252,30 @@ class GroundedAIServiceTests(unittest.TestCase):
             self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "Changed")
 
     def test_concurrent_exact_replay_has_one_provider_dispatch(self):
+        entered = threading.Event()
+        release = threading.Event()
+        paused = PausedProvider(entered, release)
+        self.service.provider = paused
         self.service.record_consent(explicit=True)
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            records = list(pool.map(lambda _: self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?"), range(2)))
-        self.assertEqual(1, len(self.provider.calls))
+        barrier = threading.Barrier(2)
+        records: list[GenerationRecord] = []
+
+        def concurrent_start():
+            barrier.wait()
+            records.append(self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?"))
+
+        threads = [threading.Thread(target=concurrent_start) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        self.assertTrue(entered.wait(5), "winner must be mid-dispatch before the loser reaches the reservation")
+        release.set()
+        for thread in threads:
+            thread.join(5)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(1, len(paused.calls))
         self.assertEqual(["generation_one"], self.repository.dispatch_log)
-        self.assertEqual(records[0].request, records[1].request)
+        self.assertIs(records[0], records[1])
+        self.assertIs(records[0], self.repository.generations["generation_one"])
 
     def test_incomplete_provider_stream_is_resumable_failure(self):
         self.service.provider = FakeProvider(events=[("delta", "partial")])
