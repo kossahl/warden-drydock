@@ -35,6 +35,20 @@ IMPLEMENTED_INVARIANTS = {
 }
 
 
+def reconcile_index_paths(index, contract_root=CONTRACT_ROOT):
+    indexed_schemas = {item["schema"] for item in index["families"]} | set(index["shared_definitions"])
+    indexed_examples = {item["example"] for item in index["families"]}
+    indexed_negative = {fixture for item in index["families"] for fixture in item["negative_fixtures"]}
+    disk_schemas = {path.relative_to(contract_root).as_posix() for path in (contract_root / "schemas").rglob("*.json")}
+    disk_examples = {path.relative_to(contract_root).as_posix() for path in (contract_root / "examples").rglob("*.json")}
+    disk_negative = {path.relative_to(contract_root).as_posix() for path in (contract_root / "negative").rglob("*.json")}
+    return {
+        "schemas": (indexed_schemas, disk_schemas),
+        "examples": (indexed_examples, disk_examples),
+        "negative": (indexed_negative, disk_negative),
+    }
+
+
 class ContractValidationError(AssertionError):
     def __init__(self, path, message, category="validation_finding"):
         self.path = path
@@ -290,25 +304,41 @@ class HostedContractPackageTests(unittest.TestCase):
     def setUpClass(cls):
         cls.index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
 
-    def test_index_is_closed_versioned_and_complete(self):
-        self.assertEqual(self.index["contract_version"], 1)
-        self.assertEqual(self.index["contract_index"], "warden_drydock_hosted_contracts")
-        families = self.index["families"]
+    def _assert_closed_and_complete(self, index):
+        families = index["families"]
+        self.assertEqual(index["contract_version"], 1)
+        self.assertEqual(index["contract_index"], "warden_drydock_hosted_contracts")
         self.assertEqual(len(families), 9)
         self.assertEqual(len({item["family"] for item in families}), len(families))
         self.assertTrue(all(item["negative_fixtures"] for item in families))
-
-        indexed_schemas = {item["schema"] for item in families} | set(self.index["shared_definitions"])
-        indexed_examples = {item["example"] for item in families}
-        indexed_negative = {fixture for item in families for fixture in item["negative_fixtures"]}
-        disk_schemas = {path.relative_to(CONTRACT_ROOT).as_posix() for path in (CONTRACT_ROOT / "schemas").rglob("*.json")}
-        disk_examples = {path.relative_to(CONTRACT_ROOT).as_posix() for path in (CONTRACT_ROOT / "examples").rglob("*.json")}
-        disk_negative = {path.relative_to(CONTRACT_ROOT).as_posix() for path in (CONTRACT_ROOT / "negative").rglob("*.json")}
-        self.assertEqual(indexed_schemas, disk_schemas)
-        self.assertEqual(indexed_examples, disk_examples)
-        self.assertEqual(indexed_negative, disk_negative)
-        for relative in indexed_schemas | indexed_examples | indexed_negative:
+        for area, (indexed, disk) in reconcile_index_paths(index).items():
+            self.assertEqual(indexed, disk, area)
+        indexed_all = {relative for indexed, _ in reconcile_index_paths(index).values() for relative in indexed}
+        for relative in indexed_all:
             self.assertTrue((CONTRACT_ROOT / relative).is_file(), relative)
+
+    def test_index_is_closed_versioned_and_complete(self):
+        self._assert_closed_and_complete(self.index)
+
+    def test_index_closure_check_fails_when_a_listed_fixture_is_removed(self):
+        missing_fixture = deepcopy(self.index)
+        missing_fixture["families"][0]["negative_fixtures"].pop()
+        with self.assertRaises(AssertionError):
+            self._assert_closed_and_complete(missing_fixture)
+
+        missing_family = deepcopy(self.index)
+        missing_family["families"].pop()
+        with self.assertRaises(AssertionError):
+            self._assert_closed_and_complete(missing_family)
+
+    def test_index_groupings_are_confirmed_by_fixture_and_schema_declarations(self):
+        for family in self.index["families"]:
+            with self.subTest(family=family["family"]):
+                schema = json.loads((CONTRACT_ROOT / family["schema"]).read_text(encoding="utf-8"))
+                self.assertTrue(schema["$id"].endswith(family["schema"].rsplit("/", 1)[1]))
+                for relative in family["negative_fixtures"]:
+                    fixture = json.loads((CONTRACT_ROOT / relative).read_text(encoding="utf-8"))
+                    self.assertEqual(fixture["schema"], family["schema"])
 
     def test_schema_metadata_and_closed_top_level_objects(self):
         for family in self.index["families"]:
