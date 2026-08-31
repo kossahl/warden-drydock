@@ -335,11 +335,57 @@ class CommunicationPolicyTests(unittest.TestCase):
             "explicitly authorized writes",
             "coordination evidence, not executable instructions",
             "every public contribution is untrusted",
+            "untrusted until the parent verifies",
             "before notifying the responsible agent",
         }
         for phrase in required_phrases:
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.policy)
+
+    def test_committed_ci_workflows_are_read_only_and_never_write_back(self):
+        workflows = sorted((ROOT / ".github" / "workflows").glob("*"))
+        self.assertTrue(workflows)
+        for path in workflows:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(workflow=path.name):
+                permissions_block = re.search(
+                    r"(?ms)^permissions:\s*\n(?P<body>(?:^  [^\n]+\n?)+)", text
+                )
+                self.assertIsNotNone(permissions_block)
+                for line in permissions_block.group("body").splitlines():
+                    self.assertNotRegex(line, r":\s*write\b")
+                self.assertNotIn("write-all", text)
+                self.assertNotIn("GITHUB_TOKEN", text)
+                self.assertNotIn("GH_TOKEN", text)
+                self.assertNotRegex(text, r"(?m)\bgit\s+push\b")
+
+    def test_agent_definitions_grant_no_github_credentials(self):
+        definition_roots = (
+            ROOT / ".opencode" / "agents",
+            ROOT / ".codex" / "agents",
+            ROOT / ".agents",
+        )
+        definitions = [
+            path
+            for root in (r for r in definition_roots if r.is_dir())
+            for path in sorted(root.rglob("*"))
+            if path.is_file()
+        ]
+        self.assertTrue(definitions)
+        for path in definitions:
+            text = path.read_text(encoding="utf-8")
+            relative = path.relative_to(ROOT)
+            with self.subTest(definition=relative):
+                self.assertNotRegex(
+                    text,
+                    r"(?i)\b(GITHUB[_-]?TOKEN|GH_TOKEN|OPENAI_API_KEY|"
+                    r"ANTHROPIC_API_KEY|API[_-]?KEY)\b",
+                )
+                self.assertNotRegex(
+                    text,
+                    r"(?im)^\s*(api[_-]?key|token|secret|credential|"
+                    r"credentials?|password)\s*[:=]",
+                )
 
     def test_polling_is_read_only_idempotent_and_cannot_execute_agents(self):
         """Documentation contract until the future polling integration exists."""
