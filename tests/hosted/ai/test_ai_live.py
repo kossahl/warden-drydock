@@ -415,6 +415,17 @@ class GroundedAIServiceTests(unittest.TestCase):
         self.service.record_consent(explicit=True)
         record = self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         self.assertEqual("failed", record.terminal_status)
+        self.assertEqual(["start", "failure"], [event.event_type for event in record.events])
+        self.assertIs(record.events[-1].retryable, False)
+        self.assertEqual("", record.terminal_content)
+        self.assertNotIn("late", record.terminal_content)
+
+        self.service.provider = FakeProvider(events=[("delta", "draft"), ("completion", None), ("delta", "late")])
+        record = self.service.start("generation_two", "campaign_one", "revision_one", Action.ASK, "State?")
+        self.assertEqual("failed", record.terminal_status)
+        self.assertEqual(["start", "delta", "failure"], [event.event_type for event in record.events])
+        self.assertIs(record.events[-1].retryable, False)
+        self.assertEqual("draft", record.terminal_content)
         self.assertNotIn("late", record.terminal_content)
 
     def test_stream_is_ordered_resumable_and_terminal_draft_persists(self):
