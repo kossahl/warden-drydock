@@ -30,11 +30,27 @@ class OnboardingContractTest(unittest.TestCase):
             with self.subTest(expectation=expectation):
                 self.assertIn(expectation, contract)
 
+    def _actionable_bootstrap_pointer(self, document, text, canonical):
+        for target in re.findall(r"\]\(([^)\s]+)\)", text):
+            if target.startswith(("http:", "https:", "mailto:")):
+                continue
+            if (document.parent / target).resolve() == canonical:
+                return True
+        return bool(
+            re.search(
+                r"\bread[^.\n]*?BOOTSTRAP\.md[^.\n]*?\bbefore\b",
+                text,
+                re.IGNORECASE,
+            )
+        )
+
     def test_user_documentation_points_to_canonical_contract(self):
+        canonical = (ROOT / "BOOTSTRAP.md").resolve()
         for relative in ("README.md", "docs/user-guide.md", "docs/ai-assisted-setup.md"):
             with self.subTest(path=relative):
-                text = (ROOT / relative).read_text(encoding="utf-8")
-                self.assertIn("BOOTSTRAP.md", text)
+                document = ROOT / relative
+                text = document.read_text(encoding="utf-8")
+                self.assertTrue(self._actionable_bootstrap_pointer(document, text, canonical))
 
     def test_ci_verifies_built_distribution_version_without_release_literal(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
