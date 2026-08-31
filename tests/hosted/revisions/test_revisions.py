@@ -475,6 +475,15 @@ class MigrationContractTests(unittest.TestCase):
             "CHECK (status IN ('pending', 'finalized', 'quarantined'))",
             intent_columns["status"]["check"],
         )
+        self.assertEqual("integer", intent_columns["ordinal"]["type"])
+        self.assertTrue(intent_columns["ordinal"]["not_null"])
+        self.assertEqual("CHECK (ordinal > 0)", intent_columns["ordinal"]["check"])
+        self.assertEqual("text", intent_columns["campaign_id"]["type"])
+        self.assertTrue(intent_columns["campaign_id"]["not_null"])
+        self.assertEqual("text", intent_columns["revision_id"]["type"])
+        self.assertTrue(intent_columns["revision_id"]["not_null"])
+        self.assertEqual("text", intent_columns["parent_revision"]["type"])
+        self.assertFalse(intent_columns["parent_revision"]["not_null"])
 
         head_columns = head["columns"]
         self.assertEqual(
@@ -485,6 +494,9 @@ class MigrationContractTests(unittest.TestCase):
         self.assertEqual("text", head_columns["revision_id"]["type"])
         self.assertTrue(head_columns["revision_id"]["not_null"])
         self.assertTrue(head_columns["revision_id"]["unique"])
+        self.assertEqual("integer", head_columns["ordinal"]["type"])
+        self.assertTrue(head_columns["ordinal"]["not_null"])
+        self.assertEqual("CHECK (ordinal > 0)", head_columns["ordinal"]["check"])
 
         checkpoint_columns = checkpoint["columns"]
         self.assertEqual(
@@ -532,6 +544,7 @@ class MigrationContractTests(unittest.TestCase):
         )
         self.assertEqual("hosted_projection_record", shadow_record["like_base"])
 
+        self.assertEqual(1, len(indexes))
         self.assertEqual(
             ["hosted_publication_intent_token_idx"],
             [index["name"] for index in indexes],
@@ -551,6 +564,17 @@ class MigrationContractTests(unittest.TestCase):
         self.assertLess(
             statements.index(intent_statement), statements.index(index_statement)
         )
+        self.assertEqual(
+            "CREATE INDEX hosted_publication_intent_token_idx "
+            "ON hosted_publication_intent(intent_token)",
+            index_statement,
+        )
+        self.assertEqual(
+            " ".join("CREATE INDEX hosted_publication_intent_token_idx "
+                     "ON hosted_publication_intent(intent_token)".split()),
+            " ".join(index_statement.split()),
+        )
+        self.assertNotIn("UNIQUE", index_statement)
         self.assertNotIn("provider_secret", raw)
 
 
