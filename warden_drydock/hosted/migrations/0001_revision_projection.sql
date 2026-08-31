@@ -1,5 +1,3 @@
-BEGIN;
-
 CREATE TABLE hosted_publication_intent (
     intent_id text PRIMARY KEY,
     intent_token text NOT NULL,
@@ -41,5 +39,3 @@ CREATE TABLE hosted_projection_record (
 );
 
 CREATE TABLE hosted_projection_shadow_record (LIKE hosted_projection_record INCLUDING ALL);
-
-COMMIT;
