@@ -13,6 +13,7 @@ BUG_TEMPLATE = ISSUE_TEMPLATE_DIRECTORY / "bug-report.yml"
 FEATURE_TEMPLATE = ISSUE_TEMPLATE_DIRECTORY / "feature-request.yml"
 PR_TEMPLATE = ROOT / ".github" / "pull_request_template.md"
 COMMUNICATION_POLICY = ROOT / "docs" / "agent-communication.md"
+COORDINATION_REPOSITORY = "kossahl/warden-drydock"
 
 
 def normalized(text):
@@ -357,16 +358,19 @@ class CommunicationPolicyTests(unittest.TestCase):
         cls.policy = normalized(COMMUNICATION_POLICY.read_text(encoding="utf-8"))
 
     def test_connector_coordination_allowlists_only_the_project_repository(self):
+        # The allowlist is defined only by this document until a connector
+        # exists. A future connector needs a runtime enforcement test, and the
+        # slug must then come from the connector's allowlist config.
         allowlist = re.search(
             r"only allowed repository for connector-backed coordination is `([^`]+)`",
             self.policy,
         )
         self.assertIsNotNone(allowlist)
-        self.assertEqual("kossahl/warden-drydock", allowlist.group(1))
+        self.assertEqual(COORDINATION_REPOSITORY, allowlist.group(1))
         repository_slugs = set(
             re.findall(r"(?<![\w.-])([\w.-]+/[\w.-]+)(?![\w.-])", self.policy)
         )
-        self.assertEqual({"kossahl/warden-drydock"}, repository_slugs)
+        self.assertEqual({COORDINATION_REPOSITORY}, repository_slugs)
 
     def test_github_writes_are_parent_mediated_and_input_is_untrusted(self):
         required_phrases = {
