@@ -94,6 +94,18 @@ class ObservingProvider(FakeProvider):
             raise AssertionError("stream event was not persisted incrementally")
 
 
+class SourcesObservingProvider(FakeProvider):
+    def __init__(self, repository):
+        super().__init__()
+        self.repository = repository
+
+    def stream(self, request):
+        self.calls.append(request)
+        if self.repository.sources.get(request.generation_id) != request.envelope:
+            raise AssertionError("source envelope was not persisted before provider dispatch")
+        yield from self.events
+
+
 class GroundedAIServiceTests(unittest.TestCase):
     def setUp(self):
         self.repository = InMemoryAIRepository()
@@ -294,12 +306,16 @@ class GroundedAIServiceTests(unittest.TestCase):
                     failure.close()
 
     def test_retrieval_is_identical_and_persisted_before_dispatch(self):
+        provider = SourcesObservingProvider(self.repository)
+        self.service.provider = provider
         self.service.record_consent(explicit=True)
         one = self.service.start("generation_one", "campaign_one", "revision_one", Action.CHECK, "Check")
         two = self.service.start("generation_two", "campaign_one", "revision_one", Action.CHECK, "Check")
         self.assertEqual(one.request.envelope.source_set_digest, two.request.envelope.source_set_digest)
         self.assertIn("generation_one", self.repository.sources)
-        self.assertEqual(1, len(self.provider.calls)) if False else None
+        self.assertEqual(self.repository.sources["generation_one"], provider.calls[0].envelope)
+        self.assertEqual(self.repository.sources["generation_one"], self.repository.sources["generation_two"])
+        self.assertEqual(2, len(provider.calls))
         self.assertEqual(["generation_one", "generation_two"], self.repository.dispatch_log)
 
     def test_generation_exact_replay_does_not_dispatch_twice(self):
