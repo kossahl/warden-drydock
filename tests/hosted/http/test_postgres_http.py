@@ -38,8 +38,9 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
         self.repository.store("proposal_create", self.key, "a" * 64, 201, response)
         restarted = PostgresHTTPRepository(self.connect)
         self.assertEqual((201, response), restarted.replay("proposal_create", self.key, "a" * 64))
-        with self.assertRaises(ReceiptConflict):
+        with self.assertRaisesRegex(ReceiptConflict, "idempotency_digest_conflict"):
             restarted.replay("proposal_create", self.key, "b" * 64)
+        self.assertEqual((201, response), restarted.replay("proposal_create", self.key, "a" * 64))
 
     def test_missing_postgres_proposal_maps_to_contract_not_found(self) -> None:
         with tempfile.TemporaryDirectory() as root:
