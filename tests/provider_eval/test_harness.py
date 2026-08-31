@@ -7,7 +7,8 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from tools.provider_eval.fixture import BASE_REVISION, ENVELOPES, TOOL_SCHEMAS, build_manifest, canonical_json, envelope_digest, sha256
+from tools.provider_eval.fixture import BASE_REVISION, ENVELOPES, RECORDS, TOOL_SCHEMAS, build_manifest, canonical_json, envelope_digest, sha256
+import tools.provider_eval.fixture as fixture_module
 from tools.provider_eval.harness import (
     Budget,
     CANDIDATES,
@@ -36,8 +37,27 @@ class FixtureTests(unittest.TestCase):
         second = build_manifest()
         self.assertEqual(canonical_json(first), canonical_json(second))
         self.assertRegex(first["manifest_sha256"], r"^[0-9a-f]{64}$")
+        body = dict(first)
+        body.pop("manifest_sha256")
+        self.assertEqual(first["manifest_sha256"], sha256(canonical_json(body)))
         self.assertEqual(4, len(first["envelopes"]))
         self.assertEqual(["location-erebos", "session-003"], ENVELOPES["ask-airlock-v1"]["included_source_ids"])
+
+    def test_manifest_digest_changes_when_a_source_or_envelope_mutates(self):
+        baseline = build_manifest()["manifest_sha256"]
+        with patch.dict(fixture_module.RECORDS, {"npc-vale": RECORDS["npc-vale"] + "A post-approval note."}):
+            self.assertNotEqual(baseline, build_manifest()["manifest_sha256"])
+        with patch.dict(fixture_module.ENVELOPES, {"ask-airlock-v1": {**ENVELOPES["ask-airlock-v1"], "included_source_ids": ["session-003", "location-erebos"]}}):
+            self.assertNotEqual(baseline, build_manifest()["manifest_sha256"])
+
+    def test_manifest_digest_is_stable_under_source_dict_iteration_order(self):
+        baseline = build_manifest()
+        resequenced = dict(reversed(list(RECORDS.items())))
+        self.assertNotEqual(list(RECORDS), list(resequenced))
+        with patch.dict(fixture_module.RECORDS, resequenced, clear=True):
+            resequenced_manifest = build_manifest()
+        self.assertEqual(canonical_json(baseline), canonical_json(resequenced_manifest))
+        self.assertEqual(baseline["manifest_sha256"], resequenced_manifest["manifest_sha256"])
 
     def test_exact_three_tool_schemas_are_closed(self):
         self.assertEqual({"fixture_read_source", "fixture_read_revision_context", "fixture_emit_proposal_draft"}, set(TOOL_SCHEMAS))
