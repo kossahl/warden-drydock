@@ -101,6 +101,16 @@ class OnboardingContractTest(unittest.TestCase):
             ),
             1,
         )
+        smoke = next(
+            step
+            for step in baseline["steps"]
+            if step.get("name") == "Smoke-test clean AI onboarding boundary"
+        )
+        self.assertIn("from importlib.metadata import version", smoke["run"])
+        self.assertIn(
+            '"$ENVIRONMENT/bin/python" -m warden_drydock --version',
+            smoke["run"],
+        )
 
         whitespace = next(
             step
@@ -140,6 +150,27 @@ class OnboardingContractTest(unittest.TestCase):
             compatibility_setup["with"]["python-version"],
         }
         self.assertEqual(configured_versions, {"3.11", "3.13"})
+
+        smoke_jobs = [
+            job_name
+            for job_name, job in workflow["jobs"].items()
+            if any(
+                step.get("name") == "Smoke-test clean AI onboarding boundary"
+                for step in job["steps"]
+            )
+        ]
+        self.assertEqual(smoke_jobs, ["test"])
+        self.assertEqual(
+            sum(
+                "from importlib.metadata import version" in step.get("run", "")
+                for job in workflow["jobs"].values()
+                for step in job["steps"]
+            ),
+            1,
+        )
+        for job_name, job in workflow["jobs"].items():
+            with self.subTest(job=job_name):
+                self.assertNotIn("permissions", job)
 
 
 if __name__ == "__main__":
