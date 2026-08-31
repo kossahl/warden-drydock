@@ -131,9 +131,13 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
         published = self.service.reconcile(quarantined, self.manifest(item, "revision_reconciled"))
         self.assertEqual(ProposalStatus.PUBLISHED, published.status)
         with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT published_revision_id FROM hosted_proposal_version WHERE proposal_id=%s AND version=1", (item.proposal_id,))
-            self.assertEqual(("revision_reconciled",), cursor.fetchone())
-        self.assertEqual(ProposalStatus.PUBLISHED, PostgresProposalRepository(self.connect).get(item.proposal_id, 1).status)
+            cursor.execute("SELECT publication_intent_token, published_revision_id, result_digest FROM hosted_proposal_version WHERE proposal_id=%s AND version=1", (item.proposal_id,))
+            self.assertEqual(("token_publish", "revision_reconciled", "b" * 64), cursor.fetchone())
+        restarted = PostgresProposalRepository(self.connect)
+        self.assertEqual(ProposalStatus.PUBLISHED, restarted.get(item.proposal_id, 1).status)
+        published_events = [row for row in restarted.audit(item.proposal_id) if row[4] == "published"]
+        self.assertEqual(1, len(published_events))
+        self.assertEqual(("token_publish", "revision_reconciled", "b" * 64), published_events[0][5:8])
 
     def test_reconciliation_rejects_unverified_or_mismatched_manifest(self):
         item = self.draft("bad_reconcile")
