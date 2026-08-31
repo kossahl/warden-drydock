@@ -105,12 +105,23 @@ class OnboardingContractTest(unittest.TestCase):
                 self.assertTrue(self._actionable_bootstrap_pointer(document, text, canonical))
 
     def test_ci_verifies_built_distribution_version_without_release_literal(self):
-        workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("importlib.metadata", workflow)
-        self.assertIn("$PWD/dist", workflow)
-        self.assertIn('cd "$ONBOARDING_ROOT"', workflow)
-        self.assertIn("GITHUB_REF_NAME#v", workflow)
-        self.assertIsNone(re.search(r"Warden Drydock \d+\.\d+\.\d+", workflow))
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        smoke = next(
+            step
+            for step in workflow["jobs"]["test"]["steps"]
+            if step.get("name") == "Smoke-test clean AI onboarding boundary"
+        )
+        run = smoke["run"]
+        self.assertIn("$PWD/dist", run)
+        self.assertIn("importlib.metadata", run)
+        self.assertIn('cd "$ONBOARDING_ROOT"', run)
+        self.assertEqual(run.count("GITHUB_REF_NAME#v"), 1)
+        self.assertIn(
+            'test "$("$ENVIRONMENT/bin/python" -m warden_drydock --version)" '
+            '= "Warden Drydock $INSTALLED_VERSION"',
+            run,
+        )
+        self.assertIsNone(re.search(r"Warden Drydock \d+\.\d+\.\d+", run))
 
     def test_ci_workflow_policy_is_phase_aware(self):
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
