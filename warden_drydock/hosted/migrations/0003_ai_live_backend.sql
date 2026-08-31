@@ -1,5 +1,3 @@
-BEGIN;
-
 CREATE TABLE hosted_provider_consent (
     consent_id text PRIMARY KEY,
     credential_revision_fingerprint char(64) NOT NULL,
@@ -71,5 +69,3 @@ CREATE TABLE hosted_live_receipt (
     payload_digest char(64) NOT NULL,
     PRIMARY KEY (session_id, device_id, operation_id)
 );
-
-COMMIT;

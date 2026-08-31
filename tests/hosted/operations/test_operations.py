@@ -10,7 +10,8 @@ import unittest
 
 import yaml
 
-from warden_drydock.hosted.operations.migrate import migration_body, migration_files
+from tests.hosted.operations._migration_wrappers import assert_no_outer_transaction_wrapper
+from warden_drydock.hosted.operations.migrate import migration_files
 from warden_drydock.hosted.operations.recovery import build_manifest, create_snapshot_archive, extract_snapshot_archive, safe_members, snapshot_archive_inventory, verify_manifest
 from warden_drydock.hosted.operations.runtime_guard import parse_version, require_minimum
 from warden_drydock.hosted.operations.secrets import SecretStore
@@ -86,9 +87,126 @@ class RuntimeTests(unittest.TestCase):
         files = migration_files(ROOT / "warden_drydock" / "hosted" / "migrations")
         self.assertEqual(["0001", "0002", "0003", "0004", "0005", "0006", "0007"], [path.name[:4] for path in files])
         for path in files:
-            body = migration_body(path)
-            self.assertFalse(body.startswith("BEGIN;"))
-            self.assertFalse(body.endswith("COMMIT;"))
+            assert_no_outer_transaction_wrapper(path)
+
+    def test_migration_wrapper_check_reads_raw_content_not_stripped_body(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            wrapped = root / "0001_wrapped.sql"
+            wrapped.write_text("BEGIN;\nCREATE TABLE example(id integer);\nCOMMIT;\n", encoding="utf-8")
+            with self.assertRaises(AssertionError) as begin_failure:
+                assert_no_outer_transaction_wrapper(wrapped)
+            self.assertIn(str(wrapped), str(begin_failure.exception))
+            self.assertIn("BEGIN;", str(begin_failure.exception))
+            trailing_commit = root / "0002_trailing_commit.sql"
+            trailing_commit.write_text("CREATE TABLE example(id integer);\nCOMMIT;\n", encoding="utf-8")
+            with self.assertRaises(AssertionError) as commit_failure:
+                assert_no_outer_transaction_wrapper(trailing_commit)
+            self.assertIn(str(trailing_commit), str(commit_failure.exception))
+            self.assertIn("COMMIT;", str(commit_failure.exception))
+            clean = root / "0003_no_wrapper.sql"
+            clean.write_text("CREATE TABLE example(id integer);\n", encoding="utf-8")
+            assert_no_outer_transaction_wrapper(clean)
+
+    def test_wrapper_check_tolerates_inline_and_full_line_comments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            inline_wrapped = root / "0001_inline_comment_wrapped.sql"
+            inline_wrapped.write_text(
+                "BEGIN; -- note\nCREATE TABLE example(id integer);\nCOMMIT; -- note\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError) as begin_failure:
+                assert_no_outer_transaction_wrapper(inline_wrapped)
+            self.assertIn(str(inline_wrapped), str(begin_failure.exception))
+            self.assertIn("BEGIN;", str(begin_failure.exception))
+            inline_trailing = root / "0002_inline_comment_trailing.sql"
+            inline_trailing.write_text(
+                "-- header\nCREATE TABLE example(id integer);\nCOMMIT; -- note\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError) as commit_failure:
+                assert_no_outer_transaction_wrapper(inline_trailing)
+            self.assertIn(str(inline_trailing), str(commit_failure.exception))
+            self.assertIn("COMMIT;", str(commit_failure.exception))
+            commented_wrapped = root / "0003_header_above_wrapper.sql"
+            commented_wrapped.write_text(
+                "-- header\nBEGIN;\nCREATE TABLE example(id integer);\nCOMMIT;\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError) as begin_failure:
+                assert_no_outer_transaction_wrapper(commented_wrapped)
+            self.assertIn(str(commented_wrapped), str(begin_failure.exception))
+            self.assertIn("BEGIN;", str(begin_failure.exception))
+            commented_trailing = root / "0004_header_above_trailing.sql"
+            commented_trailing.write_text(
+                "-- header\nCREATE TABLE example(id integer);\nCOMMIT;\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError) as commit_failure:
+                assert_no_outer_transaction_wrapper(commented_trailing)
+            self.assertIn(str(commented_trailing), str(commit_failure.exception))
+            self.assertIn("COMMIT;", str(commit_failure.exception))
+            comment_clean = root / "0005_comment_then_clean.sql"
+            comment_clean.write_text(
+                "-- header\n\nDELETE FROM hosted_http_operation_receipt;\n",
+                encoding="utf-8",
+            )
+            assert_no_outer_transaction_wrapper(comment_clean)
+
+    def test_wrapper_check_covers_transaction_start_and_end_forms(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            for index, start in enumerate(
+                ("BEGIN;", "BEGIN WORK;", "BEGIN TRANSACTION;", "START TRANSACTION;"),
+                start=1,
+            ):
+                path = root / f"{index:04d}_start.sql"
+                path.write_text(f"{start} -- note\nCREATE TABLE example(id integer);\n", encoding="utf-8")
+                with self.assertRaises(AssertionError) as failure:
+                    assert_no_outer_transaction_wrapper(path)
+                self.assertIn(str(path), str(failure.exception))
+                self.assertIn(start, str(failure.exception))
+            for index, end in enumerate(
+                ("COMMIT;", "COMMIT WORK;", "COMMIT TRANSACTION;"),
+                start=10,
+            ):
+                path = root / f"{index:04d}_end.sql"
+                path.write_text(f"-- header\nCREATE TABLE example(id integer);\n{end} -- note\n", encoding="utf-8")
+                with self.assertRaises(AssertionError) as failure:
+                    assert_no_outer_transaction_wrapper(path)
+                self.assertIn(str(path), str(failure.exception))
+                self.assertIn(end, str(failure.exception))
+
+    def test_wrapper_check_rejects_wrappers_hidden_on_shared_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            shared_wrappers = root / "0001_shared_line_wrappers.sql"
+            shared_wrappers.write_text(
+                "BEGIN; CREATE TABLE example(id integer);\n"
+                "CREATE TABLE other(id integer); COMMIT;\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError) as begin_failure:
+                assert_no_outer_transaction_wrapper(shared_wrappers)
+            self.assertIn(str(shared_wrappers), str(begin_failure.exception))
+            self.assertIn("BEGIN;", str(begin_failure.exception))
+            shared_trailing_commit = root / "0002_shared_line_trailing_commit.sql"
+            shared_trailing_commit.write_text(
+                "\nCREATE TABLE example(id integer);\n"
+                "CREATE TABLE other(id integer); COMMIT;\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError) as commit_failure:
+                assert_no_outer_transaction_wrapper(shared_trailing_commit)
+            self.assertIn(str(shared_trailing_commit), str(commit_failure.exception))
+            self.assertIn("COMMIT;", str(commit_failure.exception))
+            shared_clean = root / "0003_shared_line_clean.sql"
+            shared_clean.write_text(
+                "CREATE TABLE example(id integer); CREATE TABLE other(id integer);\n",
+                encoding="utf-8",
+            )
+            assert_no_outer_transaction_wrapper(shared_clean)
 
     def test_readiness_requires_v2_receipt_reset_schema(self) -> None:
         health = (ROOT / "warden_drydock" / "hosted" / "operations" / "health.py").read_text(encoding="utf-8")
