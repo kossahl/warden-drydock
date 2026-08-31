@@ -96,6 +96,13 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
         versions = self.repository.versions(item.proposal_id)
         self.assertIn(tuple(value.status for value in versions),
                       ((ProposalStatus.PUBLISHED,), (ProposalStatus.REJECTED, ProposalStatus.DRAFT)))
+        resolved = [value for value in versions
+                    if value.status in (ProposalStatus.PUBLISHED, ProposalStatus.REJECTED)]
+        self.assertEqual(1, len(resolved), "exactly one operation wins across all versions")
+        published_for_item = [call for call in self.publish_calls if call == item.proposal_id]
+        self.assertEqual(1 if resolved[0].status is ProposalStatus.PUBLISHED else 0,
+                         len(published_for_item),
+                         "publication count is 0 or 1 in lockstep with the winner")
 
     def test_transaction_rollback_and_restart_readback(self):
         item = self.draft("rollback")
