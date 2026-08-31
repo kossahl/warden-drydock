@@ -178,6 +178,36 @@ class RuntimeTests(unittest.TestCase):
                 self.assertIn(str(path), str(failure.exception))
                 self.assertIn(end, str(failure.exception))
 
+    def test_wrapper_check_rejects_wrappers_hidden_on_shared_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            shared_wrappers = root / "0001_shared_line_wrappers.sql"
+            shared_wrappers.write_text(
+                "BEGIN; CREATE TABLE example(id integer);\n"
+                "CREATE TABLE other(id integer); COMMIT;\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError) as begin_failure:
+                assert_no_outer_transaction_wrapper(shared_wrappers)
+            self.assertIn(str(shared_wrappers), str(begin_failure.exception))
+            self.assertIn("BEGIN;", str(begin_failure.exception))
+            shared_trailing_commit = root / "0002_shared_line_trailing_commit.sql"
+            shared_trailing_commit.write_text(
+                "\nCREATE TABLE example(id integer);\n"
+                "CREATE TABLE other(id integer); COMMIT;\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError) as commit_failure:
+                assert_no_outer_transaction_wrapper(shared_trailing_commit)
+            self.assertIn(str(shared_trailing_commit), str(commit_failure.exception))
+            self.assertIn("COMMIT;", str(commit_failure.exception))
+            shared_clean = root / "0003_shared_line_clean.sql"
+            shared_clean.write_text(
+                "CREATE TABLE example(id integer); CREATE TABLE other(id integer);\n",
+                encoding="utf-8",
+            )
+            assert_no_outer_transaction_wrapper(shared_clean)
+
     def test_readiness_requires_v2_receipt_reset_schema(self) -> None:
         health = (ROOT / "warden_drydock" / "hosted" / "operations" / "health.py").read_text(encoding="utf-8")
         self.assertIn("version='0007'", health)
