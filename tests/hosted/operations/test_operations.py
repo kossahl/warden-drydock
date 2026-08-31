@@ -10,7 +10,8 @@ import unittest
 
 import yaml
 
-from warden_drydock.hosted.operations.migrate import migration_body, migration_files
+from tests.hosted.operations._migration_wrappers import assert_no_outer_transaction_wrapper
+from warden_drydock.hosted.operations.migrate import migration_files
 from warden_drydock.hosted.operations.recovery import build_manifest, create_snapshot_archive, extract_snapshot_archive, safe_members, snapshot_archive_inventory, verify_manifest
 from warden_drydock.hosted.operations.runtime_guard import parse_version, require_minimum
 from warden_drydock.hosted.operations.secrets import SecretStore
@@ -86,9 +87,26 @@ class RuntimeTests(unittest.TestCase):
         files = migration_files(ROOT / "warden_drydock" / "hosted" / "migrations")
         self.assertEqual(["0001", "0002", "0003", "0004", "0005", "0006", "0007"], [path.name[:4] for path in files])
         for path in files:
-            body = migration_body(path)
-            self.assertFalse(body.startswith("BEGIN;"))
-            self.assertFalse(body.endswith("COMMIT;"))
+            assert_no_outer_transaction_wrapper(path)
+
+    def test_migration_wrapper_check_reads_raw_content_not_stripped_body(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            wrapped = root / "0001_wrapped.sql"
+            wrapped.write_text("BEGIN;\nCREATE TABLE example(id integer);\nCOMMIT;\n", encoding="utf-8")
+            with self.assertRaises(AssertionError) as begin_failure:
+                assert_no_outer_transaction_wrapper(wrapped)
+            self.assertIn(str(wrapped), str(begin_failure.exception))
+            self.assertIn("BEGIN;", str(begin_failure.exception))
+            trailing_commit = root / "0002_trailing_commit.sql"
+            trailing_commit.write_text("CREATE TABLE example(id integer);\nCOMMIT;\n", encoding="utf-8")
+            with self.assertRaises(AssertionError) as commit_failure:
+                assert_no_outer_transaction_wrapper(trailing_commit)
+            self.assertIn(str(trailing_commit), str(commit_failure.exception))
+            self.assertIn("COMMIT;", str(commit_failure.exception))
+            clean = root / "0003_no_wrapper.sql"
+            clean.write_text("CREATE TABLE example(id integer);\n", encoding="utf-8")
+            assert_no_outer_transaction_wrapper(clean)
 
     def test_readiness_requires_v2_receipt_reset_schema(self) -> None:
         health = (ROOT / "warden_drydock" / "hosted" / "operations" / "health.py").read_text(encoding="utf-8")

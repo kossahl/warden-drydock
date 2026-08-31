@@ -6,7 +6,8 @@ import shutil
 import unittest
 import uuid
 
-from warden_drydock.hosted.operations.migrate import migration_body, migration_files, run_migrations
+from tests.hosted.operations._migration_wrappers import assert_no_outer_transaction_wrapper
+from warden_drydock.hosted.operations.migrate import migration_files, run_migrations
 
 
 ROOT = pathlib.Path(__file__).parents[3]
@@ -45,9 +46,7 @@ class PostgresMigrationIntegrationTests(unittest.TestCase):
         files = migration_files(MIGRATIONS)
         prefixes = [path.name[:4] for path in files]
         for path in files:
-            body = migration_body(path)
-            self.assertFalse(body.startswith("BEGIN;"))
-            self.assertFalse(body.endswith("COMMIT;"))
+            assert_no_outer_transaction_wrapper(path)
         schema_tables = {
             "0001": "hosted_publication_intent",
             "0002": "hosted_runtime_state",
