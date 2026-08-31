@@ -50,6 +50,18 @@ class RevisionFixture(unittest.TestCase):
             adapter_version="1.0.0", validation_contract_digest="b" * 64,
         )
 
+    def staged_snapshot(self, intent=None):
+        intent = intent or self.intent()
+        files, digest = canonicalize_tree(self.source)
+        from warden_drydock.hosted.revisions.models import SnapshotManifest
+        manifest = SnapshotManifest(
+            intent.campaign_id, intent.revision_id, intent.parent_revision,
+            intent.ordinal, digest, files, "0.2.0", "1.0.0", "b" * 64,
+            DIGEST, intent.intent_token,
+        )
+        self.store.put_if_absent(self.source, manifest)
+        return manifest
+
 
 class CanonicalizationTests(RevisionFixture):
     def test_golden_canonicalization_is_sorted_and_stable(self) -> None:
@@ -172,19 +184,22 @@ class PublicationTests(RevisionFixture):
         self.assertEqual("c" * 64, second.change_digest)
 
     def test_missing_intent_quarantines_published_snapshot(self) -> None:
-        intent = self.intent()
-        files, digest = canonicalize_tree(self.source)
-        from warden_drydock.hosted.revisions.models import SnapshotManifest
-        manifest = SnapshotManifest("campaign_one", "revision_one", None, 1, digest, files, "0.2.0", "1.0.0", "b" * 64, DIGEST, intent.intent_token)
-        self.store.put_if_absent(self.source, manifest)
+        manifest = self.staged_snapshot()
         with self.assertRaises(PublicationIntentError):
             self.service.reconcile_manifest(manifest)
-        self.assertFalse((self.store.snapshots / digest / manifest.campaign_id / manifest.revision_id).exists())
-        self.assertTrue((self.store.quarantine / digest / manifest.campaign_id / manifest.revision_id).exists())
+        self.assertFalse(
+            (self.store.snapshots / manifest.tree_digest / manifest.campaign_id
+             / manifest.revision_id).exists()
+        )
+        self.assertTrue(
+            (self.store.quarantine / manifest.tree_digest / manifest.campaign_id
+             / manifest.revision_id).exists()
+        )
         with self.assertRaises(SnapshotIntegrityError):
             self.store.put_if_absent(self.source, manifest)
         self.assertFalse(
-            (self.store.snapshots / digest / manifest.campaign_id / manifest.revision_id).exists()
+            (self.store.snapshots / manifest.tree_digest / manifest.campaign_id
+             / manifest.revision_id).exists()
         )
 
     def test_conflicting_and_ambiguous_intents_quarantine(self) -> None:
@@ -192,10 +207,7 @@ class PublicationTests(RevisionFixture):
         self.repository.add_intent(intent)
         second = self.intent(intent_id="intent_two", revision="revision_two")
         self.repository.intents[second.intent_id] = second
-        files, digest = canonicalize_tree(self.source)
-        from warden_drydock.hosted.revisions.models import SnapshotManifest
-        manifest = SnapshotManifest("campaign_one", "revision_one", None, 1, digest, files, "0.2.0", "1.0.0", "b" * 64, DIGEST, intent.intent_token)
-        self.store.put_if_absent(self.source, manifest)
+        manifest = self.staged_snapshot(intent)
         with self.assertRaises(PublicationIntentError):
             self.service.reconcile_manifest(manifest)
         self.assertEqual(2, len([row for row in self.repository.audit if row[1] == "quarantined"]))
@@ -334,15 +346,7 @@ class LineageAndProjectionTests(RevisionFixture):
             ).rebuild(second)
 
     def test_orphan_snapshot_is_quarantined_before_lineage_or_projection(self) -> None:
-        intent = self.intent()
-        files, digest = canonicalize_tree(self.source)
-        from warden_drydock.hosted.revisions.models import SnapshotManifest
-
-        manifest = SnapshotManifest(
-            "campaign_one", "revision_orphan", None, 1, digest, files,
-            "0.2.0", "1.0.0", "b" * 64, DIGEST, intent.intent_token,
-        )
-        self.store.put_if_absent(self.source, manifest)
+        manifest = self.staged_snapshot(self.intent(revision="revision_orphan"))
         projections = InMemoryProjectionRepository()
         with self.assertRaises(SnapshotLineageError):
             ProjectionRebuilder(
