@@ -36,70 +36,70 @@ IMPLEMENTED_INVARIANTS = {
     "provider_tool_binding", "retrieval_determinism", "operations_reconciliation",
 }
 HOSTED_SCHEMA_ID_PREFIX = "https://warden-drydock.invalid/contracts/hosted/v1/"
-EXPECTED_SHARED_DEFINITIONS = ["common.schema.json"]
+EXPECTED_SHARED_DEFINITIONS = ["schemas/v1/common.schema.json"]
 EXPECTED_FAMILY_CONTRACTS = {
     "api": {
-        "schema": "api.schema.json",
-        "example": "api.json",
+        "schema": "schemas/v1/api.schema.json",
+        "example": "examples/v1/api.json",
         "negative_fixtures": [
-            "unknown-version.json",
-            "traversal-identifier.json",
-            "stale-workflow-version.json",
-            "changed-idempotency-digest.json",
-            "idempotency-exact-replay-mismatch.json",
+            "negative/v1/unknown-version.json",
+            "negative/v1/traversal-identifier.json",
+            "negative/v1/stale-workflow-version.json",
+            "negative/v1/changed-idempotency-digest.json",
+            "negative/v1/idempotency-exact-replay-mismatch.json",
         ],
     },
     "atlas": {
-        "schema": "atlas.schema.json",
-        "example": "atlas.json",
-        "negative_fixtures": ["atlas-unsafe-head.json"],
+        "schema": "schemas/v1/atlas.schema.json",
+        "example": "examples/v1/atlas.json",
+        "negative_fixtures": ["negative/v1/atlas-unsafe-head.json"],
     },
     "engine": {
-        "schema": "engine.schema.json",
-        "example": "engine.json",
-        "negative_fixtures": ["engine-publication-field.json"],
+        "schema": "schemas/v1/engine.schema.json",
+        "example": "examples/v1/engine.json",
+        "negative_fixtures": ["negative/v1/engine-publication-field.json"],
     },
     "snapshot": {
-        "schema": "snapshot.schema.json",
-        "example": "snapshot.json",
-        "negative_fixtures": ["snapshot-unsafe-path.json", "snapshot-missing-bindings.json"],
+        "schema": "schemas/v1/snapshot.schema.json",
+        "example": "examples/v1/snapshot.json",
+        "negative_fixtures": ["negative/v1/snapshot-unsafe-path.json", "negative/v1/snapshot-missing-bindings.json"],
     },
     "retrieval": {
-        "schema": "retrieval.schema.json",
-        "example": "retrieval.json",
-        "negative_fixtures": ["missing-source-binding.json", "retrieval-count-mismatch.json"],
+        "schema": "schemas/v1/retrieval.schema.json",
+        "example": "examples/v1/retrieval.json",
+        "negative_fixtures": ["negative/v1/missing-source-binding.json", "negative/v1/retrieval-count-mismatch.json"],
     },
     "provider": {
-        "schema": "provider.schema.json",
-        "example": "provider.json",
+        "schema": "schemas/v1/provider.schema.json",
+        "example": "examples/v1/provider.json",
         "negative_fixtures": [
-            "duplicate-stream-sequence.json",
-            "secret-leakage.json",
-            "provider-authority-widening.json",
-            "provider-unbound-tool.json",
+            "negative/v1/duplicate-stream-sequence.json",
+            "negative/v1/secret-leakage.json",
+            "negative/v1/provider-authority-widening.json",
+            "negative/v1/provider-unbound-tool.json",
         ],
     },
     "live": {
-        "schema": "live.schema.json",
-        "example": "live.json",
+        "schema": "schemas/v1/live.schema.json",
+        "example": "examples/v1/live.json",
         "negative_fixtures": [
-            "stale-controller-epoch.json",
-            "live-unaccepted-barrier.json",
-            "live-replay-digest-mismatch.json",
+            "negative/v1/stale-controller-epoch.json",
+            "negative/v1/live-unaccepted-barrier.json",
+            "negative/v1/live-replay-digest-mismatch.json",
         ],
     },
     "proposal": {
-        "schema": "proposal.schema.json",
-        "example": "proposal.json",
-        "negative_fixtures": ["invalid-authority-transition.json", "mismatched-approval-binding.json"],
+        "schema": "schemas/v1/proposal.schema.json",
+        "example": "examples/v1/proposal.json",
+        "negative_fixtures": ["negative/v1/invalid-authority-transition.json", "negative/v1/mismatched-approval-binding.json"],
     },
     "operations": {
-        "schema": "operations.schema.json",
-        "example": "operations.json",
+        "schema": "schemas/v1/operations.schema.json",
+        "example": "examples/v1/operations.json",
         "negative_fixtures": [
-            "private-path-leakage.json",
-            "ambiguous-publication-intent.json",
-            "audit-free-text.json",
+            "negative/v1/private-path-leakage.json",
+            "negative/v1/ambiguous-publication-intent.json",
+            "negative/v1/audit-free-text.json",
         ],
     },
 }
@@ -399,21 +399,25 @@ class HostedContractPackageTests(unittest.TestCase):
         family_names = {item["family"] for item in index["families"]}
         self.assertEqual(family_names, set(EXPECTED_FAMILY_CONTRACTS))
         self.assertEqual(
-            [relative.rsplit("/", 1)[1] for relative in index["shared_definitions"]],
+            index["shared_definitions"],
             EXPECTED_SHARED_DEFINITIONS,
-            "shared definition basenames",
+            "shared definition paths",
         )
         for family in index["families"]:
             canonical = EXPECTED_FAMILY_CONTRACTS[family["family"]]
-            self.assertEqual(family["schema"].rsplit("/", 1)[1], canonical["schema"], f"{family['family']} schema basename")
-            self.assertEqual(family["example"].rsplit("/", 1)[1], canonical["example"], f"{family['family']} example basename")
+            self.assertEqual(family["schema"], canonical["schema"], f"{family['family']} schema path")
+            self.assertEqual(family["example"], canonical["example"], f"{family['family']} example path")
             self.assertEqual(
-                [relative.rsplit("/", 1)[1] for relative in family["negative_fixtures"]],
+                family["negative_fixtures"],
                 canonical["negative_fixtures"],
-                f"{family['family']} negative fixture basenames",
+                f"{family['family']} negative fixture paths",
             )
             schema = json.loads((contract_root / family["schema"]).read_text(encoding="utf-8"))
-            self.assertEqual(schema["$id"], HOSTED_SCHEMA_ID_PREFIX + canonical["schema"], f"{family['family']} $id")
+            self.assertEqual(
+                schema["$id"],
+                HOSTED_SCHEMA_ID_PREFIX + canonical["schema"].rsplit("/", 1)[1],
+                f"{family['family']} $id",
+            )
 
     def test_index_is_closed_versioned_and_complete(self):
         self._assert_closed_and_complete(self.index)
@@ -471,6 +475,66 @@ class HostedContractPackageTests(unittest.TestCase):
         root, mutated = self._mutated_contract_root()
         (root / mutated["shared_definitions"][0]).rename(root / "schemas" / "v1" / "common-renamed.schema.json")
         mutated["shared_definitions"] = ["schemas/v1/common-renamed.schema.json"]
+        self._assert_closed_and_complete(mutated, root)
+        self._assert_index_groupings(mutated, root)
+        with self.assertRaises(AssertionError):
+            self._assert_family_contracts_match_authority(mutated, root)
+
+    def test_lockstep_example_directory_move_fails_authority_while_old_checks_stay_green(self):
+        root, mutated = self._mutated_contract_root()
+        for family in mutated["families"]:
+            if family["family"] == "api":
+                target = "examples/v2/api.json"
+                (root / target).parent.mkdir()
+                (root / family["example"]).rename(root / target)
+                family["example"] = target
+        self._assert_closed_and_complete(mutated, root)
+        self._assert_index_groupings(mutated, root)
+        with self.assertRaises(AssertionError):
+            self._assert_family_contracts_match_authority(mutated, root)
+
+    def test_lockstep_negative_fixture_directory_move_fails_authority_while_old_checks_stay_green(self):
+        root, mutated = self._mutated_contract_root()
+        for family in mutated["families"]:
+            if family["family"] == "api":
+                source = "negative/v1/unknown-version.json"
+                target = "negative/v2/unknown-version.json"
+                (root / target).parent.mkdir()
+                (root / source).rename(root / target)
+                index = family["negative_fixtures"].index(source)
+                family["negative_fixtures"][index] = target
+        self._assert_closed_and_complete(mutated, root)
+        self._assert_index_groupings(mutated, root)
+        with self.assertRaises(AssertionError):
+            self._assert_family_contracts_match_authority(mutated, root)
+
+    def test_lockstep_shared_definition_directory_move_fails_authority_while_old_checks_stay_green(self):
+        root, mutated = self._mutated_contract_root()
+        source = "schemas/v1/common.schema.json"
+        target = "schemas/v2/common.schema.json"
+        (root / target).parent.mkdir()
+        (root / source).rename(root / target)
+        mutated["shared_definitions"] = [target]
+        self._assert_closed_and_complete(mutated, root)
+        self._assert_index_groupings(mutated, root)
+        with self.assertRaises(AssertionError):
+            self._assert_family_contracts_match_authority(mutated, root)
+
+    def test_lockstep_schema_directory_move_fails_authority_while_old_checks_stay_green(self):
+        root, mutated = self._mutated_contract_root()
+        for family in mutated["families"]:
+            if family["family"] == "api":
+                source = family["schema"]
+                target = "schemas/v2/api.schema.json"
+                (root / target).parent.mkdir()
+                (root / source).rename(root / target)
+                family["schema"] = target
+                for relative in family["negative_fixtures"]:
+                    fixture_path = root / relative
+                    fixture_path.write_text(
+                        fixture_path.read_text(encoding="utf-8").replace(source, target),
+                        encoding="utf-8",
+                    )
         self._assert_closed_and_complete(mutated, root)
         self._assert_index_groupings(mutated, root)
         with self.assertRaises(AssertionError):
