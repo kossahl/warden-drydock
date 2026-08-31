@@ -208,7 +208,7 @@ test("workflow panels expose publication-safe states and exact deep links", asyn
   await expect(page.getByText(/Provider reported this failure as retryable/)).toBeVisible();
 });
 
-test("Campaign and Record Ask, Check, and Generate send explicit exact contexts", async ({ page }) => {
+test("Campaign Ask, Check, and Generate send explicit exact contexts", async ({ page }) => {
   await installAtlasApi(page, { readiness: ready }); const starts = await installGenerationApi(page);
   await page.goto("/campaigns/campaign_atlas?revision=revision_two");
   for (const action of ["Ask", "Check", "Generate"] as const) {
@@ -216,15 +216,21 @@ test("Campaign and Record Ask, Check, and Generate send explicit exact contexts"
     const label = action === "Ask" ? "Question" : action === "Check" ? "Claim to check" : "Generation brief";
     await page.getByLabel(label).fill(`${action} campaign`); await page.getByRole("button", { name: `Submit ${action}` }).click(); await expect(page.getByText("Browser Draft.")).toBeVisible();
   }
+  expect(starts.map((item) => item.action)).toEqual(["ask", "check", "generate"]);
+  expect(starts.every((item) => (item.context as { scope: string }).scope === "campaign")).toBe(true);
+  expect(starts.every((item) => !("session_id" in item))).toBe(true);
+});
+
+test("Record Ask, Check, and Generate send explicit exact contexts", async ({ page }) => {
+  await installAtlasApi(page, { readiness: ready }); const starts = await installGenerationApi(page);
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   for (const action of ["Ask", "Check", "Generate"] as const) {
     await page.getByRole("radio", { name: action }).click();
     const label = action === "Ask" ? "Question" : action === "Check" ? "Claim to check" : "Generation brief";
     await page.getByLabel(label).fill(`${action} record`); await page.getByRole("button", { name: `Submit ${action}` }).click(); await expect(page.getByText("Browser Draft.")).toBeVisible();
   }
-  expect(starts.map((item) => item.action)).toEqual(["ask", "check", "generate", "ask", "check", "generate"]);
-  expect(starts.slice(0, 3).every((item) => (item.context as { scope: string }).scope === "campaign")).toBe(true);
-  expect(starts.slice(3).every((item) => JSON.stringify(item.context) === JSON.stringify({ scope: "record", record_id: "record-one", content_digest: "c".repeat(64) }))).toBe(true);
+  expect(starts.map((item) => item.action)).toEqual(["ask", "check", "generate"]);
+  expect(starts.every((item) => JSON.stringify(item.context) === JSON.stringify({ scope: "record", record_id: "record-one", content_digest: "c".repeat(64) }))).toBe(true);
   expect(starts.every((item) => !("session_id" in item))).toBe(true);
 });
 
