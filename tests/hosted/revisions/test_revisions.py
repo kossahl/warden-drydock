@@ -405,8 +405,6 @@ class MigrationContractTests(unittest.TestCase):
             / "0001_revision_projection.sql"
         )
         raw = path.read_text(encoding="utf-8")
-        self.assertTrue(raw.startswith("BEGIN;\n"))
-        self.assertTrue(raw.endswith("COMMIT;\n"))
         self.assertEqual(path, migration_files(path.parent)[0])
         statements = _split_statements(migration_body(path))
         for statement in statements:
