@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from warden_drydock.hosted.operations.migrate import migration_body, migration_files
 from warden_drydock.hosted.projections import InMemoryProjectionRepository, ProjectionRebuilder
 from warden_drydock.hosted.revisions import (
     FileSnapshotStore, InMemoryWorkflowRepository, PublicationIntent,
@@ -396,22 +397,290 @@ class LineageAndProjectionTests(RevisionFixture):
 
 class MigrationContractTests(unittest.TestCase):
     def test_postgres_migration_separates_operational_and_rebuildable_tables(self) -> None:
-        migration = (
+        path = (
             Path(__file__).parents[3]
             / "warden_drydock"
             / "hosted"
             / "migrations"
             / "0001_revision_projection.sql"
-        ).read_text(encoding="utf-8")
-        for table in (
-            "hosted_publication_intent", "hosted_campaign_head",
-            "hosted_projection_checkpoint", "hosted_projection_record",
-            "hosted_projection_shadow_checkpoint",
-            "hosted_projection_shadow_record",
+        )
+        raw = path.read_text(encoding="utf-8")
+        self.assertTrue(raw.startswith("BEGIN;\n"))
+        self.assertTrue(raw.endswith("COMMIT;\n"))
+        self.assertEqual(path, migration_files(path.parent)[0])
+        statements = _split_statements(migration_body(path))
+        for statement in statements:
+            self.assertTrue(
+                statement.startswith("CREATE TABLE")
+                or statement.startswith("CREATE INDEX"),
+                statement,
+            )
+        tables = [
+            _parse_create_table(statement)
+            for statement in statements
+            if statement.startswith("CREATE TABLE")
+        ]
+        indexes = [
+            _parse_create_index(statement)
+            for statement in statements
+            if statement.startswith("CREATE INDEX")
+        ]
+        names = [table["name"] for table in tables]
+        self.assertEqual(
+            [
+                "hosted_publication_intent",
+                "hosted_campaign_head",
+                "hosted_projection_checkpoint",
+                "hosted_projection_shadow_checkpoint",
+                "hosted_projection_record",
+                "hosted_projection_shadow_record",
+            ],
+            names,
+        )
+        rebuildable = {name for name in names if name.startswith("hosted_projection_")}
+        self.assertEqual(
+            {"hosted_publication_intent", "hosted_campaign_head"},
+            set(names) - rebuildable,
+        )
+        intent, head, checkpoint, shadow_checkpoint, record, shadow_record = tables
+
+        intent_columns = intent["columns"]
+        self.assertEqual(
+            {
+                "intent_id", "intent_token", "kind", "campaign_id", "revision_id",
+                "parent_revision", "ordinal", "tree_digest", "change_digest", "status",
+            },
+            set(intent_columns),
+        )
+        self.assertEqual("text", intent_columns["intent_id"]["type"])
+        self.assertTrue(intent_columns["intent_id"]["primary_key"])
+        self.assertEqual("text", intent_columns["intent_token"]["type"])
+        self.assertTrue(intent_columns["intent_token"]["not_null"])
+        self.assertIn("UNIQUE (intent_token)", intent["constraints"])
+        self.assertEqual("text", intent_columns["kind"]["type"])
+        self.assertEqual(
+            "CHECK (kind IN ('creation', 'approval'))",
+            intent_columns["kind"]["check"],
+        )
+        self.assertEqual("char(64)", intent_columns["tree_digest"]["type"])
+        self.assertTrue(intent_columns["tree_digest"]["not_null"])
+        self.assertEqual("char(64)", intent_columns["change_digest"]["type"])
+        self.assertEqual("text", intent_columns["status"]["type"])
+        self.assertTrue(intent_columns["status"]["not_null"])
+        self.assertEqual(
+            "CHECK (status IN ('pending', 'finalized', 'quarantined'))",
+            intent_columns["status"]["check"],
+        )
+
+        head_columns = head["columns"]
+        self.assertEqual(
+            {"campaign_id", "revision_id", "ordinal"}, set(head_columns)
+        )
+        self.assertEqual("text", head_columns["campaign_id"]["type"])
+        self.assertTrue(head_columns["campaign_id"]["primary_key"])
+        self.assertEqual("text", head_columns["revision_id"]["type"])
+        self.assertTrue(head_columns["revision_id"]["not_null"])
+        self.assertTrue(head_columns["revision_id"]["unique"])
+
+        checkpoint_columns = checkpoint["columns"]
+        self.assertEqual(
+            {
+                "campaign_id", "revision_id", "projection_version",
+                "record_count", "projection_digest",
+            },
+            set(checkpoint_columns),
+        )
+        self.assertEqual("integer", checkpoint_columns["projection_version"]["type"])
+        self.assertEqual("integer", checkpoint_columns["record_count"]["type"])
+        self.assertEqual("char(64)", checkpoint_columns["projection_digest"]["type"])
+        self.assertTrue(checkpoint_columns["projection_digest"]["not_null"])
+
+        record_columns = record["columns"]
+        self.assertEqual(
+            {"campaign_id", "revision_id", "record_id", "relative_path", "body_digest"},
+            set(record_columns),
+        )
+        self.assertEqual("char(64)", record_columns["body_digest"]["type"])
+        self.assertIn("PRIMARY KEY(campaign_id, record_id)", record["constraints"])
+
+        self.assertEqual(
+            "LIKE hosted_projection_checkpoint INCLUDING ALL",
+            shadow_checkpoint["like_body"],
+        )
+        self.assertEqual("hosted_projection_checkpoint", shadow_checkpoint["like_base"])
+        self.assertEqual(
+            "LIKE hosted_projection_record INCLUDING ALL",
+            shadow_record["like_body"],
+        )
+        self.assertEqual("hosted_projection_record", shadow_record["like_base"])
+
+        self.assertEqual(
+            ["hosted_publication_intent_token_idx"],
+            [index["name"] for index in indexes],
+        )
+        self.assertEqual("hosted_publication_intent", indexes[0]["table"])
+        self.assertEqual("intent_token", indexes[0]["columns"])
+        intent_statement = next(
+            statement
+            for statement in statements
+            if statement.startswith("CREATE TABLE hosted_publication_intent")
+        )
+        index_statement = next(
+            statement
+            for statement in statements
+            if statement.startswith("CREATE INDEX")
+        )
+        self.assertLess(
+            statements.index(intent_statement), statements.index(index_statement)
+        )
+        self.assertNotIn("provider_secret", raw)
+
+
+def _split_statements(sql: str) -> list[str]:
+    statements: list[str] = []
+    current: list[str] = []
+    in_quote = False
+    index = 0
+    while index < len(sql):
+        char = sql[index]
+        if char == "'":
+            if in_quote and index + 1 < len(sql) and sql[index + 1] == "'":
+                current.append("''")
+                index += 2
+                continue
+            in_quote = not in_quote
+            current.append(char)
+        elif (
+            char == "-"
+            and not in_quote
+            and index + 1 < len(sql)
+            and sql[index + 1] == "-"
         ):
-            self.assertIn(f"CREATE TABLE {table}", migration)
-        self.assertIn("CHECK (status IN ('pending', 'finalized', 'quarantined'))", migration)
-        self.assertNotIn("provider_secret", migration)
+            while index < len(sql) and sql[index] != "\n":
+                index += 1
+        elif char == ";" and not in_quote:
+            statement = "".join(current).strip()
+            if statement:
+                statements.append(statement)
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    statement = "".join(current).strip()
+    if statement:
+        statements.append(statement)
+    return statements
+
+
+def _matching_group(text: str, opener: str) -> str | None:
+    start = text.find(opener)
+    if start < 0:
+        return None
+    depth = 0
+    in_quote = False
+    index = start
+    while index < len(text):
+        char = text[index]
+        if char == "'":
+            if in_quote and index + 1 < len(text) and text[index + 1] == "'":
+                index += 2
+                continue
+            in_quote = not in_quote
+        elif char == "(" and not in_quote:
+            depth += 1
+        elif char == ")" and not in_quote:
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+        index += 1
+    raise AssertionError(f"unbalanced parentheses in {text!r}")
+
+
+def _split_top_level_definitions(text: str) -> list[str]:
+    entries: list[str] = []
+    current: list[str] = []
+    depth = 0
+    in_quote = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "'":
+            if in_quote and index + 1 < len(text) and text[index + 1] == "'":
+                current.append("''")
+                index += 2
+                continue
+            in_quote = not in_quote
+            current.append(char)
+        elif char == "(" and not in_quote:
+            depth += 1
+            current.append(char)
+        elif char == ")" and not in_quote:
+            depth -= 1
+            current.append(char)
+        elif char == "," and depth == 0 and not in_quote:
+            entries.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    tail = "".join(current).strip()
+    if tail:
+        entries.append(tail)
+    return entries
+
+
+_CONSTRAINT_MARKERS = (" NOT NULL", " PRIMARY KEY", " UNIQUE", " CHECK", " REFERENCES")
+
+
+def _column_definition(entry: str) -> tuple[str, dict]:
+    name, _, rest = entry.partition(" ")
+    positions = [rest.find(marker) for marker in _CONSTRAINT_MARKERS if marker in rest]
+    column_type = rest[: min(positions)] if positions else rest
+    return name, {
+        "type": column_type.strip(),
+        "not_null": "NOT NULL" in rest,
+        "unique": "UNIQUE" in rest,
+        "primary_key": "PRIMARY KEY" in rest,
+        "check": _matching_group(rest, "CHECK"),
+    }
+
+
+def _parse_create_table(statement: str) -> dict:
+    name = statement[len("CREATE TABLE") :].strip().split()[0]
+    body = _matching_group(statement, "(")[1:-1].strip()
+    if body.startswith("LIKE "):
+        return {
+            "name": name,
+            "like_body": body,
+            "like_base": body.split()[1],
+            "columns": {},
+            "constraints": [],
+        }
+    columns: dict[str, dict] = {}
+    constraints: list[str] = []
+    for entry in _split_top_level_definitions(body):
+        if entry.startswith(("PRIMARY KEY", "UNIQUE", "CHECK", "FOREIGN KEY", "CONSTRAINT")):
+            constraints.append(entry)
+        else:
+            column_name, definition = _column_definition(entry)
+            columns[column_name] = definition
+    return {
+        "name": name,
+        "like_body": None,
+        "like_base": None,
+        "columns": columns,
+        "constraints": constraints,
+    }
+
+
+def _parse_create_index(statement: str) -> dict:
+    head = statement[len("CREATE INDEX") : statement.find("(")].strip()
+    parts = head.split()
+    return {
+        "name": parts[0],
+        "table": parts[parts.index("ON") + 1],
+        "columns": _matching_group(statement, "(")[1:-1],
+    }
 
 
 if __name__ == "__main__":
