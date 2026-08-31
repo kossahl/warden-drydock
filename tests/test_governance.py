@@ -125,7 +125,8 @@ class IssueFormGovernanceTests(unittest.TestCase):
 class PullRequestGovernanceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.template = normalized(PR_TEMPLATE.read_text(encoding="utf-8"))
+        cls.raw_text = PR_TEMPLATE.read_text(encoding="utf-8")
+        cls.template = normalized(cls.raw_text)
 
     def test_pr_template_preserves_work_package_and_handoff_evidence(self):
         required_phrases = {
@@ -163,9 +164,52 @@ class PullRequestGovernanceTests(unittest.TestCase):
             "status:needs-decision",
             "review threads are resolved before merge",
         }
-        for phrase in required_gates:
-            with self.subTest(gate=phrase):
-                self.assertIn(phrase, self.template)
+        lines = self.raw_text.splitlines()
+        heading = next(
+            index
+            for index, line in enumerate(lines)
+            if re.fullmatch(
+                r"\s*#+\s*public-safety and review gate\s*", normalized(line)
+            )
+        )
+        entries = []
+        for line in lines[heading + 1 :]:
+            if re.match(r"^\s*#", line):
+                break
+            if not line.strip():
+                continue
+            entry = re.match(r"^\s*-\s*\[ \]\s+\S.*$", line)
+            self.assertIsNotNone(
+                entry,
+                "every non-empty line under the heading must be an unchecked "
+                "checklist item the author accepts before merge",
+            )
+            entries.append(line)
+        for entry in entries:
+            self.assertIsNone(
+                re.search(
+                    r"\b(?:optional|delete|remove|not required)\b",
+                    normalized(entry),
+                ),
+                "a checklist item must be a gate confirmation, not an "
+                "optional or removal instruction",
+            )
+        gate_text = normalized(self.raw_text)
+        for gate in sorted(required_gates):
+            entry_occurrences = sum(
+                normalized(entry).count(gate) for entry in entries
+            )
+            with self.subTest(gate=gate):
+                self.assertEqual(
+                    1,
+                    entry_occurrences,
+                    "the gate must be a single required checklist item",
+                )
+                self.assertEqual(
+                    entry_occurrences,
+                    gate_text.count(gate),
+                    "the gate must not appear outside the required checklist",
+                )
 
 
 class CommunicationPolicyTests(unittest.TestCase):
