@@ -40,10 +40,20 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(["location-erebos", "session-003"], ENVELOPES["ask-airlock-v1"]["included_source_ids"])
 
     def test_exact_three_tool_schemas_are_closed(self):
-        self.assertEqual({"fixture_read_source", "fixture_read_revision_context", "fixture_emit_proposal_draft"}, set(TOOL_SCHEMAS))
+        expected = {"fixture_read_source", "fixture_read_revision_context", "fixture_emit_proposal_draft"}
+        self.assertEqual(expected, set(TOOL_SCHEMAS))
         for schema in TOOL_SCHEMAS.values():
             self.assertFalse(schema["additionalProperties"])
             self.assertEqual("https://json-schema.org/draft/2020-12/schema", schema["$schema"])
+        requests = (openai_request("gpt-5.6-terra", "tool-beacon-debrief-v1"), anthropic_request("claude-sonnet-5", "tool-beacon-debrief-v1"))
+        for request in requests:
+            wired = {tool["name"]: tool.get("parameters") or tool.get("input_schema") for tool in request["tools"]}
+            self.assertEqual(expected, set(wired))
+            for schema in wired.values():
+                self.assertFalse(schema["additionalProperties"])
+            emit = {"campaign_id": "campaign-erebos", "base_revision": BASE_REVISION, "source_set_digest": envelope_digest("tool-beacon-debrief-v1"), "proposal_kind": "beacon_debrief", "title": "Beacon debrief", "source_ids": ["faction-helix"], "suggested_changes": ["Draft note"], "unexpected_property": True}
+            self.assertTrue(validate_schema(wired["fixture_emit_proposal_draft"], emit))
+            self.assertIn("invalid_tool_schema", validate_tool_call("tool-beacon-debrief-v1", "fixture_emit_proposal_draft", emit))
 
 
 class ScheduleBudgetRetryTests(unittest.TestCase):
