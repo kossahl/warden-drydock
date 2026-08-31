@@ -51,8 +51,9 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
             with self.assertRaises(HTTPFailure) as caught:
                 app.proposal_view("proposal_missing", 1)
         self.assertEqual(
-            (404, "not_found", "proposal_not_found"),
-            (caught.exception.status, caught.exception.payload["error"]["category"], caught.exception.payload["error"]["code"]),
+            (404, "not_found", "proposal_not_found", "proposal_not_found"),
+            (caught.exception.status, caught.exception.payload["error"]["category"],
+             caught.exception.payload["error"]["code"], str(caught.exception)),
         )
 
     def test_full_slice_persists_publication_and_replays_after_restart(self) -> None:
