@@ -70,6 +70,44 @@ def parse_issue_form_text(text):
     return {"text": text, "fields": fields, "labels": labels}
 
 
+def parse_form_yaml(path):
+    """Extract contract-relevant issue-form structure from the parsed YAML."""
+    form = yaml.safe_load(path.read_text(encoding="utf-8"))
+    fields = {}
+    text_parts = [part for part in (form["name"], form["description"]) if part]
+    for item in form["body"]:
+        attributes = item.get("attributes", {}) or {}
+        text_parts.extend(
+            attributes[key]
+            for key in ("label", "description", "placeholder", "value")
+            if attributes.get(key)
+        )
+        for option in attributes.get("options") or []:
+            if option.get("label"):
+                text_parts.append(option["label"])
+        if "id" not in item:
+            continue
+        options = attributes.get("options") or []
+        if item.get("type") == "checkboxes":
+            required = bool(options) and all(
+                option.get("required") for option in options
+            )
+        else:
+            required = bool((item.get("validations") or {}).get("required"))
+            options = None
+        fields[item["id"]] = {
+            "type": item.get("type"),
+            "label": attributes.get("label"),
+            "required": required,
+            "options": options,
+        }
+    return {
+        "text": "\n".join(text_parts),
+        "fields": fields,
+        "labels": set(form["labels"]),
+    }
+
+
 class IssueFormGovernanceTests(unittest.TestCase):
     def test_public_bug_and_feature_reporting_remain_available(self):
         bug = parse_issue_form(BUG_TEMPLATE)
@@ -105,7 +143,7 @@ class IssueFormGovernanceTests(unittest.TestCase):
         self.assertIn("enhancement", feature["labels"])
 
     def test_work_package_form_requires_complete_delegation_contract(self):
-        form = parse_issue_form(WORK_PACKAGE_TEMPLATE)
+        form = parse_form_yaml(WORK_PACKAGE_TEMPLATE)
         required_fields = {
             "phase",
             "package_version",
@@ -122,12 +160,15 @@ class IssueFormGovernanceTests(unittest.TestCase):
             "delivery",
             "public_safety",
         }
-        self.assertLessEqual(required_fields, set(form["fields"]))
+        self.assertEqual(required_fields, set(form["fields"]))
         for field_id in required_fields:
             with self.subTest(field=field_id):
                 self.assertTrue(form["fields"][field_id]["required"])
                 self.assertTrue(form["fields"][field_id]["label"])
-        self.assertEqual("checkboxes", form["fields"]["public_safety"]["type"])
+        public_safety = form["fields"]["public_safety"]
+        self.assertEqual("checkboxes", public_safety["type"])
+        self.assertEqual(1, len(public_safety["options"]))
+        self.assertTrue(public_safety["options"][0]["required"])
         self.assertIn("public-safe", form["labels"])
         version_text = normalized(form["text"])
         self.assertIn("positive integer", version_text)
