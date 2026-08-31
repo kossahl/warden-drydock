@@ -215,7 +215,25 @@ class CommunicationPolicyTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.policy)
 
-    def test_decision_authority_uses_current_repository_permission(self):
+    def test_decision_authority_boundary_states_current_repository_permission(self):
+        paragraphs = [
+            normalized(paragraph)
+            for paragraph in re.split(
+                r"\n[ \t]*\n", COMMUNICATION_POLICY.read_text(encoding="utf-8")
+            )
+            if paragraph.strip()
+        ]
+        authoritative = [
+            paragraph
+            for paragraph in paragraphs
+            if "for the mvp, an allowlisted maintainer is a repository collaborator"
+            in paragraph
+        ]
+        self.assertEqual(
+            1,
+            len(authoritative),
+            "the authority rule must be stated once as a single canonical rule",
+        )
         required_phrases = {
             "repository collaborator",
             "permission is `maintain` or `admin`",
@@ -226,7 +244,7 @@ class CommunicationPolicyTests(unittest.TestCase):
         }
         for phrase in required_phrases:
             with self.subTest(phrase=phrase):
-                self.assertIn(phrase, self.policy)
+                self.assertIn(phrase, authoritative[0])
 
 
 if __name__ == "__main__":
