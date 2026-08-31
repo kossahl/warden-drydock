@@ -79,9 +79,17 @@ class ComposePolicyTests(unittest.TestCase):
 class RuntimeTests(unittest.TestCase):
     def test_versions(self) -> None:
         self.assertEqual((28, 5, 2), parse_version("Docker version 28.5.2"))
+        self.assertEqual((28, 5, 2), parse_version("28.5.2"))
+        require_minimum("28.5.2", (28, 5, 2), "docker")
+        require_minimum("28.5.3", (28, 5, 2), "docker")
         require_minimum("v28.0.0", (28, 0, 0), "docker")
         with self.assertRaisesRegex(RuntimeError, "unsupported_docker_version"):
+            require_minimum("28.5.1", (28, 5, 2), "docker")
+        with self.assertRaisesRegex(RuntimeError, "unsupported_docker_version"):
             require_minimum("27.5.1", (28, 0, 0), "docker")
+        for malformed in ("Docker version", "Docker version 28.5", "Docker version 28.x.5"):
+            with self.assertRaisesRegex(ValueError, "unrecognized_version"):
+                parse_version(malformed)
 
     def test_migrations_are_ordered_and_outer_transactions_removed(self) -> None:
         files = migration_files(ROOT / "warden_drydock" / "hosted" / "migrations")
