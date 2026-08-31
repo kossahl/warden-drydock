@@ -2,6 +2,8 @@ import re
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ISSUE_TEMPLATE_DIRECTORY = ROOT / ".github" / "ISSUE_TEMPLATE"
@@ -18,38 +20,31 @@ def normalized(text):
 
 
 def parse_issue_form(path):
-    """Extract contract-relevant issue-form structure without a YAML dependency."""
-    text = path.read_text(encoding="utf-8")
-    item_pattern = re.compile(
-        r"(?ms)^  - type:\s*(?P<type>[^\n]+)\n"
-        r"(?P<body>.*?)(?=^  - type:|\Z)"
-    )
-    fields = {}
-    for match in item_pattern.finditer(text):
-        body = match.group("body")
-        identifier = re.search(r"(?m)^    id:\s*([^\n]+)$", body)
-        if identifier is None:
-            continue
-        field_id = identifier.group(1).strip().strip('"\'')
-        label = re.search(r"(?m)^      label:\s*([^\n]+)$", body)
-        fields[field_id] = {
-            "type": match.group("type").strip(),
-            "label": label.group(1).strip() if label else None,
-            "required": bool(
-                re.search(r"(?m)^      required:\s*true\s*$", body)
-                or re.search(r"(?m)^          required:\s*true\s*$", body)
-            ),
-        }
+    """Extract contract-relevant issue-form structure from the YAML template."""
+    return parse_issue_form_text(path.read_text(encoding="utf-8"))
 
-    labels_match = re.search(
-        r"(?ms)^labels:\s*\n(?P<labels>(?:^  - [^\n]+\n?)+)", text
-    )
-    labels = set()
-    if labels_match:
-        labels = {
-            line.removeprefix("  - ").strip()
-            for line in labels_match.group("labels").splitlines()
+
+def parse_issue_form_text(text):
+    data = yaml.safe_load(text)
+    fields = {}
+    for item in data["body"]:
+        field_id = item.get("id")
+        if field_id is None:
+            continue
+        if field_id in fields:
+            raise ValueError(f"duplicate field id {field_id!r}")
+        attributes = item.get("attributes") or {}
+        options = attributes.get("options") or []
+        validations = item.get("validations") or {}
+        required = bool(validations.get("required")) or any(
+            option.get("required") for option in options
+        )
+        fields[field_id] = {
+            "type": item["type"],
+            "label": attributes.get("label"),
+            "required": required,
         }
+    labels = set(data.get("labels") or [])
     return {"text": text, "fields": fields, "labels": labels}
 
 
@@ -99,7 +94,7 @@ class IssueFormGovernanceTests(unittest.TestCase):
 
     def test_decision_form_requires_material_decision_record(self):
         form = parse_issue_form(DECISION_TEMPLATE)
-        required_fields = {
+        expected_fields = {
             "source",
             "question",
             "impact",
@@ -108,8 +103,8 @@ class IssueFormGovernanceTests(unittest.TestCase):
             "safe_progress",
             "durable_record",
         }
-        self.assertLessEqual(required_fields, set(form["fields"]))
-        for field_id in required_fields:
+        self.assertEqual(expected_fields, set(form["fields"]))
+        for field_id in expected_fields:
             with self.subTest(field=field_id):
                 self.assertTrue(form["fields"][field_id]["required"])
                 self.assertTrue(form["fields"][field_id]["label"])
@@ -120,6 +115,18 @@ class IssueFormGovernanceTests(unittest.TestCase):
         text = normalized(form["text"])
         self.assertIn("stop affected implementation", text)
         self.assertIn("two or three real options", text)
+
+    def test_decision_form_parser_rejects_malformed_or_duplicated_items(self):
+        with self.assertRaises(yaml.YAMLError):
+            parse_issue_form_text("body: [\n")
+        with self.assertRaises(ValueError):
+            parse_issue_form_text(
+                "body:\n"
+                "  - type: input\n"
+                "    id: duplicate\n"
+                "  - type: input\n"
+                "    id: duplicate\n"
+            )
 
 
 class PullRequestGovernanceTests(unittest.TestCase):
