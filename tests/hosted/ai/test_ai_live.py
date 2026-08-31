@@ -651,9 +651,19 @@ class EngineSourceLoaderTests(unittest.TestCase):
 
         loader = EngineSourceLoader(FakeEngine(), lambda campaign, revision: object())
         loaded = loader.load("campaign_one", "revision_one", "What is the status of the Zeta?")
-        envelope = DeterministicSourceSelector(max_sources=20).select("campaign_one", "revision_one", loaded)
-        self.assertIn("ship-zeta", [item.source_id for item in envelope.excerpts])
-        self.assertLess(len([item for item in envelope.excerpts if item.source_id.startswith("npc-")]), 20)
+        selector = DeterministicSourceSelector(max_sources=20)
+        envelope = selector.select("campaign_one", "revision_one", loaded)
+        self.assertEqual("ship-zeta", envelope.excerpts[0].source_id)
+        self.assertEqual(1, envelope.excerpts[0].order)
+        expected = ("ship-zeta",) + tuple(f"npc-person-{index:02d}" for index in range(19))
+        self.assertEqual(expected, tuple(item.source_id for item in envelope.excerpts))
+        self.assertEqual("campaign_one", envelope.campaign_id)
+        self.assertEqual("revision_one", envelope.revision_id)
+        self.assertEqual(1, envelope.retrieval_policy_version)
+        self.assertIsNone(envelope.session_id)
+        reordered = selector.select("campaign_one", "revision_one", reversed(loaded))
+        self.assertEqual(envelope, reordered)
+        self.assertEqual(envelope.source_set_digest, reordered.source_set_digest)
 
     def test_source_envelope_enforces_excerpt_and_aggregate_bounds(self):
         records = [Record(f"source-{index}", "canon", f"record-{index}:" + str(index) * 20000) for index in range(6)]
