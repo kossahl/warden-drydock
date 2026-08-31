@@ -469,6 +469,7 @@ class MigrationContractTests(unittest.TestCase):
         self.assertEqual("char(64)", intent_columns["tree_digest"]["type"])
         self.assertTrue(intent_columns["tree_digest"]["not_null"])
         self.assertEqual("char(64)", intent_columns["change_digest"]["type"])
+        self.assertTrue(intent_columns["change_digest"]["not_null"])
         self.assertEqual("text", intent_columns["status"]["type"])
         self.assertTrue(intent_columns["status"]["not_null"])
         self.assertEqual(
@@ -531,6 +532,7 @@ class MigrationContractTests(unittest.TestCase):
         self.assertEqual("text", record_columns["relative_path"]["type"])
         self.assertTrue(record_columns["relative_path"]["not_null"])
         self.assertEqual("char(64)", record_columns["body_digest"]["type"])
+        self.assertTrue(record_columns["body_digest"]["not_null"])
         self.assertIn("PRIMARY KEY(campaign_id, record_id)", record["constraints"])
 
         self.assertEqual(
