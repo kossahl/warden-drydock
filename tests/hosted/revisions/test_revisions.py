@@ -5,11 +5,18 @@ import tempfile
 import unittest
 from unittest import mock
 
+from warden_drydock.hosted.operations.migrate import migration_body, migration_files
 from warden_drydock.hosted.projections import InMemoryProjectionRepository, ProjectionRebuilder
 from warden_drydock.hosted.revisions import (
     FileSnapshotStore, InMemoryWorkflowRepository, PublicationIntent,
     PublicationIntentError, PublicationKind, RevisionService,
     SnapshotIntegrityError, SnapshotLineageError, StaleHeadError, canonicalize_tree,
+)
+from ._migration_raw import (
+    TRANSACTION_ENDS,
+    TRANSACTION_STARTS,
+    assert_no_outer_transaction_wrapper_raw,
+    migration_boundaries,
 )
 
 
@@ -396,22 +403,443 @@ class LineageAndProjectionTests(RevisionFixture):
 
 class MigrationContractTests(unittest.TestCase):
     def test_postgres_migration_separates_operational_and_rebuildable_tables(self) -> None:
-        migration = (
+        path = (
             Path(__file__).parents[3]
             / "warden_drydock"
             / "hosted"
             / "migrations"
             / "0001_revision_projection.sql"
-        ).read_text(encoding="utf-8")
-        for table in (
-            "hosted_publication_intent", "hosted_campaign_head",
-            "hosted_projection_checkpoint", "hosted_projection_record",
-            "hosted_projection_shadow_checkpoint",
-            "hosted_projection_shadow_record",
+        )
+        raw = path.read_text(encoding="utf-8")
+        self.assertEqual(path, migration_files(path.parent)[0])
+        statements = _split_statements(migration_body(path))
+        for statement in statements:
+            self.assertTrue(
+                statement.startswith("CREATE TABLE")
+                or statement.startswith("CREATE INDEX"),
+                statement,
+            )
+        tables = [
+            _parse_create_table(statement)
+            for statement in statements
+            if statement.startswith("CREATE TABLE")
+        ]
+        indexes = [
+            _parse_create_index(statement)
+            for statement in statements
+            if statement.startswith("CREATE INDEX")
+        ]
+        names = [table["name"] for table in tables]
+        self.assertEqual(
+            [
+                "hosted_publication_intent",
+                "hosted_campaign_head",
+                "hosted_projection_checkpoint",
+                "hosted_projection_shadow_checkpoint",
+                "hosted_projection_record",
+                "hosted_projection_shadow_record",
+            ],
+            names,
+        )
+        rebuildable = {name for name in names if name.startswith("hosted_projection_")}
+        self.assertEqual(
+            {"hosted_publication_intent", "hosted_campaign_head"},
+            set(names) - rebuildable,
+        )
+        intent, head, checkpoint, shadow_checkpoint, record, shadow_record = tables
+
+        intent_columns = intent["columns"]
+        self.assertEqual(
+            {
+                "intent_id", "intent_token", "kind", "campaign_id", "revision_id",
+                "parent_revision", "ordinal", "tree_digest", "change_digest", "status",
+            },
+            set(intent_columns),
+        )
+        self.assertEqual("text", intent_columns["intent_id"]["type"])
+        self.assertTrue(intent_columns["intent_id"]["primary_key"])
+        self.assertEqual("text", intent_columns["intent_token"]["type"])
+        self.assertTrue(intent_columns["intent_token"]["not_null"])
+        self.assertIn("UNIQUE (intent_token)", intent["constraints"])
+        self.assertEqual("text", intent_columns["kind"]["type"])
+        self.assertEqual(
+            "CHECK (kind IN ('creation', 'approval'))",
+            intent_columns["kind"]["check"],
+        )
+        self.assertEqual("char(64)", intent_columns["tree_digest"]["type"])
+        self.assertTrue(intent_columns["tree_digest"]["not_null"])
+        self.assertEqual("char(64)", intent_columns["change_digest"]["type"])
+        self.assertTrue(intent_columns["change_digest"]["not_null"])
+        self.assertEqual("text", intent_columns["status"]["type"])
+        self.assertTrue(intent_columns["status"]["not_null"])
+        self.assertEqual(
+            "CHECK (status IN ('pending', 'finalized', 'quarantined'))",
+            intent_columns["status"]["check"],
+        )
+        self.assertEqual("integer", intent_columns["ordinal"]["type"])
+        self.assertTrue(intent_columns["ordinal"]["not_null"])
+        self.assertEqual("CHECK (ordinal > 0)", intent_columns["ordinal"]["check"])
+        self.assertEqual("text", intent_columns["campaign_id"]["type"])
+        self.assertTrue(intent_columns["campaign_id"]["not_null"])
+        self.assertEqual("text", intent_columns["revision_id"]["type"])
+        self.assertTrue(intent_columns["revision_id"]["not_null"])
+        self.assertEqual("text", intent_columns["parent_revision"]["type"])
+        self.assertFalse(intent_columns["parent_revision"]["not_null"])
+
+        head_columns = head["columns"]
+        self.assertEqual(
+            {"campaign_id", "revision_id", "ordinal"}, set(head_columns)
+        )
+        self.assertEqual("text", head_columns["campaign_id"]["type"])
+        self.assertTrue(head_columns["campaign_id"]["primary_key"])
+        self.assertEqual("text", head_columns["revision_id"]["type"])
+        self.assertTrue(head_columns["revision_id"]["not_null"])
+        self.assertTrue(head_columns["revision_id"]["unique"])
+        self.assertEqual("integer", head_columns["ordinal"]["type"])
+        self.assertTrue(head_columns["ordinal"]["not_null"])
+        self.assertEqual("CHECK (ordinal > 0)", head_columns["ordinal"]["check"])
+
+        checkpoint_columns = checkpoint["columns"]
+        self.assertEqual(
+            {
+                "campaign_id", "revision_id", "projection_version",
+                "record_count", "projection_digest",
+            },
+            set(checkpoint_columns),
+        )
+        self.assertEqual("text", checkpoint_columns["campaign_id"]["type"])
+        self.assertTrue(checkpoint_columns["campaign_id"]["primary_key"])
+        self.assertEqual("text", checkpoint_columns["revision_id"]["type"])
+        self.assertTrue(checkpoint_columns["revision_id"]["not_null"])
+        self.assertEqual("integer", checkpoint_columns["projection_version"]["type"])
+        self.assertTrue(checkpoint_columns["projection_version"]["not_null"])
+        self.assertEqual("integer", checkpoint_columns["record_count"]["type"])
+        self.assertTrue(checkpoint_columns["record_count"]["not_null"])
+        self.assertEqual("char(64)", checkpoint_columns["projection_digest"]["type"])
+        self.assertTrue(checkpoint_columns["projection_digest"]["not_null"])
+
+        record_columns = record["columns"]
+        self.assertEqual(
+            {"campaign_id", "revision_id", "record_id", "relative_path", "body_digest"},
+            set(record_columns),
+        )
+        self.assertEqual("text", record_columns["campaign_id"]["type"])
+        self.assertTrue(record_columns["campaign_id"]["not_null"])
+        self.assertEqual("text", record_columns["revision_id"]["type"])
+        self.assertTrue(record_columns["revision_id"]["not_null"])
+        self.assertEqual("text", record_columns["record_id"]["type"])
+        self.assertTrue(record_columns["record_id"]["not_null"])
+        self.assertEqual("text", record_columns["relative_path"]["type"])
+        self.assertTrue(record_columns["relative_path"]["not_null"])
+        self.assertEqual("char(64)", record_columns["body_digest"]["type"])
+        self.assertTrue(record_columns["body_digest"]["not_null"])
+        self.assertIn("PRIMARY KEY(campaign_id, record_id)", record["constraints"])
+
+        self.assertEqual(
+            "LIKE hosted_projection_checkpoint INCLUDING ALL",
+            shadow_checkpoint["like_body"],
+        )
+        self.assertEqual("hosted_projection_checkpoint", shadow_checkpoint["like_base"])
+        self.assertEqual(
+            "LIKE hosted_projection_record INCLUDING ALL",
+            shadow_record["like_body"],
+        )
+        self.assertEqual("hosted_projection_record", shadow_record["like_base"])
+
+        self.assertEqual(1, len(indexes))
+        self.assertEqual(
+            ["hosted_publication_intent_token_idx"],
+            [index["name"] for index in indexes],
+        )
+        self.assertEqual("hosted_publication_intent", indexes[0]["table"])
+        self.assertEqual("intent_token", indexes[0]["columns"])
+        intent_statement = next(
+            statement
+            for statement in statements
+            if statement.startswith("CREATE TABLE hosted_publication_intent")
+        )
+        index_statement = next(
+            statement
+            for statement in statements
+            if statement.startswith("CREATE INDEX")
+        )
+        self.assertLess(
+            statements.index(intent_statement), statements.index(index_statement)
+        )
+        self.assertEqual(
+            "CREATE INDEX hosted_publication_intent_token_idx "
+            "ON hosted_publication_intent(intent_token)",
+            index_statement,
+        )
+        self.assertEqual(
+            " ".join("CREATE INDEX hosted_publication_intent_token_idx "
+                     "ON hosted_publication_intent(intent_token)".split()),
+            " ".join(index_statement.split()),
+        )
+        self.assertNotIn("UNIQUE", index_statement)
+        self.assertNotIn("provider_secret", raw)
+
+
+class MigrationRawWrapperTests(unittest.TestCase):
+    """Regression coverage for the raw outer-transaction wrapper rule.
+
+    The rule is exercised against controlled fixture files rather than the
+    real migrations, because on this branch's base (before PR #153 merges)
+    ``0001_revision_projection.sql`` and ``0003_ai_live_backend.sql`` still
+    carry ``BEGIN;``/``COMMIT;`` wrappers. The check reads raw file content:
+    ``migration_body()`` strips wrappers, so parsing the body would never
+    see them.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.temporary_dir = Path(self.temporary.name)
+
+    def write_migration(self, name: str, content: str) -> Path:
+        path = self.temporary_dir / name
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_wrapped_migration_is_rejected_with_path_and_token(self) -> None:
+        path = self.write_migration(
+            "sample.sql",
+            "BEGIN;\n\nCREATE TABLE sample (id text);\n\nCOMMIT;\n",
+        )
+        with self.assertRaises(AssertionError) as caught:
+            assert_no_outer_transaction_wrapper_raw(path)
+        self.assertIn(str(path), str(caught.exception))
+        self.assertIn("BEGIN;", str(caught.exception))
+
+    def test_every_transaction_start_token_is_rejected(self) -> None:
+        for token in sorted(TRANSACTION_STARTS):
+            label = token.replace(" ", "_").replace(";", "")
+            path = self.write_migration(
+                f"start_{label}.sql",
+                f"{token}\n\nCREATE TABLE sample (id text);\nCOMMIT;\n",
+            )
+            with self.assertRaises(AssertionError) as caught:
+                assert_no_outer_transaction_wrapper_raw(path)
+            self.assertIn(token, str(caught.exception))
+
+    def test_every_transaction_end_token_is_rejected(self) -> None:
+        for token in sorted(TRANSACTION_ENDS):
+            label = token.replace(" ", "_").replace(";", "")
+            path = self.write_migration(
+                f"end_{label}.sql",
+                f"CREATE TABLE sample (id text);\n{token}\n",
+            )
+            with self.assertRaises(AssertionError) as caught:
+                assert_no_outer_transaction_wrapper_raw(path)
+            self.assertIn(token, str(caught.exception))
+
+    def test_shared_line_wrappers_are_rejected(self) -> None:
+        both = self.write_migration(
+            "shared_both.sql",
+            "BEGIN; CREATE TABLE sample (id text); COMMIT;\n",
+        )
+        with self.assertRaises(AssertionError) as caught:
+            assert_no_outer_transaction_wrapper_raw(both)
+        self.assertIn("BEGIN;", str(caught.exception))
+        trailing = self.write_migration(
+            "shared_end.sql",
+            "CREATE TABLE sample (id text); COMMIT;\n",
+        )
+        with self.assertRaises(AssertionError) as caught:
+            assert_no_outer_transaction_wrapper_raw(trailing)
+        self.assertIn("COMMIT;", str(caught.exception))
+
+    def test_comment_lines_do_not_hide_wrappers(self) -> None:
+        path = self.write_migration(
+            "commented.sql",
+            "-- generated header\n\nBEGIN; -- open\n\nCREATE TABLE sample (id text);\n"
+            "-- middle comment\n\nCOMMIT; -- close\n",
+        )
+        with self.assertRaises(AssertionError) as caught:
+            assert_no_outer_transaction_wrapper_raw(path)
+        self.assertIn("BEGIN;", str(caught.exception))
+
+    def test_wrapper_free_migration_passes(self) -> None:
+        path = self.write_migration(
+            "clean.sql",
+            "CREATE TABLE sample (id text);\nCREATE INDEX sample_idx ON sample(id);\n",
+        )
+        assert_no_outer_transaction_wrapper_raw(path)
+        first, last = migration_boundaries(path)
+        self.assertNotIn(first, TRANSACTION_STARTS)
+        self.assertNotIn(last, TRANSACTION_ENDS)
+        self.assertEqual("CREATE TABLE SAMPLE (ID TEXT);", first)
+
+    def test_empty_and_comment_only_files_have_no_boundaries(self) -> None:
+        empty = self.write_migration("empty.sql", "")
+        assert_no_outer_transaction_wrapper_raw(empty)
+        self.assertEqual(("", ""), migration_boundaries(empty))
+        comments = self.write_migration(
+            "comments.sql", "-- only comments\n-- still none\n"
+        )
+        assert_no_outer_transaction_wrapper_raw(comments)
+        self.assertEqual(("", ""), migration_boundaries(comments))
+
+    def test_migration_files_scan_applies_raw_rule_per_file(self) -> None:
+        wrapped = self.write_migration(
+            "0001_wrapped.sql",
+            "BEGIN;\n\nCREATE TABLE sample (id text);\nCOMMIT;\n",
+        )
+        clean = self.write_migration(
+            "0002_clean.sql",
+            "CREATE TABLE sample (id text);\n",
+        )
+        self.assertEqual([wrapped, clean], migration_files(self.temporary_dir))
+        with self.assertRaises(AssertionError):
+            assert_no_outer_transaction_wrapper_raw(wrapped)
+        assert_no_outer_transaction_wrapper_raw(clean)
+
+
+def _split_statements(sql: str) -> list[str]:
+    statements: list[str] = []
+    current: list[str] = []
+    in_quote = False
+    index = 0
+    while index < len(sql):
+        char = sql[index]
+        if char == "'":
+            if in_quote and index + 1 < len(sql) and sql[index + 1] == "'":
+                current.append("''")
+                index += 2
+                continue
+            in_quote = not in_quote
+            current.append(char)
+        elif (
+            char == "-"
+            and not in_quote
+            and index + 1 < len(sql)
+            and sql[index + 1] == "-"
         ):
-            self.assertIn(f"CREATE TABLE {table}", migration)
-        self.assertIn("CHECK (status IN ('pending', 'finalized', 'quarantined'))", migration)
-        self.assertNotIn("provider_secret", migration)
+            while index < len(sql) and sql[index] != "\n":
+                index += 1
+        elif char == ";" and not in_quote:
+            statement = "".join(current).strip()
+            if statement:
+                statements.append(statement)
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    statement = "".join(current).strip()
+    if statement:
+        statements.append(statement)
+    return statements
+
+
+def _matching_group(text: str, opener: str) -> str | None:
+    start = text.find(opener)
+    if start < 0:
+        return None
+    depth = 0
+    in_quote = False
+    index = start
+    while index < len(text):
+        char = text[index]
+        if char == "'":
+            if in_quote and index + 1 < len(text) and text[index + 1] == "'":
+                index += 2
+                continue
+            in_quote = not in_quote
+        elif char == "(" and not in_quote:
+            depth += 1
+        elif char == ")" and not in_quote:
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+        index += 1
+    raise AssertionError(f"unbalanced parentheses in {text!r}")
+
+
+def _split_top_level_definitions(text: str) -> list[str]:
+    entries: list[str] = []
+    current: list[str] = []
+    depth = 0
+    in_quote = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "'":
+            if in_quote and index + 1 < len(text) and text[index + 1] == "'":
+                current.append("''")
+                index += 2
+                continue
+            in_quote = not in_quote
+            current.append(char)
+        elif char == "(" and not in_quote:
+            depth += 1
+            current.append(char)
+        elif char == ")" and not in_quote:
+            depth -= 1
+            current.append(char)
+        elif char == "," and depth == 0 and not in_quote:
+            entries.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    tail = "".join(current).strip()
+    if tail:
+        entries.append(tail)
+    return entries
+
+
+_CONSTRAINT_MARKERS = (" NOT NULL", " PRIMARY KEY", " UNIQUE", " CHECK", " REFERENCES")
+
+
+def _column_definition(entry: str) -> tuple[str, dict]:
+    name, _, rest = entry.partition(" ")
+    positions = [rest.find(marker) for marker in _CONSTRAINT_MARKERS if marker in rest]
+    column_type = rest[: min(positions)] if positions else rest
+    return name, {
+        "type": column_type.strip(),
+        "not_null": "NOT NULL" in rest,
+        "unique": "UNIQUE" in rest,
+        "primary_key": "PRIMARY KEY" in rest,
+        "check": _matching_group(rest, "CHECK"),
+    }
+
+
+def _parse_create_table(statement: str) -> dict:
+    name = statement[len("CREATE TABLE") :].strip().split()[0]
+    body = _matching_group(statement, "(")[1:-1].strip()
+    if body.startswith("LIKE "):
+        return {
+            "name": name,
+            "like_body": body,
+            "like_base": body.split()[1],
+            "columns": {},
+            "constraints": [],
+        }
+    columns: dict[str, dict] = {}
+    constraints: list[str] = []
+    for entry in _split_top_level_definitions(body):
+        if entry.startswith(("PRIMARY KEY", "UNIQUE", "CHECK", "FOREIGN KEY", "CONSTRAINT")):
+            constraints.append(entry)
+        else:
+            column_name, definition = _column_definition(entry)
+            columns[column_name] = definition
+    return {
+        "name": name,
+        "like_body": None,
+        "like_base": None,
+        "columns": columns,
+        "constraints": constraints,
+    }
+
+
+def _parse_create_index(statement: str) -> dict:
+    head = statement[len("CREATE INDEX") : statement.find("(")].strip()
+    parts = head.split()
+    return {
+        "name": parts[0],
+        "table": parts[parts.index("ON") + 1],
+        "columns": _matching_group(statement, "(")[1:-1],
+    }
 
 
 if __name__ == "__main__":
