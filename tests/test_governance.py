@@ -56,14 +56,33 @@ class IssueFormGovernanceTests(unittest.TestCase):
     def test_public_bug_and_feature_reporting_remain_available(self):
         bug = parse_issue_form(BUG_TEMPLATE)
         feature = parse_issue_form(FEATURE_TEMPLATE)
-        self.assertLessEqual(
-            {"observed", "expected", "reproduction", "version", "public_safety"},
+        self.assertEqual(
+            {
+                "observed",
+                "expected",
+                "reproduction",
+                "version",
+                "verification",
+                "public_safety",
+            },
             set(bug["fields"]),
         )
-        self.assertLessEqual(
-            {"problem", "outcome", "alternatives", "public_safety"},
+        self.assertEqual(
+            {
+                "problem",
+                "outcome",
+                "alternatives",
+                "non_goals",
+                "public_safety",
+            },
             set(feature["fields"]),
         )
+        for name, form in (("bug", bug), ("feature", feature)):
+            with self.subTest(template=name):
+                self.assertEqual(
+                    "checkboxes", form["fields"]["public_safety"]["type"]
+                )
+                self.assertTrue(form["fields"]["public_safety"]["required"])
         self.assertIn("bug", bug["labels"])
         self.assertIn("enhancement", feature["labels"])
 
