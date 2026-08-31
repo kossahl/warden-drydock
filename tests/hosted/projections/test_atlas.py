@@ -16,6 +16,7 @@ from warden_drydock.hosted.projections.atlas_models import (
     StatusKind,
     content_digest,
     decode_cursor,
+    normalize_content,
 )
 from warden_drydock.hosted.ai.models import Action, GenerationRequest, SourceEnvelope
 from warden_drydock.hosted.projections.atlas_rebuild import AtlasProjectionRebuilder
@@ -278,6 +279,42 @@ class AtlasProjectionTests(AtlasFixture):
         expected = content_digest("one\ntwo\n")
         self.assertEqual(expected, content_digest("one\r\ntwo\r\n"))
         self.assertEqual(expected, content_digest("one\rtwo\r"))
+
+    def test_rebuild_normalizes_crlf_authored_record_identically(self) -> None:
+        self.write_record("record-001", line_ending="\r\n")
+        crlf_text = (self.source / "record-001.md").read_bytes().decode("utf-8")
+        self.assertIn("\r\n", crlf_text)
+        first = self.publish("revision_one", 1, None)
+        (self.source / "record-001.md").unlink()
+        self.write_record("record-001", line_ending="\n")
+        second = self.publish("revision_two", 2, first.revision_id, proposal=True)
+        rebuilder = AtlasProjectionRebuilder(
+            self.store, self.projections, self.workflow
+        )
+        first_bundle = rebuilder.rebuild(first)
+        second_bundle = rebuilder.rebuild(second)
+        first_record = next(
+            item for item in first_bundle.records if item.record_id == "record-001"
+        )
+        second_record = next(
+            item for item in second_bundle.records if item.record_id == "record-001"
+        )
+        self.assertNotEqual(first_bundle.tree_digest, second_bundle.tree_digest)
+        self.assertEqual(first_bundle.tree_digest, first.tree_digest)
+        self.assertEqual(first_record.content, normalize_content(crlf_text))
+        self.assertEqual(first_record.content, second_record.content)
+        self.assertEqual(first_record.content_digest, content_digest(crlf_text))
+        self.assertEqual(
+            first_record.content_digest, second_record.content_digest
+        )
+        self.assertEqual(
+            (),
+            tuple(
+                item.change_kind
+                for item in second_bundle.history_entry.changes
+                if item.record_id == "record-001"
+            ),
+        )
 
     def test_search_filters_facets_ordering_and_cursor_binding(self) -> None:
         first, second = self.two_revisions()
