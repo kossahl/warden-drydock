@@ -200,6 +200,7 @@ class CommunicationPolicyTests(unittest.TestCase):
                 self.assertIn(phrase, self.policy)
 
     def test_polling_is_read_only_idempotent_and_cannot_execute_agents(self):
+        """Documentation contract until the future polling integration exists."""
         required_phrases = {
             "a recurring monitor, when enabled, is read-only",
             "must not start an agent",
@@ -214,6 +215,34 @@ class CommunicationPolicyTests(unittest.TestCase):
         for phrase in required_phrases:
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.policy)
+
+    def test_ci_workflow_is_not_scheduled_and_runs_no_agent_or_repo_write(self):
+        workflow = (
+            ROOT / ".github" / "workflows" / "test.yml"
+        ).read_text(encoding="utf-8")
+        self.assertNotRegex(
+            workflow,
+            r"(?m)(?:[\"']?schedule[\"']?\s*:|on\s*:\s*[\"']?schedule\b|"
+            r"\[[^\]]*\bschedule\b)",
+            "no `on: schedule` trigger may run arbitrary logic before a "
+            "read-only monitor exists",
+        )
+        self.assertRegex(
+            workflow,
+            r"(?m)^\s*contents\s*:\s*read\s*$",
+            "the workflow must run with read-only repository credentials",
+        )
+        self.assertNotRegex(
+            workflow,
+            r"(?m)\s*(?:uses|run):[^\n]*\b(?:monitor|poll)\b",
+            "no CI step may start the monitor, which is not implemented",
+        )
+        self.assertNotRegex(
+            workflow,
+            r"(?m)\bgit\s+push\b|\bgh\s+(?:repo|pr|issue)\b|"
+            r"peter-evans/create-pull-request|actions/github-script",
+            "no CI step may write to the repository",
+        )
 
     def test_decision_authority_uses_current_repository_permission(self):
         required_phrases = {
