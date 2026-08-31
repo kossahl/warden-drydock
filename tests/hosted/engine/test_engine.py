@@ -235,6 +235,26 @@ class ExactDiffTests(EngineTestCase):
         )
         self.assertEqual(Status.INVALID, missing.result.status)
 
+    def assert_stage_failure_discards(
+        self,
+        request: StageExactDiffRequest,
+        expected_status: Status,
+        fail: mock._patch,
+    ) -> None:
+        registered_before = set(self.registry._paths)
+        leaked_handle = WorkspaceHandle(f"workspace_{self.registry._counter + 1:08d}")
+        source_before = self.show()
+        with fail:
+            result = self.engine.stage_exact_diff(request)
+        self.assertEqual(expected_status, result.status)
+        self.assertEqual(self.handle, result.staged_handle)
+        self.assertEqual(registered_before, set(self.registry._paths))
+        self.assertEqual(source_before, self.show())
+        leaked = self.engine.validate(
+            WorkspaceRequest("command_validate", leaked_handle)
+        )
+        self.assertEqual("workspace_unknown", leaked.findings[0].code)
+
     def test_later_create_failure_discards_partial_staged_workspace(self) -> None:
         import warden_drydock.hosted.engine.facade as facade_module
 
@@ -249,9 +269,6 @@ class ExactDiffTests(EngineTestCase):
             )
             for index in (1, 2)
         )
-        registered_before = set(self.registry._paths)
-        leaked_handle = WorkspaceHandle(f"workspace_{self.registry._counter + 1:08d}")
-        source_before = self.show()
         real_create = facade_module.create_entity
         call_count = 0
 
@@ -262,24 +279,16 @@ class ExactDiffTests(EngineTestCase):
                 raise SystemExit("injected later create failure")
             return real_create(*args, **kwargs)
 
-        with mock.patch.object(facade_module, "create_entity", side_effect=fail_second):
-            result = self.engine.stage_exact_diff(
-                StageExactDiffRequest(
-                    "command_multi_create",
-                    self.handle,
-                    exact_diff_digest(changes),
-                    changes,
-                )
-            )
-
-        self.assertEqual(Status.INVALID, result.status)
-        self.assertEqual(self.handle, result.staged_handle)
-        self.assertEqual(registered_before, set(self.registry._paths))
-        self.assertEqual(source_before, self.show())
-        leaked = self.engine.validate(
-            WorkspaceRequest("command_validate", leaked_handle)
+        self.assert_stage_failure_discards(
+            StageExactDiffRequest(
+                "command_multi_create",
+                self.handle,
+                exact_diff_digest(changes),
+                changes,
+            ),
+            Status.INVALID,
+            mock.patch.object(facade_module, "create_entity", side_effect=fail_second),
         )
-        self.assertEqual("workspace_unknown", leaked.findings[0].code)
 
     def test_oserror_after_clone_discards_staged_workspace(self) -> None:
         import warden_drydock.hosted.engine.facade as facade_module
@@ -294,27 +303,19 @@ class ExactDiffTests(EngineTestCase):
             content_digest(original),
             replacement,
         )
-        registered_before = set(self.registry._paths)
-        leaked_handle = WorkspaceHandle(f"workspace_{self.registry._counter + 1:08d}")
-        with mock.patch.object(
-            facade_module, "build_indexes", side_effect=OSError("injected")
-        ):
-            result = self.engine.stage_exact_diff(
-                StageExactDiffRequest(
-                    "command_stage",
-                    self.handle,
-                    exact_diff_digest((change,)),
-                    (change,),
-                )
-            )
-        self.assertEqual(Status.FAILED, result.status)
-        self.assertEqual(self.handle, result.staged_handle)
-        self.assertEqual(registered_before, set(self.registry._paths))
-        self.assertEqual(original, self.show().records[0].content)
-        leaked = self.engine.validate(
-            WorkspaceRequest("command_validate", leaked_handle)
+        self.assert_stage_failure_discards(
+            StageExactDiffRequest(
+                "command_stage",
+                self.handle,
+                exact_diff_digest((change,)),
+                (change,),
+            ),
+            Status.FAILED,
+            mock.patch.object(
+                facade_module, "build_indexes", side_effect=OSError("injected")
+            ),
         )
-        self.assertEqual("workspace_unknown", leaked.findings[0].code)
+        self.assertEqual(original, self.show().records[0].content)
 
     def test_exact_diff_is_isolated_rebuilt_validated_and_non_publishing(self) -> None:
         source = self.show()
