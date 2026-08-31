@@ -3,6 +3,8 @@ import { App } from "../../src/App";
 import type { AtlasApi } from "../../src/api/atlasClient";
 import { ApiError, type SliceApi } from "../../src/api/client";
 import type { GenerationView, ProposalView, ProviderReadiness } from "../../src/contracts/v2";
+import { WorkflowPanels } from "../../src/atlas/AtlasCompletion";
+import type { AtlasRoute } from "../../src/atlas/routing";
 import { binding, campaigns, detail, fullHistory, generations, headRevision, neighborhood, newestFiveHistory, oldRevision, overview, proposals, readinessUnavailable, recordHistory, records, workflow } from "../fixtures/atlas";
 
 function fakeAtlas(overrides: Partial<AtlasApi> = {}): AtlasApi {
@@ -311,6 +313,18 @@ describe("Campaign Atlas browser experience", () => {
     expect(screen.getByRole("link", { name: "Review proposal" })).toHaveAttribute("href", "/?proposal=proposal_one&version=2");
     expect(screen.getByText("Provider reported this failure as retryable. Starting another inference requires a new explicit request.")).toBeVisible();
     expect(screen.queryByRole("button", { name: /Retry (Draft|generation)/ })).not.toBeInTheDocument();
+  });
+
+  it("renders every publication-safe workflow status row with exact deep links", async () => {
+    const generationItems = (["pending", "complete", "failed", "cancelled"] as const).map((status, index) => ({ generation_id: `generation_${status}`, action: index % 2 ? "check" as const : "ask" as const, context: { scope: "campaign" as const }, source_revision: headRevision, source_set_digest: `${index + 1}`.repeat(64), status, retryable: status === "failed" ? true : null, created_at: `2026-08-25T0${index}:00:00Z` }));
+    const proposalItems = (["draft", "rejected", "conflict", "published", "quarantined"] as const).map((status, index) => ({ proposal_id: `proposal_${status}`, proposal_version: index + 1, generation_id: `generation_${status}`, action: "generate" as const, context: { scope: "record" as const, record_id: "record-one", content_digest: "c".repeat(64) }, subject_record_id: "record-one", subject_content_digest: "c".repeat(64), source_revision: headRevision, base_revision: status === "draft" ? oldRevision : headRevision, status, validation_status: "passed" as const, published_revision_id: status === "published" ? "revision_three" : null, created_at: `2026-08-25T1${index}:00:00Z` }));
+    const route: AtlasRoute = { kind: "overview", campaignId: campaigns.campaigns[0].campaign_id, revisionId: headRevision.revision_id, q: "", type: null, authority: null, status: null, cursor: null, relationshipCursor: null, generationCursor: null, proposalCursor: null };
+    render(<WorkflowPanels api={fakeAtlas({ generations: vi.fn(async () => ({ ...generations, items: generationItems })), proposals: vi.fn(async () => ({ ...proposals, items: proposalItems })) })} campaign={campaigns.campaigns[0]} route={route} revision={headRevision} navigate={vi.fn()} block={vi.fn()} />);
+    await expect(screen.findByText("In progress", { exact: false })).resolves.toBeVisible();
+    for (const text of ["Draft ready, not canon", "Failed, no Draft published", "Cancelled, no Draft published", "Rejected, not published", "Conflict, not published", "Published to revision revision_three", "Quarantined, publication not confirmed", "Stale base"]) expect(screen.getAllByText(text, { exact: false })[0]).toBeVisible();
+    expect(screen.getAllByRole("link", { name: "Open Draft" })[0]).toHaveAttribute("href", "/?generation=generation_pending");
+    expect(screen.getAllByRole("link", { name: "Review proposal" })[0]).toHaveAttribute("href", "/?proposal=proposal_draft&version=1");
+    expect(screen.getByText("Provider reported this failure as retryable. Starting another inference requires a new explicit request.")).toBeVisible();
   });
 
   it("starts an explicit record Generate with the exact pinned digest and no session", async () => {

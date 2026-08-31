@@ -7,7 +7,8 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from tools.provider_eval.fixture import BASE_REVISION, ENVELOPES, TOOL_SCHEMAS, build_manifest, canonical_json, envelope_digest, sha256
+from tools.provider_eval.fixture import BASE_REVISION, ENVELOPES, RECORDS, TOOL_SCHEMAS, build_manifest, canonical_json, envelope_digest, sha256
+import tools.provider_eval.fixture as fixture_module
 from tools.provider_eval.harness import (
     Budget,
     CANDIDATES,
@@ -30,20 +31,61 @@ from tools.provider_eval import cli
 from tools.provider_eval.report import build_evidence, render_markdown
 
 
+def _schema_keys(value):
+    keys = []
+    if isinstance(value, dict):
+        keys.extend(value)
+        for item in value.values():
+            keys.extend(_schema_keys(item))
+    elif isinstance(value, list):
+        for item in value:
+            keys.extend(_schema_keys(item))
+    return keys
+
+
 class FixtureTests(unittest.TestCase):
     def test_manifest_and_envelope_digests_are_deterministic(self):
         first = build_manifest()
         second = build_manifest()
         self.assertEqual(canonical_json(first), canonical_json(second))
         self.assertRegex(first["manifest_sha256"], r"^[0-9a-f]{64}$")
+        body = dict(first)
+        body.pop("manifest_sha256")
+        self.assertEqual(first["manifest_sha256"], sha256(canonical_json(body)))
         self.assertEqual(4, len(first["envelopes"]))
         self.assertEqual(["location-erebos", "session-003"], ENVELOPES["ask-airlock-v1"]["included_source_ids"])
 
+    def test_manifest_digest_changes_when_a_source_or_envelope_mutates(self):
+        baseline = build_manifest()["manifest_sha256"]
+        with patch.dict(fixture_module.RECORDS, {"npc-vale": RECORDS["npc-vale"] + "A post-approval note."}):
+            self.assertNotEqual(baseline, build_manifest()["manifest_sha256"])
+        with patch.dict(fixture_module.ENVELOPES, {"ask-airlock-v1": {**ENVELOPES["ask-airlock-v1"], "included_source_ids": ["session-003", "location-erebos"]}}):
+            self.assertNotEqual(baseline, build_manifest()["manifest_sha256"])
+
+    def test_manifest_digest_is_stable_under_source_dict_iteration_order(self):
+        baseline = build_manifest()
+        resequenced = dict(reversed(list(RECORDS.items())))
+        self.assertNotEqual(list(RECORDS), list(resequenced))
+        with patch.dict(fixture_module.RECORDS, resequenced, clear=True):
+            resequenced_manifest = build_manifest()
+        self.assertEqual(canonical_json(baseline), canonical_json(resequenced_manifest))
+        self.assertEqual(baseline["manifest_sha256"], resequenced_manifest["manifest_sha256"])
+
     def test_exact_three_tool_schemas_are_closed(self):
-        self.assertEqual({"fixture_read_source", "fixture_read_revision_context", "fixture_emit_proposal_draft"}, set(TOOL_SCHEMAS))
+        expected = {"fixture_read_source", "fixture_read_revision_context", "fixture_emit_proposal_draft"}
+        self.assertEqual(expected, set(TOOL_SCHEMAS))
         for schema in TOOL_SCHEMAS.values():
             self.assertFalse(schema["additionalProperties"])
             self.assertEqual("https://json-schema.org/draft/2020-12/schema", schema["$schema"])
+        requests = (openai_request("gpt-5.6-terra", "tool-beacon-debrief-v1"), anthropic_request("claude-sonnet-5", "tool-beacon-debrief-v1"))
+        for request in requests:
+            wired = {tool["name"]: tool.get("parameters") or tool.get("input_schema") for tool in request["tools"]}
+            self.assertEqual(expected, set(wired))
+            for schema in wired.values():
+                self.assertFalse(schema["additionalProperties"])
+            emit = {"campaign_id": "campaign-erebos", "base_revision": BASE_REVISION, "source_set_digest": envelope_digest("tool-beacon-debrief-v1"), "proposal_kind": "beacon_debrief", "title": "Beacon debrief", "source_ids": ["faction-helix"], "suggested_changes": ["Draft note"], "unexpected_property": True}
+            self.assertTrue(validate_schema(wired["fixture_emit_proposal_draft"], emit))
+            self.assertIn("invalid_tool_schema", validate_tool_call("tool-beacon-debrief-v1", "fixture_emit_proposal_draft", emit))
 
 
 class ScheduleBudgetRetryTests(unittest.TestCase):
@@ -126,11 +168,30 @@ class ScheduleBudgetRetryTests(unittest.TestCase):
 
 class RequestContractTests(unittest.TestCase):
     def test_wire_schema_removes_unsupported_keywords_but_preserves_full_contract(self):
-        wire = wire_schema(TOOL_SCHEMAS["fixture_emit_proposal_draft"])
-        rendered = json.dumps(wire)
-        for keyword in ("$schema", "uniqueItems", "minItems", "maxItems"):
-            self.assertNotIn(keyword, rendered)
-        self.assertIn("uniqueItems", json.dumps(TOOL_SCHEMAS["fixture_emit_proposal_draft"]))
+        full = TOOL_SCHEMAS["fixture_emit_proposal_draft"]
+        wire = wire_schema(full)
+        unsupported = {"$schema", "uniqueItems", "pattern", "minimum", "maximum", "minItems", "maxItems"}
+        present = set(_schema_keys(wire))
+        self.assertEqual(set(), unsupported & present)
+        self.assertIn("$schema", full)
+        self.assertTrue(full["properties"]["source_ids"]["uniqueItems"])
+        self.assertEqual(1, full["properties"]["source_ids"]["minItems"])
+        self.assertEqual(1, full["properties"]["suggested_changes"]["minItems"])
+        self.assertEqual(5, full["properties"]["suggested_changes"]["maxItems"])
+        self.assertEqual("object", wire["type"])
+        self.assertIs(False, wire["additionalProperties"])
+        self.assertEqual(set(full["properties"]), set(wire["properties"]))
+        self.assertEqual(full["required"], wire["required"])
+        self.assertEqual({"type": "string", "enum": ["beacon_debrief"]}, wire["properties"]["proposal_kind"])
+        self.assertEqual({"type": "string", "enum": [BASE_REVISION]}, wire["properties"]["base_revision"])
+        self.assertEqual({"type": "array", "items": {"type": "string"}}, wire["properties"]["source_ids"])
+
+        valid = {"campaign_id": "campaign-erebos", "base_revision": BASE_REVISION, "source_set_digest": envelope_digest("tool-beacon-debrief-v1"), "proposal_kind": "beacon_debrief", "title": "Beacon debrief", "source_ids": ["faction-helix"], "suggested_changes": ["Draft note"]}
+        self.assertEqual([], validate_schema(full, valid))
+        self.assertEqual([], validate_schema(wire, valid))
+        for broken in (dict(valid, campaign_id="campaign-other"), dict(valid, source_ids=[1]), dict(valid, title=None), dict(valid, drift=1)):
+            self.assertNotEqual([], validate_schema(full, broken))
+            self.assertNotEqual([], validate_schema(wire, broken))
 
     def test_openai_contract_disables_storage_and_cache_breakpoints(self):
         request = openai_request("gpt-5.6-terra", "tool-beacon-debrief-v1")
@@ -177,10 +238,20 @@ class RequestContractTests(unittest.TestCase):
 
     def test_full_schema_rejects_wire_subset_invalid_values(self):
         full = TOOL_SCHEMAS["fixture_emit_proposal_draft"]
-        invalid = {"campaign_id": "campaign-erebos", "base_revision": BASE_REVISION, "source_set_digest": "x", "proposal_kind": "beacon_debrief", "title": "Beacon debrief", "source_ids": ["faction-helix", "faction-helix"], "suggested_changes": []}
-        self.assertTrue(validate_schema(full, invalid))
-        findings = validate_tool_call("tool-beacon-debrief-v1", "fixture_emit_proposal_draft", invalid)
-        self.assertIn("invalid_tool_schema", findings)
+        wire = wire_schema(full)
+        invalid = {"campaign_id": "campaign-erebos", "base_revision": BASE_REVISION, "source_set_digest": envelope_digest("tool-beacon-debrief-v1"), "proposal_kind": "beacon_debrief", "title": "Beacon debrief", "source_ids": [123], "suggested_changes": ["Draft note"]}
+        full_findings = validate_schema(full, invalid)
+        wire_findings = validate_schema(wire, invalid)
+        self.assertTrue(full_findings)
+        self.assertTrue(wire_findings)
+        self.assertEqual(wire_findings, full_findings)
+        self.assertIn("invalid_tool_schema", validate_tool_call("tool-beacon-debrief-v1", "fixture_emit_proposal_draft", invalid))
+        valid = dict(invalid, source_ids=["faction-helix"])
+        self.assertEqual([], validate_schema(full, valid))
+        self.assertEqual([], validate_schema(wire, valid))
+
+        stripped_invalid = {"campaign_id": "campaign-erebos", "base_revision": BASE_REVISION, "source_set_digest": "x", "proposal_kind": "beacon_debrief", "title": "Beacon debrief", "source_ids": ["faction-helix", "faction-helix"], "suggested_changes": []}
+        self.assertTrue(validate_schema(full, stripped_invalid))
 
         structured = {"status": "Draft", "base_revision": BASE_REVISION, "source_ids": [1], "answer": 7}
         scored = score_result("ask-airlock-v1", structured)
@@ -232,19 +303,31 @@ class BoundaryTests(unittest.TestCase):
 
 class ReportTests(unittest.TestCase):
     def test_report_rebuilds_manifest_instead_of_reusing_sanitized_input(self):
+        probe = "sk-leak-probe-9f8e7d6c5b4a3"
         local = {
             "seed": 41,
-            "fixture_manifest": {"envelopes": [{"task_id": "a[REDACTED]"}]},
+            "fixture_manifest": {"envelopes": [{"task_id": probe, "sha256": "0" * 64}]},
             "actual_spend_usd": 0.0,
             "worst_case_reserved_usd": 0.0,
-            "results": [],
+            "results": [{
+                "request_headers": f"authorization: Bearer {probe}",
+                "request_body": f'{{"prompt": "{probe}"}}',
+                "source_set_digest": envelope_digest("ask-airlock-v1"),
+                "source_ids": ["location-erebos", "session-003"],
+                "request_sha256": "0" * 64,
+                "transmitted_bytes": 256,
+                "transmitted_characters": 256,
+                "attempts": [
+                    {"attempt": 1, "terminal_state": "failure", "error_type": "HTTPError", "http_status": 429, "diagnostic": {"message": f"request {probe} throttled"}},
+                    {"attempt": 2, "terminal_state": "completed", "model_returned": "claude-sonnet-5", "actual_cost_usd": 0.0, "ttft_ms": 1.0, "latency_ms": 2.0, "result": {"status": "Draft", "base_revision": BASE_REVISION, "source_ids": ["location-erebos", "session-003"], "answer": f"probe {probe} must not reach evidence"}},
+                ],
+            }],
         }
         evidence = build_evidence(local)
-        self.assertEqual(
-            ["ask-airlock-v1", "check-vale-death-v1", "generate-infirmary-v1", "tool-beacon-debrief-v1"],
-            [entry["task_id"] for entry in evidence["fixture_manifest"]["envelopes"]],
-        )
-        self.assertNotIn("[REDACTED]", json.dumps(evidence["fixture_manifest"]))
+        self.assertEqual(build_manifest(), evidence["fixture_manifest"])
+        rendered_manifest = json.dumps(evidence["fixture_manifest"])
+        self.assertNotIn(probe, rendered_manifest)
+        self.assertNotIn("[REDACTED]", rendered_manifest)
 
     def test_product_decision_is_distinct_from_immutable_evaluation_conclusion(self):
         local = {

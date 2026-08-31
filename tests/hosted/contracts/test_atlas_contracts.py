@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -44,6 +45,13 @@ def _walk(value):
     elif isinstance(value, list):
         for child in value:
             yield from _walk(child)
+
+
+def _value_at_path(instance: dict, path: str) -> object:
+    value = instance
+    for part in path.split("."):
+        value = value[part]
+    return value
 
 
 def _strict_decode(value: str) -> str:
@@ -191,6 +199,7 @@ class AtlasContractTests(unittest.TestCase):
         cls.examples = json.loads((CONTRACT_ROOT / cls.index["examples"]).read_text(encoding="utf-8"))["examples"]
 
     def test_package_is_separate_indexed_closed_and_schema_valid(self) -> None:
+        validator = Draft202012Validator(self.schema)
         Draft202012Validator.check_schema(self.schema)
         aggregate = json.loads(
             (CONTRACT_ROOT.parents[1] / "index.json").read_text(encoding="utf-8")
@@ -202,17 +211,65 @@ class AtlasContractTests(unittest.TestCase):
         self.assertIn("does not mutate", self.index["compatibility"])
         self.assertEqual(4, len(self.index["negative_fixtures"]))
         self.assertTrue(all((CONTRACT_ROOT / item).is_file() for item in self.index["negative_fixtures"]))
+        first = json.loads(
+            (CONTRACT_ROOT / self.index["negative_fixtures"][0]).read_text(encoding="utf-8")
+        )
+        instance = first["instance"]
+        categories = []
+        if list(validator.iter_errors(instance)):
+            categories.append("unsafe_binding")
+        else:
+            try:
+                validate_semantics(instance)
+            except AtlasSemanticError as exc:
+                categories.append(exc.category)
+        self.assertIn(first["expected_category"], categories)
+        broken = deepcopy(instance)
+        broken["contract_version"] = 2
+        self.assertTrue(list(validator.iter_errors(broken)))
 
     def test_all_contract_objects_are_closed_positive_and_unique(self) -> None:
         validator = Draft202012Validator(self.schema)
         names = []
+        by_name = {}
         for instance in self.examples:
             with self.subTest(contract=instance["contract_name"]):
                 self.assertEqual([], list(validator.iter_errors(instance)))
                 validate_semantics(instance)
                 names.append(instance["contract_name"])
+                by_name[instance["contract_name"]] = instance
         self.assertEqual(11, len(names))
         self.assertEqual(len(names), len(set(names)))
+
+        detail = deepcopy(by_name["atlas_record_detail"])
+        detail["record"]["content"] += "\n# tampered\n"
+        self.assertEqual([], list(validator.iter_errors(detail)))
+        with self.assertRaises(AtlasSemanticError) as caught:
+            validate_semantics(detail)
+        self.assertEqual("content digest mismatch", str(caught.exception))
+
+        result = deepcopy(by_name["atlas_record_library_result"])
+        result["items"][0]["authority"] = "preparation"
+        self.assertEqual([], list(validator.iter_errors(result)))
+        with self.assertRaises(AtlasSemanticError) as caught:
+            validate_semantics(result)
+        self.assertEqual("status authority mismatch", str(caught.exception))
+
+        renamed = deepcopy(by_name["atlas_record_detail"])
+        renamed["contract_name"] = "atlas_made_up"
+        self.assertTrue(list(validator.iter_errors(renamed)))
+
+        routes = json.loads(
+            (CONTRACT_ROOT / "routes.json").read_text(encoding="utf-8")
+        )["routes"]
+        route = next(item for item in routes if item["id"] == "atlas_record_library")
+        flat = {
+            specification["name"]: _value_at_path(
+                by_name["atlas_record_library_query"], specification["maps_to"]
+            )
+            for specification in route["query_parameters"]
+        }
+        self.assertEqual(flat, _parse_query(route, _serialize_query(route, flat)))
 
     def test_atlas_exposes_no_generation_http_contract(self) -> None:
         corpus = "\n".join(
@@ -227,6 +284,8 @@ class AtlasContractTests(unittest.TestCase):
     def test_routes_pin_all_atlas_read_destinations_without_handlers(self) -> None:
         routes = json.loads((CONTRACT_ROOT / "routes.json").read_text(encoding="utf-8"))
         self.assertFalse(routes["implemented_by_this_package"])
+        self.assertTrue(all(item["method"] == "GET" for item in routes["routes"]))
+        self.assertTrue(all("handler" not in item for item in routes["routes"]))
         self.assertEqual(
             {
                 "atlas_campaign_list",
@@ -239,15 +298,46 @@ class AtlasContractTests(unittest.TestCase):
             },
             {item["id"] for item in routes["routes"]},
         )
-        self.assertTrue(
-            all("invalid_cursor_binding" in json.dumps(item) for item in routes["routes"] if item["id"] in {"atlas_record_library", "atlas_neighborhood", "atlas_approved_history"})
-        )
         by_id = {item["id"]: item for item in routes["routes"]}
+        cursor_bound = {"atlas_record_library", "atlas_neighborhood", "atlas_approved_history"}
+        self.assertEqual(
+            cursor_bound,
+            {
+                item["id"]
+                for item in routes["routes"]
+                if "invalid_cursor_binding" in item["error_status"].get("422", [])
+            },
+        )
+        cursor_rule = next(
+            rule
+            for rule in json.loads(
+                (CONTRACT_ROOT / "semantic-invariants.json").read_text(encoding="utf-8")
+            )["rules"]
+            if rule["id"] == "atlas_cursor_binding"
+        )
+        self.assertEqual("invalid_cursor_binding", cursor_rule["category"])
+        for route_id in cursor_bound:
+            with self.subTest(route=route_id):
+                self.assertIn(by_id[route_id]["response"], cursor_rule["applies_to"])
         self.assertEqual(
             "atlas_depth_1_neighborhood_query", by_id["atlas_neighborhood"]["request"]
         )
         self.assertEqual(
             "atlas_approved_history_query", by_id["atlas_approved_history"]["request"]
+        )
+        neighborhood = by_id["atlas_neighborhood"]
+        exemplar = next(
+            item for item in self.examples
+            if item["contract_name"] == "atlas_depth_1_neighborhood_query"
+        )
+        flat = {}
+        for specification in neighborhood["query_parameters"]:
+            value = exemplar
+            for part in specification["maps_to"].split("."):
+                value = value[part]
+            flat[specification["name"]] = value
+        self.assertEqual(
+            flat, _parse_query(neighborhood, _serialize_query(neighborhood, flat))
         )
 
     def test_flat_query_parser_and_serializer_match_every_route(self) -> None:
@@ -263,6 +353,16 @@ class AtlasContractTests(unittest.TestCase):
             with self.subTest(fixture=fixture["name"]):
                 self.assertEqual(fixture["expected"], parsed)
                 self.assertEqual(parsed, _parse_query(route, _serialize_query(route, parsed)))
+        for fixture in fixtures["negative"]:
+            route = routes[fixture["route"]]
+            with self.subTest(negative=fixture["name"]):
+                with self.assertRaises(AtlasSemanticError) as caught:
+                    _parse_query(
+                        route,
+                        fixture["raw_query"],
+                        fixture.get("cursor_binding"),
+                    )
+                self.assertEqual(fixture["expected_category"], caught.exception.category)
 
     def test_ambiguous_or_rebound_flat_queries_fail_closed(self) -> None:
         routes = {

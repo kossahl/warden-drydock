@@ -65,6 +65,18 @@ class HostedHttpV2ContractTests(unittest.TestCase):
             document = json.loads((V2_ROOT / name).read_text(encoding="utf-8"))
             self.assertEqual(2, document["contract_version"], name)
 
+        package_entry = aggregate["packages"][0]
+        package_index_path = HTTP_ROOT / package_entry["index"]
+        package_index = json.loads(package_index_path.read_text(encoding="utf-8"))
+        self.assertEqual(2, package_index["contract_version"])
+        package_root = package_index_path.parent
+        schema = json.loads((package_root / package_index["schema"]).read_text(encoding="utf-8"))
+        self.assertEqual(schema, self.schema)
+        examples = json.loads((package_root / package_index["examples"]).read_text(encoding="utf-8"))["examples"]
+        generation = next(item["payload"] for item in examples if item["name"] == "generation")
+        self.assertEqual(2, generation["contract_version"])
+        self.assertEqual([], list(Draft202012Validator(schema).iter_errors(generation)))
+
     def test_every_v2_example_is_closed_and_valid(self) -> None:
         Draft202012Validator.check_schema(self.schema)
         validator = Draft202012Validator(self.schema)
@@ -74,6 +86,19 @@ class HostedHttpV2ContractTests(unittest.TestCase):
                 for value in _walk(example["payload"]):
                     if isinstance(value, dict) and "contract_version" in value:
                         self.assertEqual(2, value["contract_version"])
+
+        base = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "provider_readiness")
+        )
+        unexpected = deepcopy(base)
+        unexpected["unexpected_property"] = True
+        with self.subTest(mutation="unexpected_top_level_property"):
+            self.assertTrue(list(validator.iter_errors(unexpected)))
+        for version in (1, 3):
+            mutated = deepcopy(base)
+            mutated["contract_version"] = version
+            with self.subTest(mutation="contract_version", version=version):
+                self.assertTrue(list(validator.iter_errors(mutated)))
 
     def test_unrelated_payloads_copy_v1_semantics(self) -> None:
         v1_schema = json.loads((V1_ROOT / "http.schema.json").read_text(encoding="utf-8"))

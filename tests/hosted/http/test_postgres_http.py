@@ -38,8 +38,9 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
         self.repository.store("proposal_create", self.key, "a" * 64, 201, response)
         restarted = PostgresHTTPRepository(self.connect)
         self.assertEqual((201, response), restarted.replay("proposal_create", self.key, "a" * 64))
-        with self.assertRaises(ReceiptConflict):
+        with self.assertRaisesRegex(ReceiptConflict, "idempotency_digest_conflict"):
             restarted.replay("proposal_create", self.key, "b" * 64)
+        self.assertEqual((201, response), restarted.replay("proposal_create", self.key, "a" * 64))
 
     def test_missing_postgres_proposal_maps_to_contract_not_found(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -50,8 +51,9 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
             with self.assertRaises(HTTPFailure) as caught:
                 app.proposal_view("proposal_missing", 1)
         self.assertEqual(
-            (404, "not_found", "proposal_not_found"),
-            (caught.exception.status, caught.exception.payload["error"]["category"], caught.exception.payload["error"]["code"]),
+            (404, "not_found", "proposal_not_found", "proposal_not_found"),
+            (caught.exception.status, caught.exception.payload["error"]["category"],
+             caught.exception.payload["error"]["code"], str(caught.exception)),
         )
 
     def test_full_slice_persists_publication_and_replays_after_restart(self) -> None:
@@ -136,6 +138,12 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
                 "base_revision": revision, "expected_campaign_head": revision,
                 "diff_digest": proposal["diff_digest"],
                 "proposal_payload_digest": proposal["proposal_payload_digest"], "warden_confirmed": True})
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT count(*) FROM hosted_proposal_audit WHERE proposal_id=%s AND event='published'",
+                    (proposal_id,),
+                )
+                published_events_before = cursor.fetchone()[0]
             result = app.approve_proposal(proposal_id, 1, approval)[1]
             published = result["published_revision"]["revision_id"]
             with self.connect() as connection, connection.cursor() as cursor:
@@ -144,7 +152,7 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
                 cursor.execute("SELECT published_revision_id FROM hosted_proposal_version WHERE proposal_id=%s AND version=1", (proposal_id,))
                 self.assertEqual(published, cursor.fetchone()[0])
                 cursor.execute("SELECT count(*) FROM hosted_proposal_audit WHERE proposal_id=%s AND event='published'", (proposal_id,))
-                self.assertEqual(1, cursor.fetchone()[0])
+                self.assertEqual(published_events_before + 1, cursor.fetchone()[0])
             self.assertEqual(2, len(app.revisions.store.inventory()))
             restarted = SliceApplication(root, snapshot_root=snapshots, provider=SyntheticProvider(),
                 receipts=PostgresHTTPRepository(self.connect), proposal_repository=PostgresProposalRepository(self.connect),
@@ -165,12 +173,18 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
             self.assertEqual((200, False, ask["context"]), (
                 generation_replay[0], generation_replay[2], generation_replay[1]["context"],
             ))
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute("SELECT count(*) FROM hosted_proposal_audit WHERE proposal_id=%s", (proposal_id,))
+                audit_before_replay = cursor.fetchone()[0]
             replay = restarted.approve_proposal(proposal_id, 1, approval)[1]
             self.assertEqual((published, True), (replay["published_revision"]["revision_id"], replay["exact_replay"]))
             with self.connect() as connection, connection.cursor() as cursor:
                 cursor.execute("SELECT count(*) FROM hosted_proposal_audit WHERE proposal_id=%s", (proposal_id,))
-                audit_count = cursor.fetchone()[0]
+                self.assertEqual(audit_before_replay, cursor.fetchone()[0])
             for stored_status in ("approved", "quarantined"):
+                with self.connect() as connection, connection.cursor() as cursor:
+                    cursor.execute("SELECT count(*) FROM hosted_proposal_audit WHERE proposal_id=%s", (proposal_id,))
+                    audit_before_override = cursor.fetchone()[0]
                 with self.connect() as connection, connection.cursor() as cursor:
                     cursor.execute(
                         "UPDATE hosted_proposal_version SET status=%s WHERE proposal_id=%s AND version=1",
@@ -192,7 +206,7 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
                     )
                     self.assertEqual((stored_status, published), cursor.fetchone())
                     cursor.execute("SELECT count(*) FROM hosted_proposal_audit WHERE proposal_id=%s", (proposal_id,))
-                    self.assertEqual(audit_count, cursor.fetchone()[0])
+                    self.assertEqual(audit_before_override, cursor.fetchone()[0])
             with self.connect() as connection, connection.cursor() as cursor:
                 cursor.execute(
                     "UPDATE hosted_proposal_version SET status='published' WHERE proposal_id=%s AND version=1",

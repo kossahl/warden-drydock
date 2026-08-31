@@ -146,7 +146,9 @@ class PostgresAtlasIntegrationTests(unittest.TestCase):
                 )
             )
         try:
-            with self.assertRaises(Exception):
+            with self.assertRaisesRegex(
+                psycopg.errors.RaiseException, "forced Atlas rollback"
+            ):
                 rebuilder.rebuild(first)
             self.assertEqual(
                 first_bundle,
@@ -191,6 +193,9 @@ class PostgresAtlasIntegrationTests(unittest.TestCase):
         restarted = PostgresAIRepository(self.connect).get_generation(
             self.generation_id
         )
+        self.assertIsNotNone(
+            restarted, "a reserved generation must be readable back"
+        )
         self.assertEqual(
             ("record-one", "a" * 64),
             (
@@ -198,6 +203,11 @@ class PostgresAtlasIntegrationTests(unittest.TestCase):
                 restarted.request.focus_content_digest,
             ),
         )
+        # The full request must survive repository reinstantiation, not just
+        # the focus binding. A partial serialization bug in the AI repository
+        # (for example dropping revision_id, action, or the source set digest)
+        # must fail the test.
+        self.assertEqual(request, restarted.request)
 
 
 if __name__ == "__main__":
