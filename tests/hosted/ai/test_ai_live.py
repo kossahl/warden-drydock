@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import patch
 import urllib.error
 
+from warden_drydock.core.generator import DATA
 from warden_drydock.hosted.ai.live import LiveSessionService, StaleController, StaleWorkflow
 from warden_drydock.hosted.ai.models import Action, CaptureType
 from warden_drydock.hosted.ai.provider import OpenAIResponsesAdapter, ProviderUnavailable
@@ -20,7 +21,16 @@ from warden_drydock.hosted.ai.repository import InMemoryAIRepository
 from warden_drydock.hosted.ai.retrieval import DeterministicSourceSelector
 from warden_drydock.hosted.ai.retrieval import EngineSourceLoader
 from warden_drydock.hosted.ai.service import ConsentRequired, GroundedAIService
-from warden_drydock.hosted.engine import DeterministicEngine, InitializeRequest, Status, WorkspaceRegistry
+from warden_drydock.hosted.engine import (
+    ChangeKind,
+    DeterministicEngine,
+    ExactTextChange,
+    InitializeRequest,
+    StageExactDiffRequest,
+    Status,
+    WorkspaceRegistry,
+    exact_diff_digest,
+)
 from warden_drydock.hosted.operations.secrets import SecretStore
 
 
@@ -450,7 +460,25 @@ class LiveSessionServiceTests(unittest.TestCase):
             self.live.end("session_one", "controller_one", 1, self.session.workflow_version, device_id="device_one", operation_id="end_two")
 
 
+def _entity_text(kind, entity_id, name):
+    replacement = (DATA / "adapters" / "mothership" / "templates" / f"{kind}.md").read_text(encoding="utf-8")
+    replacement = replacement.replace('id: ""', f"id: {entity_id}", 1)
+    replacement = replacement.replace('name: ""', f'name: "{name}"', 1)
+    return replacement.replace("# Name", f"# {name}", 1)
+
+
 class EngineSourceLoaderTests(unittest.TestCase):
+    def _stage_created_sources(self, engine, handle):
+        changes = (
+            ExactTextChange("change_ship", "ship-argo", None, _entity_text("ship", "ship-argo", "Argo"), ChangeKind.CREATE, "ship"),
+            ExactTextChange("change_sam", "npc-sam", None, _entity_text("npc", "npc-sam", "Sam Rivers"), ChangeKind.CREATE, "npc"),
+        )
+        staged = engine.stage_exact_diff(
+            StageExactDiffRequest("command_create_sources", handle, exact_diff_digest(changes), changes)
+        )
+        self.assertEqual(Status.STAGED, staged.status)
+        return staged.staged_handle
+
     def test_natural_language_actions_retrieve_through_real_engine(self):
         with tempfile.TemporaryDirectory() as directory:
             registry = WorkspaceRegistry(Path(directory))
@@ -458,11 +486,41 @@ class EngineSourceLoaderTests(unittest.TestCase):
             handle = registry.allocate()
             result = engine.initialize(InitializeRequest("command_initialize", handle, "Engine Test"))
             self.assertEqual(Status.STAGED, result.status)
-            loader = EngineSourceLoader(engine, lambda campaign, revision: handle)
-            for prompt in ("What is the campaign called?", "Check the campaign name", "Generate a campaign introduction"):
-                with self.subTest(prompt=prompt):
-                    records = loader.load("campaign_one", "revision_one", prompt)
-                    self.assertIn("campaign-main", [item.subject_id for item in records])
+            revisions = {
+                "revision_one": handle,
+                "revision_two": self._stage_created_sources(engine, handle),
+            }
+            calls = []
+
+            def workspace_for_revision(campaign_id, revision_id):
+                calls.append((campaign_id, revision_id))
+                return revisions[revision_id]
+
+            loader = EngineSourceLoader(engine, workspace_for_revision)
+            requests = []
+            retrieve = engine.retrieve
+
+            def record_request(request):
+                requests.append(request.subject_id)
+                return retrieve(request)
+
+            engine.retrieve = record_request
+            cases = (
+                ("What is the campaign called?", ["called", "campaign"], ["campaign-main"], ["campaign-main"]),
+                ("Check the campaign name and the Argo", ["argo", "campaign", "check", "name"], ["campaign-main"], ["ship-argo", "campaign-main"]),
+                ("Where is Sam?", ["sam"], [], ["npc-sam"]),
+            )
+            for prompt, tokens, base_subjects, staged_subjects in cases:
+                for campaign_id, revision_id, expected in (
+                    ("campaign_one", "revision_one", base_subjects),
+                    ("campaign_two", "revision_two", staged_subjects),
+                ):
+                    with self.subTest(prompt=prompt, revision=revision_id):
+                        requests.clear()
+                        records = loader.load(campaign_id, revision_id, prompt)
+                        self.assertEqual(tokens, requests)
+                        self.assertEqual(expected, [item.subject_id for item in records])
+                        self.assertEqual((campaign_id, revision_id), calls[-1])
 
     def test_relevance_keeps_named_source_in_noisy_campaign(self):
         noisy = tuple(Record(f"npc-person-{index:02d}", "canon", "The Person has status unknown") for index in range(25))
