@@ -30,6 +30,10 @@ def parse_issue_form_text(text):
     for item in data["body"]:
         field_id = item.get("id")
         if field_id is None:
+            if item.get("type") != "markdown":
+                raise ValueError(
+                    f"body item type {item.get('type')!r} is missing 'id'"
+                )
             continue
         if field_id in fields:
             raise ValueError(f"duplicate field id {field_id!r}")
@@ -127,6 +131,21 @@ class IssueFormGovernanceTests(unittest.TestCase):
                 "  - type: input\n"
                 "    id: duplicate\n"
             )
+
+    def test_decision_form_parser_rejects_body_item_without_id(self):
+        with self.assertRaises(ValueError) as context:
+            parse_issue_form_text(
+                "body:\n"
+                "  - type: markdown\n"
+                "    attributes:\n"
+                "      value: intro\n"
+                "  - type: textarea\n"
+                "    attributes:\n"
+                "      label: Missing id\n"
+            )
+        self.assertEqual(
+            "body item type 'textarea' is missing 'id'", str(context.exception)
+        )
 
 
 class PullRequestGovernanceTests(unittest.TestCase):
