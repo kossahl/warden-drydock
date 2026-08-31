@@ -10,16 +10,24 @@ WORKFLOW = ROOT / ".github" / "workflows" / "test.yml"
 
 
 class OnboardingContractTest(unittest.TestCase):
+    def _bootstrap_sample(self, source):
+        match = re.search(
+            r"^```text\n(?P<sample>.*?)\n```$",
+            source,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        return match.group("sample")
+
     def test_bootstrap_contract_is_self_contained(self):
-        contract = (ROOT / "BOOTSTRAP.md").read_text(encoding="utf-8")
+        text = (ROOT / "BOOTSTRAP.md").read_text(encoding="utf-8")
+        sample = self._bootstrap_sample(text)
+        normalized = re.sub(r"\s+", " ", text)
+
         required = [
-            "https://github.com/kossahl/warden-drydock",
-            "v0.2.0",
             "Python 3.11",
             "temporary virtual environment",
-            "git+https://github.com/kossahl/warden-drydock.git@v0.2.0",
             "python -m warden_drydock --version",
-            "Warden Drydock 0.2.0",
             "python -m warden_drydock bootstrap",
             "Confirm that it is empty",
             "do not initialize or commit Git",
@@ -28,7 +36,51 @@ class OnboardingContractTest(unittest.TestCase):
         ]
         for expectation in required:
             with self.subTest(expectation=expectation):
-                self.assertIn(expectation, contract)
+                self.assertIn(expectation, sample)
+
+        repo_url = "https://github.com/kossahl/warden-drydock"
+        self.assertIn(repo_url, sample)
+        for url in re.findall(r"https://github\.com/[\w./@-]+", sample):
+            with self.subTest(url=url):
+                self.assertTrue(url.startswith(repo_url))
+
+        install = re.search(
+            r"pip install \"warden-drydock @ git\+https://"
+            r"github\.com/kossahl/warden-drydock\.git@(?P<tag>v[0-9]+\.[0-9]+\.[0-9]+)\"",
+            sample,
+        )
+        self.assertIsNotNone(install)
+        tag = install.group("tag")
+        version = tag[1:]
+        self.assertIn(
+            f"git+https://github.com/kossahl/warden-drydock.git@{tag}",
+            sample,
+        )
+        self.assertIn(f"Warden Drydock {version}", sample)
+
+        availability = text[text.find("## Availability gate"):]
+        self.assertIn(tag, availability)
+
+        expected_tokens = {tag, f"Warden Drydock {version}"}
+        tokens = re.findall(
+            r"v[0-9]+\.[0-9]+\.[0-9]+|Warden Drydock [0-9]+\.[0-9]+\.[0-9]+",
+            text,
+        )
+        self.assertEqual(set(tokens), expected_tokens)
+
+        start = normalized.find("Do not use the default branch")
+        end = normalized.find("or invent campaign canon.", start)
+        self.assertNotEqual(start, -1)
+        self.assertNotEqual(end, -1)
+        prohibition = normalized[start : end + len("or invent campaign canon.")]
+        for phrase in (
+            "use the default branch",
+            "reconstruct the campaign layout manually",
+            "invent campaign canon",
+        ):
+            with self.subTest(prohibited=phrase):
+                self.assertIn(phrase, prohibition)
+                self.assertEqual(normalized.count(phrase), prohibition.count(phrase))
 
     def _actionable_bootstrap_pointer(self, document, text, canonical):
         for target in re.findall(r"\]\(([^)\s]+)\)", text):
