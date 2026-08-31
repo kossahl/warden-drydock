@@ -17,6 +17,24 @@ def normalized(text):
     return re.sub(r"\s+", " ", text.casefold()).strip()
 
 
+def parse_pr_template_sections(path):
+    """Map each PR template section heading to its bullet-field labels."""
+    sections = {}
+    current = None
+    heading_pattern = re.compile(r"^##\s+(?P<name>.+)$")
+    field_pattern = re.compile(r"^\s*-\s*(?P<label>[^:\[]+):")
+    for line in path.read_text(encoding="utf-8").splitlines():
+        heading = heading_pattern.match(line)
+        if heading:
+            current = heading.group("name").strip().casefold()
+            sections[current] = set()
+        elif current is not None:
+            field = field_pattern.match(line)
+            if field:
+                sections[current].add(field.group("label").strip().casefold())
+    return sections
+
+
 def parse_issue_form(path):
     """Extract contract-relevant issue-form structure without a YAML dependency."""
     text = path.read_text(encoding="utf-8")
@@ -148,6 +166,41 @@ class PullRequestGovernanceTests(unittest.TestCase):
         for phrase in required_phrases:
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.template)
+
+        sections = parse_pr_template_sections(PR_TEMPLATE)
+        self.assertLessEqual(
+            {
+                "phase and work-package id",
+                "work-package version",
+                "responsible agent",
+                "pinned base commit",
+                "assigned file or subsystem ownership",
+                "authoritative adrs and repository documents",
+            },
+            sections["work package"],
+        )
+        self.assertIn(
+            "deviations from the approved work package",
+            sections["scope"],
+        )
+        self.assertLessEqual(
+            {
+                "public api or schema impact",
+                "data migration or generated-artifact impact",
+                "recovery or rollback consideration",
+            },
+            sections["interface and migration impact"],
+        )
+        self.assertLessEqual(
+            {
+                "status and outcome",
+                "changed files or design artifacts",
+                "verification commands and actual outcomes",
+                "new risks or open decisions",
+                "next action and owner",
+            },
+            sections["handoff"],
+        )
 
     def test_pr_template_has_public_safety_and_review_gates(self):
         required_gates = {
