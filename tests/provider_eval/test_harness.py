@@ -177,10 +177,20 @@ class RequestContractTests(unittest.TestCase):
 
     def test_full_schema_rejects_wire_subset_invalid_values(self):
         full = TOOL_SCHEMAS["fixture_emit_proposal_draft"]
-        invalid = {"campaign_id": "campaign-erebos", "base_revision": BASE_REVISION, "source_set_digest": "x", "proposal_kind": "beacon_debrief", "title": "Beacon debrief", "source_ids": ["faction-helix", "faction-helix"], "suggested_changes": []}
-        self.assertTrue(validate_schema(full, invalid))
-        findings = validate_tool_call("tool-beacon-debrief-v1", "fixture_emit_proposal_draft", invalid)
-        self.assertIn("invalid_tool_schema", findings)
+        wire = wire_schema(full)
+        invalid = {"campaign_id": "campaign-erebos", "base_revision": BASE_REVISION, "source_set_digest": envelope_digest("tool-beacon-debrief-v1"), "proposal_kind": "beacon_debrief", "title": "Beacon debrief", "source_ids": [123], "suggested_changes": ["Draft note"]}
+        full_findings = validate_schema(full, invalid)
+        wire_findings = validate_schema(wire, invalid)
+        self.assertTrue(full_findings)
+        self.assertTrue(wire_findings)
+        self.assertEqual(wire_findings, full_findings)
+        self.assertIn("invalid_tool_schema", validate_tool_call("tool-beacon-debrief-v1", "fixture_emit_proposal_draft", invalid))
+        valid = dict(invalid, source_ids=["faction-helix"])
+        self.assertEqual([], validate_schema(full, valid))
+        self.assertEqual([], validate_schema(wire, valid))
+
+        stripped_invalid = {"campaign_id": "campaign-erebos", "base_revision": BASE_REVISION, "source_set_digest": "x", "proposal_kind": "beacon_debrief", "title": "Beacon debrief", "source_ids": ["faction-helix", "faction-helix"], "suggested_changes": []}
+        self.assertTrue(validate_schema(full, stripped_invalid))
 
         structured = {"status": "Draft", "base_revision": BASE_REVISION, "source_ids": [1], "answer": 7}
         scored = score_result("ask-airlock-v1", structured)
