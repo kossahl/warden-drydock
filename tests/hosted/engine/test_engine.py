@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import fields, replace
+import hashlib
 import inspect
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -163,10 +165,112 @@ class DeterministicOperationTests(EngineTestCase):
             "a" * 64,
             "replacement\n",
         )
+        canonical = json.dumps(
+            [
+                {
+                    "change_id": change.change_id,
+                    "change_kind": change.change_kind.value,
+                    "expected_content_digest": change.expected_content_digest,
+                    "record_type": change.record_type,
+                    "replacement_digest": content_digest(change.replacement),
+                    "subject_id": change.subject_id,
+                }
+            ],
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
         self.assertEqual(
-            "806e4ef6571fd942f724adafe3aabd44dfe8255d16c8c36d50fb3039324d5f31",
+            hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
             exact_diff_digest((change,)),
         )
+        self.assertEqual(
+            exact_diff_digest((change,)),
+            exact_diff_digest((change,)),
+        )
+
+    def test_diff_digest_is_content_isolated(self) -> None:
+        base = ExactTextChange(
+            "change_one",
+            "campaign-main",
+            "a" * 64,
+            "replacement\n",
+        )
+        variants = (
+            replace(base, change_id="change_two"),
+            replace(base, subject_id="campaign-alt"),
+            replace(base, expected_content_digest="b" * 64),
+            replace(base, replacement="other\n"),
+            replace(base, change_kind=ChangeKind.DELETE),
+            replace(base, record_type="npc"),
+        )
+        digests = {exact_diff_digest((base,))}
+        digests.update(exact_diff_digest((variant,)) for variant in variants)
+        self.assertEqual(1 + len(variants), len(digests))
+        self.assertNotEqual(
+            exact_diff_digest((base, variants[0])),
+            exact_diff_digest((variants[0], base)),
+        )
+
+    def test_diff_digest_feeds_approval_and_publication_binding(self) -> None:
+        from warden_drydock.hosted.proposals.service import (
+            InMemoryProposalRepository,
+            ProposalService,
+            ProposalStatus,
+        )
+        from warden_drydock.hosted.revisions.models import FileHash, SnapshotManifest
+
+        change = ExactTextChange(
+            "change_one",
+            "campaign-main",
+            "a" * 64,
+            "replacement\n",
+        )
+        digest = exact_diff_digest((change,))
+
+        def manifest(version) -> SnapshotManifest:
+            return SnapshotManifest(
+                version.campaign_id,
+                "revision_binding",
+                version.base_revision,
+                1,
+                "b" * 64,
+                (FileHash("record.md", "c" * 64),),
+                "0.3.0",
+                "1.0.0",
+                "d" * 64,
+                version.diff_digest,
+                "token_binding",
+            )
+
+        repository = InMemoryProposalRepository()
+        service = ProposalService(
+            repository,
+            head=lambda _proposal_id: "rev_binding",
+            stage=lambda _version: type("Stage", (), {"status": Status.STAGED})(),
+            publish=lambda _version, _staged: manifest(_version),
+        )
+        version = service.draft(
+            "proposal_binding",
+            "campaign_binding",
+            "rev_binding",
+            (change,),
+        )
+        self.assertEqual(digest, version.diff_digest)
+        with self.assertRaises(ValueError):
+            service.approve(
+                version,
+                diff_digest="0" * 64,
+                base_revision=version.base_revision,
+                payload_digest=version.payload_digest,
+            )
+        approved = service.approve(
+            version,
+            diff_digest=version.diff_digest,
+            base_revision=version.base_revision,
+            payload_digest=version.payload_digest,
+        )
+        self.assertEqual(ProposalStatus.PUBLISHED, approved.status)
 
 
 class ExactDiffTests(EngineTestCase):
