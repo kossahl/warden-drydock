@@ -78,24 +78,28 @@ test("opens an ongoing campaign from the start page", async ({ page }) => {
 });
 
 test("creates, grounds, inspects exact diff, approves, and opens the validated revision", async ({ page }) => {
-  await installApi(page, "happy");
-  await createAndGenerate(page);
-  await expect(page.getByRole("heading", { name: "Sources" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Sources" })).toContainText("record:campaign-main");
-  await expect(page.getByText("campaign-main", { exact: true })).toBeVisible();
-  await page.getByText("Inspect excerpt").click();
-  await expect(page.getByRole("region", { name: "Sources" })).toContainText("# Synthetic Campaign");
-  await expect(page.getByRole("heading", { name: "Grounded Draft" })).toBeVisible();
-  await expect(page.getByText("The station is quiet.")).toBeVisible();
+  await test.step("create, ground, and inspect the draft", async () => {
+    await installApi(page, "happy");
+    await createAndGenerate(page);
+    await expect(page.getByRole("heading", { name: "Sources" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Sources" })).toContainText("record:campaign-main");
+    await expect(page.getByText("campaign-main", { exact: true })).toBeVisible();
+    await page.getByText("Inspect excerpt").click();
+    await expect(page.getByRole("region", { name: "Sources" })).toContainText("# Synthetic Campaign");
+    await expect(page.getByRole("heading", { name: "Grounded Draft" })).toBeVisible();
+    await expect(page.getByText("The station is quiet.")).toBeVisible();
+  });
   const baseRevision = await page.locator(".revision-id code").innerText();
-  await page.getByRole("button", { name: "Create proposal for Synthetic Campaign" }).click();
-  await expect(page.getByRole("region", { name: "Complete before and after content" })).toContainText("## Proposed addition");
-  await page.getByRole("button", { name: "Approve exact diff" }).click();
-  await expect(page.locator(".revision-id code")).not.toHaveText(baseRevision);
-  await expect(page.locator(".revision-id code")).toHaveText("revision_beta");
-  await expect(page.getByText("Viewed revision 2 · Head")).toBeVisible();
-  await expect(page.getByText("Stale base, not published")).toHaveCount(0);
-  await expect(page.getByText("## Proposed addition", { exact: false }).first()).toBeVisible();
+  await test.step("approve the exact diff and advance the revision", async () => {
+    await page.getByRole("button", { name: "Create proposal for Synthetic Campaign" }).click();
+    await expect(page.getByRole("region", { name: "Complete before and after content" })).toContainText("## Proposed addition");
+    await page.getByRole("button", { name: "Approve exact diff" }).click();
+    await expect(page.locator(".revision-id code")).not.toHaveText(baseRevision);
+    await expect(page.locator(".revision-id code")).toHaveText("revision_beta");
+    await expect(page.getByText("Viewed revision 2 · Head")).toBeVisible();
+    await expect(page.getByText("Stale base, not published")).toHaveCount(0);
+    await expect(page.getByText("## Proposed addition", { exact: false }).first()).toBeVisible();
+  });
 });
 
 test("preserves a proposal when approval finds a stale head", async ({ page }) => {
