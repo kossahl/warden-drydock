@@ -138,9 +138,18 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
         self.assertEqual(ProposalStatus.QUARANTINED, self.repository.get(item.proposal_id, 1).status)
 
     def test_unsafe_identifiers_never_reach_postgres_or_audit(self):
-        with self.assertRaises(ValueError):
-            self.service.draft(r"C:\private\campaign.md", "campaign_one", "revision_one",
+        unsafe_id = r"C:\private\campaign.md"
+        with self.assertRaisesRegex(ValueError, r"proposal_id is not a safe public identifier"):
+            self.service.draft(unsafe_id, "campaign_one", "revision_one",
                 (ExactTextChange("change_one", "record_one", "a" * 64, "private"),))
+        # The rejected id must never be written to any proposal table: both the
+        # audit trail and the version/head table must stay empty for this run,
+        # whether a leaking repository stores the id under the safe test prefix
+        # or verbatim under the rejected Windows-style path itself.
         with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT count(*) FROM hosted_proposal_audit WHERE proposal_id LIKE %s", (self.prefix + "%",))
-            self.assertEqual((0,), cursor.fetchone())
+            for proposal_table in ("hosted_proposal_audit", "hosted_proposal_version"):
+                cursor.execute(
+                    f"SELECT count(*) FROM {proposal_table} WHERE proposal_id LIKE %s OR proposal_id = %s",
+                    (self.prefix + "%", unsafe_id),
+                )
+                self.assertEqual((0,), cursor.fetchone(), proposal_table)
