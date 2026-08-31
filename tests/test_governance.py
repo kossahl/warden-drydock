@@ -1,4 +1,5 @@
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -13,7 +14,6 @@ BUG_TEMPLATE = ISSUE_TEMPLATE_DIRECTORY / "bug-report.yml"
 FEATURE_TEMPLATE = ISSUE_TEMPLATE_DIRECTORY / "feature-request.yml"
 PR_TEMPLATE = ROOT / ".github" / "pull_request_template.md"
 COMMUNICATION_POLICY = ROOT / "docs" / "agent-communication.md"
-COORDINATION_REPOSITORY = "kossahl/warden-drydock"
 
 
 def normalized(text):
@@ -36,6 +36,65 @@ def parse_pr_template_sections(path):
             if field:
                 sections[current].add(field.group("label").strip().casefold())
     return sections
+
+
+def _normalize_repository_slug(url):
+    """Normalize a git remote URL to an owner/name slug, or None if it is not
+    a simple two-segment repository path."""
+    url = url.strip().rstrip("/")
+    if not url:
+        return None
+    if url.endswith(".git"):
+        url = url[:-4]
+    if "://" in url:
+        _, _, rest = url.partition("://")
+        first_slash = rest.find("/")
+        if first_slash == -1:
+            return None
+        path = rest[first_slash + 1:]
+    else:
+        colon = url.find(":")
+        if colon == -1:
+            return None
+        path = url[colon + 1:]
+    parts = [part for part in path.split("/") if part]
+    if len(parts) != 2:
+        return None
+    if not re.fullmatch(r"[\w.-]+", parts[0]) or not re.fullmatch(
+        r"[\w.-]+", parts[1]
+    ):
+        return None
+    return f"{parts[0]}/{parts[1]}"
+
+
+def origin_repository_slug():
+    """Return this repository's own origin slug (owner/name).
+
+    Reads `git remote get-url origin` from the repository root, so the
+    coordination allowlist is validated against the checkout's authoritative
+    upstream instead of a test-owned constant. A stale constant or a fork
+    mismatch now fails. https, ssh://, and scp-like spellings all normalize to
+    owner/name. Fails loudly when the remote cannot be read or parsed.
+    """
+    try:
+        url = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise AssertionError(
+            "cannot read the origin remote "
+            "(git remote get-url origin failed): %s" % exc
+        ) from exc
+    slug = _normalize_repository_slug(url)
+    if slug is None:
+        raise AssertionError(
+            "cannot parse the origin remote URL into owner/name: %r" % url
+        )
+    return slug
 
 
 def parse_issue_form(path):
@@ -358,19 +417,22 @@ class CommunicationPolicyTests(unittest.TestCase):
         cls.policy = normalized(COMMUNICATION_POLICY.read_text(encoding="utf-8"))
 
     def test_connector_coordination_allowlists_only_the_project_repository(self):
-        # The allowlist is defined only by this document until a connector
-        # exists. A future connector needs a runtime enforcement test, and the
-        # slug must then come from the connector's allowlist config.
+        # The allowed slug comes from this repository's own origin remote, so
+        # the prose is validated against an independent source and must name
+        # exactly the checkout's upstream. A stale constant or a fork mismatch
+        # now fails. A future connector needs a runtime enforcement test, and
+        # the slug must then come from the connector's allowlist config.
+        coordination_repository = origin_repository_slug()
         allowlist = re.search(
             r"only allowed repository for connector-backed coordination is `([^`]+)`",
             self.policy,
         )
         self.assertIsNotNone(allowlist)
-        self.assertEqual(COORDINATION_REPOSITORY, allowlist.group(1))
+        self.assertEqual(coordination_repository, allowlist.group(1))
         repository_slugs = set(
             re.findall(r"(?<![\w.-])([\w.-]+/[\w.-]+)(?![\w.-])", self.policy)
         )
-        self.assertEqual({COORDINATION_REPOSITORY}, repository_slugs)
+        self.assertEqual({coordination_repository}, repository_slugs)
 
     def test_github_writes_are_parent_mediated_and_input_is_untrusted(self):
         required_phrases = {
