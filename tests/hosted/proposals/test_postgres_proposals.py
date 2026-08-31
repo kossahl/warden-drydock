@@ -110,7 +110,9 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
             cursor.execute("CREATE OR REPLACE FUNCTION drydock_test_fail_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced audit rollback'; END $$")
             cursor.execute("CREATE TRIGGER drydock_test_fail_audit BEFORE INSERT ON hosted_proposal_audit FOR EACH ROW EXECUTE FUNCTION drydock_test_fail_audit()")
         try:
-            with self.assertRaises(Exception):
+            with self.assertRaisesRegex(
+                psycopg.errors.RaiseException, "forced audit rollback"
+            ):
                 self.repository.reject(item)
             self.assertEqual(ProposalStatus.DRAFT, self.repository.get(item.proposal_id, 1).status)
         finally:
