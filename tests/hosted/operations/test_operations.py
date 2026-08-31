@@ -108,6 +108,76 @@ class RuntimeTests(unittest.TestCase):
             clean.write_text("CREATE TABLE example(id integer);\n", encoding="utf-8")
             assert_no_outer_transaction_wrapper(clean)
 
+    def test_wrapper_check_tolerates_inline_and_full_line_comments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            inline_wrapped = root / "0001_inline_comment_wrapped.sql"
+            inline_wrapped.write_text(
+                "BEGIN; -- note\nCREATE TABLE example(id integer);\nCOMMIT; -- note\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError) as begin_failure:
+                assert_no_outer_transaction_wrapper(inline_wrapped)
+            self.assertIn(str(inline_wrapped), str(begin_failure.exception))
+            self.assertIn("BEGIN;", str(begin_failure.exception))
+            inline_trailing = root / "0002_inline_comment_trailing.sql"
+            inline_trailing.write_text(
+                "-- header\nCREATE TABLE example(id integer);\nCOMMIT; -- note\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError) as commit_failure:
+                assert_no_outer_transaction_wrapper(inline_trailing)
+            self.assertIn(str(inline_trailing), str(commit_failure.exception))
+            self.assertIn("COMMIT;", str(commit_failure.exception))
+            commented_wrapped = root / "0003_header_above_wrapper.sql"
+            commented_wrapped.write_text(
+                "-- header\nBEGIN;\nCREATE TABLE example(id integer);\nCOMMIT;\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError) as begin_failure:
+                assert_no_outer_transaction_wrapper(commented_wrapped)
+            self.assertIn(str(commented_wrapped), str(begin_failure.exception))
+            self.assertIn("BEGIN;", str(begin_failure.exception))
+            commented_trailing = root / "0004_header_above_trailing.sql"
+            commented_trailing.write_text(
+                "-- header\nCREATE TABLE example(id integer);\nCOMMIT;\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError) as commit_failure:
+                assert_no_outer_transaction_wrapper(commented_trailing)
+            self.assertIn(str(commented_trailing), str(commit_failure.exception))
+            self.assertIn("COMMIT;", str(commit_failure.exception))
+            comment_clean = root / "0005_comment_then_clean.sql"
+            comment_clean.write_text(
+                "-- header\n\nDELETE FROM hosted_http_operation_receipt;\n",
+                encoding="utf-8",
+            )
+            assert_no_outer_transaction_wrapper(comment_clean)
+
+    def test_wrapper_check_covers_transaction_start_and_end_forms(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            for index, start in enumerate(
+                ("BEGIN;", "BEGIN WORK;", "BEGIN TRANSACTION;", "START TRANSACTION;"),
+                start=1,
+            ):
+                path = root / f"{index:04d}_start.sql"
+                path.write_text(f"{start} -- note\nCREATE TABLE example(id integer);\n", encoding="utf-8")
+                with self.assertRaises(AssertionError) as failure:
+                    assert_no_outer_transaction_wrapper(path)
+                self.assertIn(str(path), str(failure.exception))
+                self.assertIn(start, str(failure.exception))
+            for index, end in enumerate(
+                ("COMMIT;", "COMMIT WORK;", "COMMIT TRANSACTION;"),
+                start=10,
+            ):
+                path = root / f"{index:04d}_end.sql"
+                path.write_text(f"-- header\nCREATE TABLE example(id integer);\n{end} -- note\n", encoding="utf-8")
+                with self.assertRaises(AssertionError) as failure:
+                    assert_no_outer_transaction_wrapper(path)
+                self.assertIn(str(path), str(failure.exception))
+                self.assertIn(end, str(failure.exception))
+
     def test_readiness_requires_v2_receipt_reset_schema(self) -> None:
         health = (ROOT / "warden_drydock" / "hosted" / "operations" / "health.py").read_text(encoding="utf-8")
         self.assertIn("version='0007'", health)
