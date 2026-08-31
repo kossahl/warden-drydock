@@ -344,6 +344,15 @@ class GroundedAIServiceTests(unittest.TestCase):
         self.assertEqual("failed", record.terminal_status)
         self.assertEqual("failure", record.events[-1].event_type)
         self.assertIs(record.events[-1].retryable, True)
+        stored = self.repository.get_generation("generation_one")
+        self.assertEqual(["start", "delta", "failure"], [event.event_type for event in stored.events])
+        self.assertEqual([1, 2, 3], [event.sequence for event in stored.events])
+        self.assertEqual("partial", stored.events[1].draft_fragment)
+        self.assertEqual("partial", stored.terminal_content)
+        replayed = self.service.resume(stored, 1)
+        self.assertEqual(stored.events[1:], list(replayed))
+        self.assertEqual(["delta", "failure"], [event.event_type for event in replayed])
+        self.assertEqual([2, 3], [event.sequence for event in replayed])
 
     def test_consent_is_invalidated_by_credential_revision_change(self):
         self.service.record_consent(explicit=True)
