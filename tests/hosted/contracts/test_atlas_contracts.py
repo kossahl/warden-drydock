@@ -353,6 +353,16 @@ class AtlasContractTests(unittest.TestCase):
             with self.subTest(fixture=fixture["name"]):
                 self.assertEqual(fixture["expected"], parsed)
                 self.assertEqual(parsed, _parse_query(route, _serialize_query(route, parsed)))
+        for fixture in fixtures["negative"]:
+            route = routes[fixture["route"]]
+            with self.subTest(negative=fixture["name"]):
+                with self.assertRaises(AtlasSemanticError) as caught:
+                    _parse_query(
+                        route,
+                        fixture["raw_query"],
+                        fixture.get("cursor_binding"),
+                    )
+                self.assertEqual(fixture["expected_category"], caught.exception.category)
 
     def test_ambiguous_or_rebound_flat_queries_fail_closed(self) -> None:
         routes = {
