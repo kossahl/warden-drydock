@@ -202,13 +202,14 @@ test("workflow panels expose publication-safe states and exact deep links", asyn
   const proposalItems = (["draft", "rejected", "conflict", "published", "quarantined"] as const).map((status, index) => ({ proposal_id: `proposal_${status}`, proposal_version: index + 1, generation_id: `generation_${status}`, action: "generate" as const, context: { scope: "record" as const, record_id: "record-one", content_digest: "c".repeat(64) }, subject_record_id: "record-one", subject_content_digest: "c".repeat(64), source_revision: headRevision, base_revision: status === "draft" ? oldRevision : headRevision, status, validation_status: "passed" as const, published_revision_id: status === "published" ? "revision_three" : null, created_at: `2026-08-25T1${index}:00:00Z` }));
   await installAtlasApi(page, { generations: { ...generations, items: generationItems }, proposals: { ...proposals, items: proposalItems } });
   await page.goto("/campaigns/campaign_atlas?revision=revision_two");
-  for (const text of ["In progress", "Draft ready, not canon", "Failed, no Draft published", "Cancelled, no Draft published", "Rejected, not published", "Conflict, not published", "Published to revision revision_three", "Quarantined, publication not confirmed", "Stale base"]) await expect(page.getByText(text, { exact: false }).first()).toBeVisible();
+  // The full nine-label status matrix is asserted in unit coverage; the browser keeps a representative slice plus the routing links.
+  for (const text of ["In progress", "Published to revision revision_three", "Stale base"]) await expect(page.getByText(text, { exact: false }).first()).toBeVisible();
   await expect(page.getByRole("link", { name: "Open Draft" }).first()).toHaveAttribute("href", "/?generation=generation_pending");
   await expect(page.getByRole("link", { name: "Review proposal" }).first()).toHaveAttribute("href", "/?proposal=proposal_draft&version=1");
   await expect(page.getByText(/Provider reported this failure as retryable/)).toBeVisible();
 });
 
-test("Campaign and Record Ask, Check, and Generate send explicit exact contexts", async ({ page }) => {
+test("Campaign Ask, Check, and Generate send explicit exact contexts", async ({ page }) => {
   await installAtlasApi(page, { readiness: ready }); const starts = await installGenerationApi(page);
   await page.goto("/campaigns/campaign_atlas?revision=revision_two");
   for (const action of ["Ask", "Check", "Generate"] as const) {
@@ -216,15 +217,21 @@ test("Campaign and Record Ask, Check, and Generate send explicit exact contexts"
     const label = action === "Ask" ? "Question" : action === "Check" ? "Claim to check" : "Generation brief";
     await page.getByLabel(label).fill(`${action} campaign`); await page.getByRole("button", { name: `Submit ${action}` }).click(); await expect(page.getByText("Browser Draft.")).toBeVisible();
   }
+  expect(starts.map((item) => item.action)).toEqual(["ask", "check", "generate"]);
+  expect(starts.every((item) => (item.context as { scope: string }).scope === "campaign")).toBe(true);
+  expect(starts.every((item) => !("session_id" in item))).toBe(true);
+});
+
+test("Record Ask, Check, and Generate send explicit exact contexts", async ({ page }) => {
+  await installAtlasApi(page, { readiness: ready }); const starts = await installGenerationApi(page);
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   for (const action of ["Ask", "Check", "Generate"] as const) {
     await page.getByRole("radio", { name: action }).click();
     const label = action === "Ask" ? "Question" : action === "Check" ? "Claim to check" : "Generation brief";
     await page.getByLabel(label).fill(`${action} record`); await page.getByRole("button", { name: `Submit ${action}` }).click(); await expect(page.getByText("Browser Draft.")).toBeVisible();
   }
-  expect(starts.map((item) => item.action)).toEqual(["ask", "check", "generate", "ask", "check", "generate"]);
-  expect(starts.slice(0, 3).every((item) => (item.context as { scope: string }).scope === "campaign")).toBe(true);
-  expect(starts.slice(3).every((item) => JSON.stringify(item.context) === JSON.stringify({ scope: "record", record_id: "record-one", content_digest: "c".repeat(64) }))).toBe(true);
+  expect(starts.map((item) => item.action)).toEqual(["ask", "check", "generate"]);
+  expect(starts.every((item) => JSON.stringify(item.context) === JSON.stringify({ scope: "record", record_id: "record-one", content_digest: "c".repeat(64) }))).toBe(true);
   expect(starts.every((item) => !("session_id" in item))).toBe(true);
 });
 

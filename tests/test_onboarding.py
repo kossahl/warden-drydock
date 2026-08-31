@@ -10,16 +10,24 @@ WORKFLOW = ROOT / ".github" / "workflows" / "test.yml"
 
 
 class OnboardingContractTest(unittest.TestCase):
+    def _bootstrap_sample(self, source):
+        match = re.search(
+            r"^```text\n(?P<sample>.*?)\n```$",
+            source,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        return match.group("sample")
+
     def test_bootstrap_contract_is_self_contained(self):
-        contract = (ROOT / "BOOTSTRAP.md").read_text(encoding="utf-8")
+        text = (ROOT / "BOOTSTRAP.md").read_text(encoding="utf-8")
+        sample = self._bootstrap_sample(text)
+        normalized = re.sub(r"\s+", " ", text)
+
         required = [
-            "https://github.com/kossahl/warden-drydock",
-            "v0.2.0",
             "Python 3.11",
             "temporary virtual environment",
-            "git+https://github.com/kossahl/warden-drydock.git@v0.2.0",
             "python -m warden_drydock --version",
-            "Warden Drydock 0.2.0",
             "python -m warden_drydock bootstrap",
             "Confirm that it is empty",
             "do not initialize or commit Git",
@@ -28,21 +36,92 @@ class OnboardingContractTest(unittest.TestCase):
         ]
         for expectation in required:
             with self.subTest(expectation=expectation):
-                self.assertIn(expectation, contract)
+                self.assertIn(expectation, sample)
+
+        repo_url = "https://github.com/kossahl/warden-drydock"
+        self.assertIn(repo_url, sample)
+        for url in re.findall(r"https://github\.com/[\w./@-]+", sample):
+            with self.subTest(url=url):
+                self.assertTrue(url.startswith(repo_url))
+
+        install = re.search(
+            r"pip install \"warden-drydock @ git\+https://"
+            r"github\.com/kossahl/warden-drydock\.git@(?P<tag>v[0-9]+\.[0-9]+\.[0-9]+)\"",
+            sample,
+        )
+        self.assertIsNotNone(install)
+        tag = install.group("tag")
+        version = tag[1:]
+        self.assertIn(
+            f"git+https://github.com/kossahl/warden-drydock.git@{tag}",
+            sample,
+        )
+        self.assertIn(f"Warden Drydock {version}", sample)
+
+        availability = text[text.find("## Availability gate"):]
+        self.assertIn(tag, availability)
+
+        expected_tokens = {tag, f"Warden Drydock {version}"}
+        tokens = re.findall(
+            r"v[0-9]+\.[0-9]+\.[0-9]+|Warden Drydock [0-9]+\.[0-9]+\.[0-9]+",
+            text,
+        )
+        self.assertEqual(set(tokens), expected_tokens)
+
+        start = normalized.find("Do not use the default branch")
+        end = normalized.find("or invent campaign canon.", start)
+        self.assertNotEqual(start, -1)
+        self.assertNotEqual(end, -1)
+        prohibition = normalized[start : end + len("or invent campaign canon.")]
+        for phrase in (
+            "use the default branch",
+            "reconstruct the campaign layout manually",
+            "invent campaign canon",
+        ):
+            with self.subTest(prohibited=phrase):
+                self.assertIn(phrase, prohibition)
+                self.assertEqual(normalized.count(phrase), prohibition.count(phrase))
+
+    def _actionable_bootstrap_pointer(self, document, text, canonical):
+        for target in re.findall(r"\]\(([^)\s]+)\)", text):
+            if target.startswith(("http:", "https:", "mailto:")):
+                continue
+            if (document.parent / target).resolve() == canonical:
+                return True
+        return bool(
+            re.search(
+                r"\bread[^.\n]*?BOOTSTRAP\.md[^.\n]*?\bbefore\b",
+                text,
+                re.IGNORECASE,
+            )
+        )
 
     def test_user_documentation_points_to_canonical_contract(self):
+        canonical = (ROOT / "BOOTSTRAP.md").resolve()
         for relative in ("README.md", "docs/user-guide.md", "docs/ai-assisted-setup.md"):
             with self.subTest(path=relative):
-                text = (ROOT / relative).read_text(encoding="utf-8")
-                self.assertIn("BOOTSTRAP.md", text)
+                document = ROOT / relative
+                text = document.read_text(encoding="utf-8")
+                self.assertTrue(self._actionable_bootstrap_pointer(document, text, canonical))
 
     def test_ci_verifies_built_distribution_version_without_release_literal(self):
-        workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("importlib.metadata", workflow)
-        self.assertIn("$PWD/dist", workflow)
-        self.assertIn('cd "$ONBOARDING_ROOT"', workflow)
-        self.assertIn("GITHUB_REF_NAME#v", workflow)
-        self.assertIsNone(re.search(r"Warden Drydock \d+\.\d+\.\d+", workflow))
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        smoke = next(
+            step
+            for step in workflow["jobs"]["test"]["steps"]
+            if step.get("name") == "Smoke-test clean AI onboarding boundary"
+        )
+        run = smoke["run"]
+        self.assertIn("$PWD/dist", run)
+        self.assertIn("importlib.metadata", run)
+        self.assertIn('cd "$ONBOARDING_ROOT"', run)
+        self.assertEqual(run.count("GITHUB_REF_NAME#v"), 1)
+        self.assertIn(
+            'test "$("$ENVIRONMENT/bin/python" -m warden_drydock --version)" '
+            '= "Warden Drydock $INSTALLED_VERSION"',
+            run,
+        )
+        self.assertIsNone(re.search(r"Warden Drydock \d+\.\d+\.\d+", run))
 
     def test_ci_workflow_policy_is_phase_aware(self):
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
@@ -101,6 +180,16 @@ class OnboardingContractTest(unittest.TestCase):
             ),
             1,
         )
+        smoke = next(
+            step
+            for step in baseline["steps"]
+            if step.get("name") == "Smoke-test clean AI onboarding boundary"
+        )
+        self.assertIn("from importlib.metadata import version", smoke["run"])
+        self.assertIn(
+            '"$ENVIRONMENT/bin/python" -m warden_drydock --version',
+            smoke["run"],
+        )
 
         whitespace = next(
             step
@@ -140,6 +229,27 @@ class OnboardingContractTest(unittest.TestCase):
             compatibility_setup["with"]["python-version"],
         }
         self.assertEqual(configured_versions, {"3.11", "3.13"})
+
+        smoke_jobs = [
+            job_name
+            for job_name, job in workflow["jobs"].items()
+            if any(
+                step.get("name") == "Smoke-test clean AI onboarding boundary"
+                for step in job["steps"]
+            )
+        ]
+        self.assertEqual(smoke_jobs, ["test"])
+        self.assertEqual(
+            sum(
+                "from importlib.metadata import version" in step.get("run", "")
+                for job in workflow["jobs"].values()
+                for step in job["steps"]
+            ),
+            1,
+        )
+        for job_name, job in workflow["jobs"].items():
+            with self.subTest(job=job_name):
+                self.assertNotIn("permissions", job)
 
 
 if __name__ == "__main__":

@@ -53,6 +53,33 @@ class AtlasV2ContractTests(unittest.TestCase):
             with self.subTest(contract=example["contract_name"]):
                 self.assertEqual([], list(validator.iter_errors(example)))
 
+        generation_query = next(
+            item for item in examples
+            if item["contract_name"] == "atlas_generation_collection_query"
+        )
+        wrong_generation_action = deepcopy(generation_query)
+        wrong_generation_action["filters"]["actions"] = ["publish"]
+        with self.subTest(mutation="generations_off_enum_action"):
+            self.assertTrue(list(validator.iter_errors(wrong_generation_action)))
+
+        proposal_query = next(
+            item for item in examples
+            if item["contract_name"] == "atlas_proposal_collection_query"
+        )
+        wrong_proposal_parameter = deepcopy(proposal_query)
+        wrong_proposal_parameter["action"] = "generate"
+        with self.subTest(mutation="proposals_foreign_parameter"):
+            self.assertTrue(list(validator.iter_errors(wrong_proposal_parameter)))
+
+        proposal_collection = next(
+            item for item in examples
+            if item["contract_name"] == "atlas_proposal_collection"
+        )
+        wrong_proposal_command = deepcopy(proposal_collection)
+        wrong_proposal_command["items"][0]["action"] = "publish"
+        with self.subTest(mutation="proposals_off_enum_command"):
+            self.assertTrue(list(validator.iter_errors(wrong_proposal_command)))
+
     def test_workflow_contracts_exclude_content_and_bind_forward_cursors(self) -> None:
         schema = json.loads((CONTRACT_ROOT / "atlas.schema.json").read_text(encoding="utf-8"))
         encoded = json.dumps({
