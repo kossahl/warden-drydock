@@ -33,6 +33,18 @@ IMPLEMENTED_INVARIANTS = {
     "live_end_barrier", "snapshot_lineage_quarantine", "provider_stream_order",
     "provider_tool_binding", "retrieval_determinism", "operations_reconciliation",
 }
+HOSTED_SCHEMA_ID_PREFIX = "https://warden-drydock.invalid/contracts/hosted/v1/"
+EXPECTED_FAMILY_SCHEMAS = {
+    "api": "api.schema.json",
+    "atlas": "atlas.schema.json",
+    "engine": "engine.schema.json",
+    "snapshot": "snapshot.schema.json",
+    "retrieval": "retrieval.schema.json",
+    "provider": "provider.schema.json",
+    "live": "live.schema.json",
+    "proposal": "proposal.schema.json",
+    "operations": "operations.schema.json",
+}
 
 
 def reconcile_index_paths(index, contract_root=CONTRACT_ROOT):
@@ -339,6 +351,16 @@ class HostedContractPackageTests(unittest.TestCase):
                 for relative in family["negative_fixtures"]:
                     fixture = json.loads((CONTRACT_ROOT / relative).read_text(encoding="utf-8"))
                     self.assertEqual(fixture["schema"], family["schema"])
+
+    def test_family_schema_declarations_are_pinned_by_canonical_authority(self):
+        family_names = {item["family"] for item in self.index["families"]}
+        self.assertEqual(family_names, set(EXPECTED_FAMILY_SCHEMAS))
+        for family in self.index["families"]:
+            with self.subTest(family=family["family"]):
+                canonical = EXPECTED_FAMILY_SCHEMAS[family["family"]]
+                self.assertEqual(family["schema"].rsplit("/", 1)[1], canonical)
+                schema = json.loads((CONTRACT_ROOT / family["schema"]).read_text(encoding="utf-8"))
+                self.assertEqual(schema["$id"], HOSTED_SCHEMA_ID_PREFIX + canonical)
 
     def test_schema_metadata_and_closed_top_level_objects(self):
         for family in self.index["families"]:
