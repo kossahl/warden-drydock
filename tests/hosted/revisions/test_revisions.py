@@ -12,6 +12,12 @@ from warden_drydock.hosted.revisions import (
     PublicationIntentError, PublicationKind, RevisionService,
     SnapshotIntegrityError, SnapshotLineageError, StaleHeadError, canonicalize_tree,
 )
+from ._migration_raw import (
+    TRANSACTION_ENDS,
+    TRANSACTION_STARTS,
+    assert_no_outer_transaction_wrapper_raw,
+    migration_boundaries,
+)
 
 
 DIGEST = "a" * 64
@@ -488,8 +494,14 @@ class MigrationContractTests(unittest.TestCase):
             },
             set(checkpoint_columns),
         )
+        self.assertEqual("text", checkpoint_columns["campaign_id"]["type"])
+        self.assertTrue(checkpoint_columns["campaign_id"]["primary_key"])
+        self.assertEqual("text", checkpoint_columns["revision_id"]["type"])
+        self.assertTrue(checkpoint_columns["revision_id"]["not_null"])
         self.assertEqual("integer", checkpoint_columns["projection_version"]["type"])
+        self.assertTrue(checkpoint_columns["projection_version"]["not_null"])
         self.assertEqual("integer", checkpoint_columns["record_count"]["type"])
+        self.assertTrue(checkpoint_columns["record_count"]["not_null"])
         self.assertEqual("char(64)", checkpoint_columns["projection_digest"]["type"])
         self.assertTrue(checkpoint_columns["projection_digest"]["not_null"])
 
@@ -498,6 +510,14 @@ class MigrationContractTests(unittest.TestCase):
             {"campaign_id", "revision_id", "record_id", "relative_path", "body_digest"},
             set(record_columns),
         )
+        self.assertEqual("text", record_columns["campaign_id"]["type"])
+        self.assertTrue(record_columns["campaign_id"]["not_null"])
+        self.assertEqual("text", record_columns["revision_id"]["type"])
+        self.assertTrue(record_columns["revision_id"]["not_null"])
+        self.assertEqual("text", record_columns["record_id"]["type"])
+        self.assertTrue(record_columns["record_id"]["not_null"])
+        self.assertEqual("text", record_columns["relative_path"]["type"])
+        self.assertTrue(record_columns["relative_path"]["not_null"])
         self.assertEqual("char(64)", record_columns["body_digest"]["type"])
         self.assertIn("PRIMARY KEY(campaign_id, record_id)", record["constraints"])
 
@@ -532,6 +552,121 @@ class MigrationContractTests(unittest.TestCase):
             statements.index(intent_statement), statements.index(index_statement)
         )
         self.assertNotIn("provider_secret", raw)
+
+
+class MigrationRawWrapperTests(unittest.TestCase):
+    """Regression coverage for the raw outer-transaction wrapper rule.
+
+    The rule is exercised against controlled fixture files rather than the
+    real migrations, because on this branch's base (before PR #153 merges)
+    ``0001_revision_projection.sql`` and ``0003_ai_live_backend.sql`` still
+    carry ``BEGIN;``/``COMMIT;`` wrappers. The check reads raw file content:
+    ``migration_body()`` strips wrappers, so parsing the body would never
+    see them.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.temporary_dir = Path(self.temporary.name)
+
+    def write_migration(self, name: str, content: str) -> Path:
+        path = self.temporary_dir / name
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_wrapped_migration_is_rejected_with_path_and_token(self) -> None:
+        path = self.write_migration(
+            "sample.sql",
+            "BEGIN;\n\nCREATE TABLE sample (id text);\n\nCOMMIT;\n",
+        )
+        with self.assertRaises(AssertionError) as caught:
+            assert_no_outer_transaction_wrapper_raw(path)
+        self.assertIn(str(path), str(caught.exception))
+        self.assertIn("BEGIN;", str(caught.exception))
+
+    def test_every_transaction_start_token_is_rejected(self) -> None:
+        for token in sorted(TRANSACTION_STARTS):
+            label = token.replace(" ", "_").replace(";", "")
+            path = self.write_migration(
+                f"start_{label}.sql",
+                f"{token}\n\nCREATE TABLE sample (id text);\nCOMMIT;\n",
+            )
+            with self.assertRaises(AssertionError) as caught:
+                assert_no_outer_transaction_wrapper_raw(path)
+            self.assertIn(token, str(caught.exception))
+
+    def test_every_transaction_end_token_is_rejected(self) -> None:
+        for token in sorted(TRANSACTION_ENDS):
+            label = token.replace(" ", "_").replace(";", "")
+            path = self.write_migration(
+                f"end_{label}.sql",
+                f"CREATE TABLE sample (id text);\n{token}\n",
+            )
+            with self.assertRaises(AssertionError) as caught:
+                assert_no_outer_transaction_wrapper_raw(path)
+            self.assertIn(token, str(caught.exception))
+
+    def test_shared_line_wrappers_are_rejected(self) -> None:
+        both = self.write_migration(
+            "shared_both.sql",
+            "BEGIN; CREATE TABLE sample (id text); COMMIT;\n",
+        )
+        with self.assertRaises(AssertionError) as caught:
+            assert_no_outer_transaction_wrapper_raw(both)
+        self.assertIn("BEGIN;", str(caught.exception))
+        trailing = self.write_migration(
+            "shared_end.sql",
+            "CREATE TABLE sample (id text); COMMIT;\n",
+        )
+        with self.assertRaises(AssertionError) as caught:
+            assert_no_outer_transaction_wrapper_raw(trailing)
+        self.assertIn("COMMIT;", str(caught.exception))
+
+    def test_comment_lines_do_not_hide_wrappers(self) -> None:
+        path = self.write_migration(
+            "commented.sql",
+            "-- generated header\n\nBEGIN; -- open\n\nCREATE TABLE sample (id text);\n"
+            "-- middle comment\n\nCOMMIT; -- close\n",
+        )
+        with self.assertRaises(AssertionError) as caught:
+            assert_no_outer_transaction_wrapper_raw(path)
+        self.assertIn("BEGIN;", str(caught.exception))
+
+    def test_wrapper_free_migration_passes(self) -> None:
+        path = self.write_migration(
+            "clean.sql",
+            "CREATE TABLE sample (id text);\nCREATE INDEX sample_idx ON sample(id);\n",
+        )
+        assert_no_outer_transaction_wrapper_raw(path)
+        first, last = migration_boundaries(path)
+        self.assertNotIn(first, TRANSACTION_STARTS)
+        self.assertNotIn(last, TRANSACTION_ENDS)
+        self.assertEqual("CREATE TABLE SAMPLE (ID TEXT);", first)
+
+    def test_empty_and_comment_only_files_have_no_boundaries(self) -> None:
+        empty = self.write_migration("empty.sql", "")
+        assert_no_outer_transaction_wrapper_raw(empty)
+        self.assertEqual(("", ""), migration_boundaries(empty))
+        comments = self.write_migration(
+            "comments.sql", "-- only comments\n-- still none\n"
+        )
+        assert_no_outer_transaction_wrapper_raw(comments)
+        self.assertEqual(("", ""), migration_boundaries(comments))
+
+    def test_migration_files_scan_applies_raw_rule_per_file(self) -> None:
+        wrapped = self.write_migration(
+            "0001_wrapped.sql",
+            "BEGIN;\n\nCREATE TABLE sample (id text);\nCOMMIT;\n",
+        )
+        clean = self.write_migration(
+            "0002_clean.sql",
+            "CREATE TABLE sample (id text);\n",
+        )
+        self.assertEqual([wrapped, clean], migration_files(self.temporary_dir))
+        with self.assertRaises(AssertionError):
+            assert_no_outer_transaction_wrapper_raw(wrapped)
+        assert_no_outer_transaction_wrapper_raw(clean)
 
 
 def _split_statements(sql: str) -> list[str]:

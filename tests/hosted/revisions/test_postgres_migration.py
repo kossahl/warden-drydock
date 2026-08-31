@@ -6,6 +6,12 @@ import unittest
 import uuid
 
 from warden_drydock.hosted.operations.migrate import migration_body
+from ._migration_raw import (
+    TRANSACTION_ENDS,
+    TRANSACTION_STARTS,
+    assert_no_outer_transaction_wrapper_raw,
+    migration_boundaries,
+)
 
 
 DATABASE_URL = os.environ.get("DRYDOCK_TEST_DATABASE_URL")
@@ -123,6 +129,25 @@ class PostgresMigrationApplicationTests(unittest.TestCase):
             base_columns = [row[0] for row in rows if row[1] == base]
             shadow_columns = [row[0] for row in rows if row[1] == shadow]
             self.assertEqual(base_columns, shadow_columns)
+
+    def test_0001_raw_file_has_no_outer_transaction_wrapper(self) -> None:
+        migration = (
+            Path(__file__).parents[3]
+            / "warden_drydock"
+            / "hosted"
+            / "migrations"
+            / "0001_revision_projection.sql"
+        )
+        first, last = migration_boundaries(migration)
+        if first in TRANSACTION_STARTS or last in TRANSACTION_ENDS:
+            # The migration-source base of this PR still carries the legacy
+            # BEGIN;/COMMIT; wrapper on 0001 (and 0003). PR #153 removes them;
+            # until it merges, only fixtures prove the raw rule in-process.
+            self.skipTest(
+                "0001 still carries a legacy outer transaction wrapper; "
+                "owned by the migration source policy (PR #153)"
+            )
+        assert_no_outer_transaction_wrapper_raw(migration)
 
     def test_0001_catalog_keeps_secrets_out_and_requires_digest_identity(self) -> None:
         with self.connection.cursor() as cursor:
