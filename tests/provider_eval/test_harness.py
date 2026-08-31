@@ -31,6 +31,18 @@ from tools.provider_eval import cli
 from tools.provider_eval.report import build_evidence, render_markdown
 
 
+def _schema_keys(value):
+    keys = []
+    if isinstance(value, dict):
+        keys.extend(value)
+        for item in value.values():
+            keys.extend(_schema_keys(item))
+    elif isinstance(value, list):
+        for item in value:
+            keys.extend(_schema_keys(item))
+    return keys
+
+
 class FixtureTests(unittest.TestCase):
     def test_manifest_and_envelope_digests_are_deterministic(self):
         first = build_manifest()
@@ -156,11 +168,30 @@ class ScheduleBudgetRetryTests(unittest.TestCase):
 
 class RequestContractTests(unittest.TestCase):
     def test_wire_schema_removes_unsupported_keywords_but_preserves_full_contract(self):
-        wire = wire_schema(TOOL_SCHEMAS["fixture_emit_proposal_draft"])
-        rendered = json.dumps(wire)
-        for keyword in ("$schema", "uniqueItems", "minItems", "maxItems"):
-            self.assertNotIn(keyword, rendered)
-        self.assertIn("uniqueItems", json.dumps(TOOL_SCHEMAS["fixture_emit_proposal_draft"]))
+        full = TOOL_SCHEMAS["fixture_emit_proposal_draft"]
+        wire = wire_schema(full)
+        unsupported = {"$schema", "uniqueItems", "pattern", "minimum", "maximum", "minItems", "maxItems"}
+        present = set(_schema_keys(wire))
+        self.assertEqual(set(), unsupported & present)
+        self.assertIn("$schema", full)
+        self.assertTrue(full["properties"]["source_ids"]["uniqueItems"])
+        self.assertEqual(1, full["properties"]["source_ids"]["minItems"])
+        self.assertEqual(1, full["properties"]["suggested_changes"]["minItems"])
+        self.assertEqual(5, full["properties"]["suggested_changes"]["maxItems"])
+        self.assertEqual("object", wire["type"])
+        self.assertIs(False, wire["additionalProperties"])
+        self.assertEqual(set(full["properties"]), set(wire["properties"]))
+        self.assertEqual(full["required"], wire["required"])
+        self.assertEqual({"type": "string", "enum": ["beacon_debrief"]}, wire["properties"]["proposal_kind"])
+        self.assertEqual({"type": "string", "enum": [BASE_REVISION]}, wire["properties"]["base_revision"])
+        self.assertEqual({"type": "array", "items": {"type": "string"}}, wire["properties"]["source_ids"])
+
+        valid = {"campaign_id": "campaign-erebos", "base_revision": BASE_REVISION, "source_set_digest": envelope_digest("tool-beacon-debrief-v1"), "proposal_kind": "beacon_debrief", "title": "Beacon debrief", "source_ids": ["faction-helix"], "suggested_changes": ["Draft note"]}
+        self.assertEqual([], validate_schema(full, valid))
+        self.assertEqual([], validate_schema(wire, valid))
+        for broken in (dict(valid, campaign_id="campaign-other"), dict(valid, source_ids=[1]), dict(valid, title=None), dict(valid, drift=1)):
+            self.assertNotEqual([], validate_schema(full, broken))
+            self.assertNotEqual([], validate_schema(wire, broken))
 
     def test_openai_contract_disables_storage_and_cache_breakpoints(self):
         request = openai_request("gpt-5.6-terra", "tool-beacon-debrief-v1")
