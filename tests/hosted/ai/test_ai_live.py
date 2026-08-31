@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hashlib
 import io
 import json
@@ -9,9 +10,11 @@ from pathlib import Path
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
+import threading
 import unittest
 from unittest.mock import patch
 import urllib.error
+import urllib.request
 
 from warden_drydock.core.generator import DATA
 from warden_drydock.hosted.ai.live import LiveSessionService, StaleController, StaleWorkflow
@@ -108,7 +111,7 @@ class GroundedAIServiceTests(unittest.TestCase):
         self.service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         self.assertEqual(["generation_one"], self.repository.dispatch_log)
 
-    def test_openai_consent_is_local_and_start_dispatches_one_responses_request(self):
+    def test_openai_consent_then_start_dispatches_one_responses_request(self):
         repository = InMemoryAIRepository()
         dispatched = []
 
@@ -119,14 +122,74 @@ class GroundedAIServiceTests(unittest.TestCase):
         provider = OpenAIResponsesAdapter(transport, max_output_tokens=512)
         service = GroundedAIService(repository, DeterministicSourceSelector(), provider, self.loader)
         with patch.dict(os.environ, {"OPENAI_API_KEY": "synthetic-key"}, clear=True):
-            with patch("warden_drydock.hosted.ai.provider.urllib.request.urlopen") as urlopen:
-                service.record_consent(explicit=True)
-                record = service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
-                urlopen.assert_not_called()
+            service.record_consent(explicit=True)
+            record = service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
         self.assertEqual("complete", record.terminal_status)
         self.assertEqual(1, len(dispatched))
         self.assertEqual(512, dispatched[0]["max_output_tokens"])
         self.assertEqual(["generation_one"], repository.dispatch_log)
+
+    def test_openai_http_transport_sends_exact_payload_bytes_to_local_endpoint(self):
+        repository = InMemoryAIRepository()
+        received = {}
+        constructed = []
+
+        class RecordingHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                received["method"] = self.command
+                received["path"] = self.path
+                received["headers"] = {name: value for name, value in self.headers.items()}
+                received["body"] = self.rfile.read(length)
+                events = (
+                    {"type": "response.output_text.delta", "delta": "Draft"},
+                    {"type": "response.completed", "response": {"usage": {"input_tokens": 3, "output_tokens": 1}}},
+                )
+                body = "".join("data: " + json.dumps(event) + "\n" for event in events).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), RecordingHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        endpoint = f"http://127.0.0.1:{server.server_port}/v1/responses"
+
+        def cleanup():
+            server.shutdown()
+            thread.join(5)
+            server.server_close()
+
+        self.addCleanup(cleanup)
+
+        provider = OpenAIResponsesAdapter(max_output_tokens=512)
+        service = GroundedAIService(repository, DeterministicSourceSelector(), provider, self.loader)
+
+        class LocalEndpointRequest(urllib.request.Request):
+            def __init__(self, url, **kwargs):
+                constructed.append(url)
+                super().__init__(endpoint, **kwargs)
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "synthetic-key"}, clear=True):
+            with patch("urllib.request.Request", LocalEndpointRequest):
+                service.record_consent(explicit=True)
+                record = service.start("generation_one", "campaign_one", "revision_one", Action.ASK, "State?")
+        self.assertEqual("complete", record.terminal_status)
+        self.assertEqual("Draft", record.terminal_content)
+        self.assertEqual(["generation_one"], repository.dispatch_log)
+        self.assertEqual(["https://api.openai.com/v1/responses"], constructed)
+        self.assertEqual("POST", received["method"])
+        self.assertEqual("/v1/responses", received["path"])
+        self.assertEqual("Bearer synthetic-key", received["headers"].get("Authorization"))
+        self.assertEqual("application/json", received["headers"].get("Content-Type"))
+        payload = provider.build_payload(record.request)
+        self.assertEqual(json.dumps(payload).encode("utf-8"), received["body"])
+        self.assertEqual(512, payload["max_output_tokens"])
 
     def test_openai_missing_credential_prevents_consent_and_dispatch(self):
         repository = InMemoryAIRepository()
