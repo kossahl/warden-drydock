@@ -285,6 +285,42 @@ def validate(instance, schema):
         raise failures[0]
 
 
+def _structured_schema_tokens(node, tokens):
+    if isinstance(node, dict):
+        if isinstance(node.get("enum"), list):
+            tokens.update(item for item in node["enum"] if isinstance(item, str))
+        if isinstance(node.get("const"), str):
+            tokens.add(node["const"])
+        for keyword in ("properties", "$defs"):
+            if isinstance(node.get(keyword), dict):
+                tokens.update(node[keyword])
+        for value in node.values():
+            _structured_schema_tokens(value, tokens)
+    elif isinstance(node, list):
+        for item in node:
+            _structured_schema_tokens(item, tokens)
+
+
+def _invariant_rule_tokens(node, tokens):
+    if isinstance(node, dict):
+        for value in node.values():
+            _invariant_rule_tokens(value, tokens)
+    elif isinstance(node, list):
+        for item in node:
+            _invariant_rule_tokens(item, tokens)
+    elif isinstance(node, str):
+        tokens.add(node)
+
+
+def _contract_vocabulary_tokens(root):
+    tokens = set()
+    for path in root.rglob("*.schema.json"):
+        _structured_schema_tokens(json.loads(path.read_text(encoding="utf-8")), tokens)
+    for path in root.rglob("semantic-invariants*.json"):
+        _invariant_rule_tokens(json.loads(path.read_text(encoding="utf-8")), tokens)
+    return tokens
+
+
 def _violating_instance(example, rule_id):
     instance = deepcopy(example)
     if rule_id == "api_approval_binding":
@@ -498,14 +534,16 @@ class HostedContractPackageTests(unittest.TestCase):
         ])
 
     def test_shared_vocabulary_is_canonical(self):
-        corpus = "\n".join(path.read_text(encoding="utf-8") for path in CONTRACT_ROOT.rglob("*.json"))
+        tokens = _contract_vocabulary_tokens(CONTRACT_ROOT)
         expected_terms = {
             "campaign", "revision", "entity", "connection", "live_session", "event",
             "overlay", "draft", "proposal", "citation", "audit_event", "operation_request",
         }
         for term in expected_terms:
             with self.subTest(term=term):
-                self.assertIn(term, corpus.lower())
+                self.assertIn(term, tokens)
+        with self.subTest(term="telemetry"):
+            self.assertNotIn("telemetry", tokens)
 
     def test_deferred_and_redacted_boundaries_are_documented(self):
         compatibility = (CONTRACT_ROOT / "compatibility.md").read_text(encoding="utf-8").lower()
