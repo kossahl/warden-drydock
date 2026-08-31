@@ -232,19 +232,31 @@ class BoundaryTests(unittest.TestCase):
 
 class ReportTests(unittest.TestCase):
     def test_report_rebuilds_manifest_instead_of_reusing_sanitized_input(self):
+        probe = "sk-leak-probe-9f8e7d6c5b4a3"
         local = {
             "seed": 41,
-            "fixture_manifest": {"envelopes": [{"task_id": "a[REDACTED]"}]},
+            "fixture_manifest": {"envelopes": [{"task_id": probe, "sha256": "0" * 64}]},
             "actual_spend_usd": 0.0,
             "worst_case_reserved_usd": 0.0,
-            "results": [],
+            "results": [{
+                "request_headers": f"authorization: Bearer {probe}",
+                "request_body": f'{{"prompt": "{probe}"}}',
+                "source_set_digest": envelope_digest("ask-airlock-v1"),
+                "source_ids": ["location-erebos", "session-003"],
+                "request_sha256": "0" * 64,
+                "transmitted_bytes": 256,
+                "transmitted_characters": 256,
+                "attempts": [
+                    {"attempt": 1, "terminal_state": "failure", "error_type": "HTTPError", "http_status": 429, "diagnostic": {"message": f"request {probe} throttled"}},
+                    {"attempt": 2, "terminal_state": "completed", "model_returned": "claude-sonnet-5", "actual_cost_usd": 0.0, "ttft_ms": 1.0, "latency_ms": 2.0, "result": {"status": "Draft", "base_revision": BASE_REVISION, "source_ids": ["location-erebos", "session-003"], "answer": f"probe {probe} must not reach evidence"}},
+                ],
+            }],
         }
         evidence = build_evidence(local)
-        self.assertEqual(
-            ["ask-airlock-v1", "check-vale-death-v1", "generate-infirmary-v1", "tool-beacon-debrief-v1"],
-            [entry["task_id"] for entry in evidence["fixture_manifest"]["envelopes"]],
-        )
-        self.assertNotIn("[REDACTED]", json.dumps(evidence["fixture_manifest"]))
+        self.assertEqual(build_manifest(), evidence["fixture_manifest"])
+        rendered_manifest = json.dumps(evidence["fixture_manifest"])
+        self.assertNotIn(probe, rendered_manifest)
+        self.assertNotIn("[REDACTED]", rendered_manifest)
 
     def test_product_decision_is_distinct_from_immutable_evaluation_conclusion(self):
         local = {
