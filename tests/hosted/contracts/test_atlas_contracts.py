@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -191,6 +192,7 @@ class AtlasContractTests(unittest.TestCase):
         cls.examples = json.loads((CONTRACT_ROOT / cls.index["examples"]).read_text(encoding="utf-8"))["examples"]
 
     def test_package_is_separate_indexed_closed_and_schema_valid(self) -> None:
+        validator = Draft202012Validator(self.schema)
         Draft202012Validator.check_schema(self.schema)
         aggregate = json.loads(
             (CONTRACT_ROOT.parents[1] / "index.json").read_text(encoding="utf-8")
@@ -202,6 +204,22 @@ class AtlasContractTests(unittest.TestCase):
         self.assertIn("does not mutate", self.index["compatibility"])
         self.assertEqual(4, len(self.index["negative_fixtures"]))
         self.assertTrue(all((CONTRACT_ROOT / item).is_file() for item in self.index["negative_fixtures"]))
+        first = json.loads(
+            (CONTRACT_ROOT / self.index["negative_fixtures"][0]).read_text(encoding="utf-8")
+        )
+        instance = first["instance"]
+        categories = []
+        if list(validator.iter_errors(instance)):
+            categories.append("unsafe_binding")
+        else:
+            try:
+                validate_semantics(instance)
+            except AtlasSemanticError as exc:
+                categories.append(exc.category)
+        self.assertIn(first["expected_category"], categories)
+        broken = deepcopy(instance)
+        broken["contract_version"] = 2
+        self.assertTrue(list(validator.iter_errors(broken)))
 
     def test_all_contract_objects_are_closed_positive_and_unique(self) -> None:
         validator = Draft202012Validator(self.schema)
