@@ -285,6 +285,55 @@ def validate(instance, schema):
         raise failures[0]
 
 
+def _violating_instance(example, rule_id):
+    instance = deepcopy(example)
+    if rule_id == "api_approval_binding":
+        instance["expected_revision"] = None
+    elif rule_id == "api_idempotency_binding":
+        instance["prior_receipt"]["idempotency_key"] = "idem_beta"
+    elif rule_id == "proposal_exact_binding":
+        instance["proposal"]["status"] = "approved"
+        instance["approval_binding"] = {
+            "proposal_id": "proposal_beta",
+            "proposal_version": instance["proposal"]["proposal_version"],
+            "diff_digest": instance["proposal"]["diff_digest"],
+            "base_revision": instance["proposal"]["base_revision"],
+            "source_revision": instance["proposal"]["source_revision"],
+            "expected_campaign_head": instance["proposal"]["base_revision"],
+            "warden_confirmed": True,
+        }
+    elif rule_id == "proposal_validation_gate":
+        instance["validation"]["status"] = "failed"
+        instance["validation"]["error_count"] = 1
+    elif rule_id == "live_revision_pinning":
+        instance["events"][0]["base_revision"] = "revision_99"
+    elif rule_id == "live_device_replay":
+        instance["acknowledgements"][0]["payload_digest"] = "b" * 64
+    elif rule_id == "live_end_barrier":
+        instance["end_barrier"]["accepted_operation_ids"] = ["operation_fact", "operation_missing"]
+    elif rule_id == "snapshot_lineage_quarantine":
+        instance["publication_intent"] = {"classification": "quarantined", "matching_intent_count": 0}
+    elif rule_id == "provider_stream_order":
+        instance["events"] = [
+            {"sequence": 2, "event_type": "start"},
+            {"sequence": 1, "event_type": "completion"},
+        ]
+    elif rule_id == "provider_tool_binding":
+        instance["events"].append({
+            "sequence": 3, "event_type": "tool_request", "tool": "read_bound_source",
+            "call_id": "call_one", "source_id": "entity_station",
+            "campaign_id": "campaign_beta", "revision_id": "revision_12",
+            "source_set_digest": instance["source_set_digest"],
+        })
+    elif rule_id == "retrieval_determinism":
+        instance["citations"][0]["order"] = 2
+    elif rule_id == "operations_reconciliation":
+        instance["reconciliation"]["matching_intent_count"] = 2
+    else:
+        raise AssertionError(f"no violating scenario for rule {rule_id}")
+    return instance
+
+
 def _contradicting_example(family, example):
     broken = deepcopy(example)
     if family == "api":
@@ -379,14 +428,24 @@ class HostedContractPackageTests(unittest.TestCase):
         self.assertTrue(specification["mandatory_with_json_schema"])
         rules = {rule["id"]: rule for rule in specification["rules"]}
         declared = set()
+        schemas = {}
+        examples = {}
         for family in self.index["families"]:
             schema = json.loads((CONTRACT_ROOT / family["schema"]).read_text(encoding="utf-8"))
+            schemas[family["schema"]] = schema
+            examples[family["schema"]] = json.loads((CONTRACT_ROOT / family["example"]).read_text(encoding="utf-8"))
             for rule_id in schema.get("x-invariants", []):
                 self.assertIn(rule_id, rules)
                 self.assertEqual(rules[rule_id]["schema"], family["schema"])
                 declared.add(rule_id)
         self.assertEqual(declared, set(rules))
         self.assertEqual(declared, IMPLEMENTED_INVARIANTS)
+        for rule in specification["rules"]:
+            with self.subTest(rule=rule["id"]):
+                instance = _violating_instance(examples[rule["schema"]], rule["id"])
+                categories = {failure.category for failure in contract_errors(instance, schemas[rule["schema"]])}
+                self.assertTrue(categories, rule["id"])
+                self.assertIn(rule["category"], categories)
 
     def test_every_positive_example_validates(self):
         for family in self.index["families"]:
