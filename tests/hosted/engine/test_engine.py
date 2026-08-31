@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import fields, replace
+import hashlib
 import inspect
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -163,10 +165,112 @@ class DeterministicOperationTests(EngineTestCase):
             "a" * 64,
             "replacement\n",
         )
+        canonical = json.dumps(
+            [
+                {
+                    "change_id": change.change_id,
+                    "change_kind": change.change_kind.value,
+                    "expected_content_digest": change.expected_content_digest,
+                    "record_type": change.record_type,
+                    "replacement_digest": content_digest(change.replacement),
+                    "subject_id": change.subject_id,
+                }
+            ],
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
         self.assertEqual(
-            "806e4ef6571fd942f724adafe3aabd44dfe8255d16c8c36d50fb3039324d5f31",
+            hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
             exact_diff_digest((change,)),
         )
+        self.assertEqual(
+            exact_diff_digest((change,)),
+            exact_diff_digest((change,)),
+        )
+
+    def test_diff_digest_is_content_isolated(self) -> None:
+        base = ExactTextChange(
+            "change_one",
+            "campaign-main",
+            "a" * 64,
+            "replacement\n",
+        )
+        variants = (
+            replace(base, change_id="change_two"),
+            replace(base, subject_id="campaign-alt"),
+            replace(base, expected_content_digest="b" * 64),
+            replace(base, replacement="other\n"),
+            replace(base, change_kind=ChangeKind.DELETE),
+            replace(base, record_type="npc"),
+        )
+        digests = {exact_diff_digest((base,))}
+        digests.update(exact_diff_digest((variant,)) for variant in variants)
+        self.assertEqual(1 + len(variants), len(digests))
+        self.assertNotEqual(
+            exact_diff_digest((base, variants[0])),
+            exact_diff_digest((variants[0], base)),
+        )
+
+    def test_diff_digest_feeds_approval_and_publication_binding(self) -> None:
+        from warden_drydock.hosted.proposals.service import (
+            InMemoryProposalRepository,
+            ProposalService,
+            ProposalStatus,
+        )
+        from warden_drydock.hosted.revisions.models import FileHash, SnapshotManifest
+
+        change = ExactTextChange(
+            "change_one",
+            "campaign-main",
+            "a" * 64,
+            "replacement\n",
+        )
+        digest = exact_diff_digest((change,))
+
+        def manifest(version) -> SnapshotManifest:
+            return SnapshotManifest(
+                version.campaign_id,
+                "revision_binding",
+                version.base_revision,
+                1,
+                "b" * 64,
+                (FileHash("record.md", "c" * 64),),
+                "0.3.0",
+                "1.0.0",
+                "d" * 64,
+                version.diff_digest,
+                "token_binding",
+            )
+
+        repository = InMemoryProposalRepository()
+        service = ProposalService(
+            repository,
+            head=lambda _proposal_id: "rev_binding",
+            stage=lambda _version: type("Stage", (), {"status": Status.STAGED})(),
+            publish=lambda _version, _staged: manifest(_version),
+        )
+        version = service.draft(
+            "proposal_binding",
+            "campaign_binding",
+            "rev_binding",
+            (change,),
+        )
+        self.assertEqual(digest, version.diff_digest)
+        with self.assertRaises(ValueError):
+            service.approve(
+                version,
+                diff_digest="0" * 64,
+                base_revision=version.base_revision,
+                payload_digest=version.payload_digest,
+            )
+        approved = service.approve(
+            version,
+            diff_digest=version.diff_digest,
+            base_revision=version.base_revision,
+            payload_digest=version.payload_digest,
+        )
+        self.assertEqual(ProposalStatus.PUBLISHED, approved.status)
 
 
 class ExactDiffTests(EngineTestCase):
@@ -235,6 +339,26 @@ class ExactDiffTests(EngineTestCase):
         )
         self.assertEqual(Status.INVALID, missing.result.status)
 
+    def assert_stage_failure_discards(
+        self,
+        request: StageExactDiffRequest,
+        expected_status: Status,
+        fail: mock._patch,
+    ) -> None:
+        registered_before = set(self.registry._paths)
+        leaked_handle = WorkspaceHandle(f"workspace_{self.registry._counter + 1:08d}")
+        source_before = self.show()
+        with fail:
+            result = self.engine.stage_exact_diff(request)
+        self.assertEqual(expected_status, result.status)
+        self.assertEqual(self.handle, result.staged_handle)
+        self.assertEqual(registered_before, set(self.registry._paths))
+        self.assertEqual(source_before, self.show())
+        leaked = self.engine.validate(
+            WorkspaceRequest("command_validate", leaked_handle)
+        )
+        self.assertEqual("workspace_unknown", leaked.findings[0].code)
+
     def test_later_create_failure_discards_partial_staged_workspace(self) -> None:
         import warden_drydock.hosted.engine.facade as facade_module
 
@@ -249,9 +373,6 @@ class ExactDiffTests(EngineTestCase):
             )
             for index in (1, 2)
         )
-        registered_before = set(self.registry._paths)
-        leaked_handle = WorkspaceHandle(f"workspace_{self.registry._counter + 1:08d}")
-        source_before = self.show()
         real_create = facade_module.create_entity
         call_count = 0
 
@@ -262,24 +383,16 @@ class ExactDiffTests(EngineTestCase):
                 raise SystemExit("injected later create failure")
             return real_create(*args, **kwargs)
 
-        with mock.patch.object(facade_module, "create_entity", side_effect=fail_second):
-            result = self.engine.stage_exact_diff(
-                StageExactDiffRequest(
-                    "command_multi_create",
-                    self.handle,
-                    exact_diff_digest(changes),
-                    changes,
-                )
-            )
-
-        self.assertEqual(Status.INVALID, result.status)
-        self.assertEqual(self.handle, result.staged_handle)
-        self.assertEqual(registered_before, set(self.registry._paths))
-        self.assertEqual(source_before, self.show())
-        leaked = self.engine.validate(
-            WorkspaceRequest("command_validate", leaked_handle)
+        self.assert_stage_failure_discards(
+            StageExactDiffRequest(
+                "command_multi_create",
+                self.handle,
+                exact_diff_digest(changes),
+                changes,
+            ),
+            Status.INVALID,
+            mock.patch.object(facade_module, "create_entity", side_effect=fail_second),
         )
-        self.assertEqual("workspace_unknown", leaked.findings[0].code)
 
     def test_oserror_after_clone_discards_staged_workspace(self) -> None:
         import warden_drydock.hosted.engine.facade as facade_module
@@ -294,27 +407,19 @@ class ExactDiffTests(EngineTestCase):
             content_digest(original),
             replacement,
         )
-        registered_before = set(self.registry._paths)
-        leaked_handle = WorkspaceHandle(f"workspace_{self.registry._counter + 1:08d}")
-        with mock.patch.object(
-            facade_module, "build_indexes", side_effect=OSError("injected")
-        ):
-            result = self.engine.stage_exact_diff(
-                StageExactDiffRequest(
-                    "command_stage",
-                    self.handle,
-                    exact_diff_digest((change,)),
-                    (change,),
-                )
-            )
-        self.assertEqual(Status.FAILED, result.status)
-        self.assertEqual(self.handle, result.staged_handle)
-        self.assertEqual(registered_before, set(self.registry._paths))
-        self.assertEqual(original, self.show().records[0].content)
-        leaked = self.engine.validate(
-            WorkspaceRequest("command_validate", leaked_handle)
+        self.assert_stage_failure_discards(
+            StageExactDiffRequest(
+                "command_stage",
+                self.handle,
+                exact_diff_digest((change,)),
+                (change,),
+            ),
+            Status.FAILED,
+            mock.patch.object(
+                facade_module, "build_indexes", side_effect=OSError("injected")
+            ),
         )
-        self.assertEqual("workspace_unknown", leaked.findings[0].code)
+        self.assertEqual(original, self.show().records[0].content)
 
     def test_exact_diff_is_isolated_rebuilt_validated_and_non_publishing(self) -> None:
         source = self.show()

@@ -80,6 +80,7 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
         self.assertEqual(ProposalStatus.PUBLISHED, self.service.approve(item, **self.binding(item)).status)
         self.assertEqual(1, len(self.publish_calls))
         self.assertEqual(8, len(results))
+        self.assertEqual(len(results), results.count("conflict") + 1)
 
     def test_approve_reject_and_approve_correct_have_single_winner(self):
         item = self.draft("reject")
@@ -95,6 +96,13 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
         versions = self.repository.versions(item.proposal_id)
         self.assertIn(tuple(value.status for value in versions),
                       ((ProposalStatus.PUBLISHED,), (ProposalStatus.REJECTED, ProposalStatus.DRAFT)))
+        resolved = [value for value in versions
+                    if value.status in (ProposalStatus.PUBLISHED, ProposalStatus.REJECTED)]
+        self.assertEqual(1, len(resolved), "exactly one operation wins across all versions")
+        published_for_item = [call for call in self.publish_calls if call == item.proposal_id]
+        self.assertEqual(1 if resolved[0].status is ProposalStatus.PUBLISHED else 0,
+                         len(published_for_item),
+                         "publication count is 0 or 1 in lockstep with the winner")
 
     def test_transaction_rollback_and_restart_readback(self):
         item = self.draft("rollback")
@@ -102,7 +110,9 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
             cursor.execute("CREATE OR REPLACE FUNCTION drydock_test_fail_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced audit rollback'; END $$")
             cursor.execute("CREATE TRIGGER drydock_test_fail_audit BEFORE INSERT ON hosted_proposal_audit FOR EACH ROW EXECUTE FUNCTION drydock_test_fail_audit()")
         try:
-            with self.assertRaises(Exception):
+            with self.assertRaisesRegex(
+                psycopg.errors.RaiseException, "forced audit rollback"
+            ):
                 self.repository.reject(item)
             self.assertEqual(ProposalStatus.DRAFT, self.repository.get(item.proposal_id, 1).status)
         finally:
@@ -121,26 +131,39 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
         published = self.service.reconcile(quarantined, self.manifest(item, "revision_reconciled"))
         self.assertEqual(ProposalStatus.PUBLISHED, published.status)
         with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT published_revision_id FROM hosted_proposal_version WHERE proposal_id=%s AND version=1", (item.proposal_id,))
-            self.assertEqual(("revision_reconciled",), cursor.fetchone())
-        self.assertEqual(ProposalStatus.PUBLISHED, PostgresProposalRepository(self.connect).get(item.proposal_id, 1).status)
+            cursor.execute("SELECT publication_intent_token, published_revision_id, result_digest FROM hosted_proposal_version WHERE proposal_id=%s AND version=1", (item.proposal_id,))
+            self.assertEqual(("token_publish", "revision_reconciled", "b" * 64), cursor.fetchone())
+        restarted = PostgresProposalRepository(self.connect)
+        self.assertEqual(ProposalStatus.PUBLISHED, restarted.get(item.proposal_id, 1).status)
+        published_events = [row for row in restarted.audit(item.proposal_id) if row[4] == "published"]
+        self.assertEqual(1, len(published_events))
+        self.assertEqual(("token_publish", "revision_reconciled", "b" * 64), published_events[0][5:8])
 
     def test_reconciliation_rejects_unverified_or_mismatched_manifest(self):
         item = self.draft("bad_reconcile")
         quarantined = self.repository.replace_status(self.repository.claim(item), ProposalStatus.QUARANTINED)
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "not a verified snapshot manifest"):
             self.service.reconcile(quarantined, "private/path")
         wrong = SnapshotManifest("campaign_other", "revision_other", item.base_revision, 2,
             "b" * 64, (FileHash("record.md", "c" * 64),), "0.3.0", "1.0.0",
             "d" * 64, item.diff_digest, "token_publish")
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "binding mismatch"):
             self.service.reconcile(quarantined, wrong)
         self.assertEqual(ProposalStatus.QUARANTINED, self.repository.get(item.proposal_id, 1).status)
 
     def test_unsafe_identifiers_never_reach_postgres_or_audit(self):
-        with self.assertRaises(ValueError):
-            self.service.draft(r"C:\private\campaign.md", "campaign_one", "revision_one",
+        unsafe_id = r"C:\private\campaign.md"
+        with self.assertRaisesRegex(ValueError, r"proposal_id is not a safe public identifier"):
+            self.service.draft(unsafe_id, "campaign_one", "revision_one",
                 (ExactTextChange("change_one", "record_one", "a" * 64, "private"),))
+        # The rejected id must never be written to any proposal table: both the
+        # audit trail and the version/head table must stay empty for this run,
+        # whether a leaking repository stores the id under the safe test prefix
+        # or verbatim under the rejected Windows-style path itself.
         with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT count(*) FROM hosted_proposal_audit WHERE proposal_id LIKE %s", (self.prefix + "%",))
-            self.assertEqual((0,), cursor.fetchone())
+            for proposal_table in ("hosted_proposal_audit", "hosted_proposal_version"):
+                cursor.execute(
+                    f"SELECT count(*) FROM {proposal_table} WHERE proposal_id LIKE %s OR proposal_id = %s",
+                    (self.prefix + "%", unsafe_id),
+                )
+                self.assertEqual((0,), cursor.fetchone(), proposal_table)

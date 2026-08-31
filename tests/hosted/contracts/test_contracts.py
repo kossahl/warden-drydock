@@ -321,6 +321,87 @@ def _contract_vocabulary_tokens(root):
     return tokens
 
 
+def _violating_instance(example, rule_id):
+    instance = deepcopy(example)
+    if rule_id == "api_approval_binding":
+        instance["expected_revision"] = None
+    elif rule_id == "api_idempotency_binding":
+        instance["prior_receipt"]["idempotency_key"] = "idem_beta"
+    elif rule_id == "proposal_exact_binding":
+        instance["proposal"]["status"] = "approved"
+        instance["approval_binding"] = {
+            "proposal_id": "proposal_beta",
+            "proposal_version": instance["proposal"]["proposal_version"],
+            "diff_digest": instance["proposal"]["diff_digest"],
+            "base_revision": instance["proposal"]["base_revision"],
+            "source_revision": instance["proposal"]["source_revision"],
+            "expected_campaign_head": instance["proposal"]["base_revision"],
+            "warden_confirmed": True,
+        }
+    elif rule_id == "proposal_validation_gate":
+        instance["validation"]["status"] = "failed"
+        instance["validation"]["error_count"] = 1
+    elif rule_id == "live_revision_pinning":
+        instance["events"][0]["base_revision"] = "revision_99"
+    elif rule_id == "live_device_replay":
+        instance["acknowledgements"][0]["payload_digest"] = "b" * 64
+    elif rule_id == "live_end_barrier":
+        instance["end_barrier"]["accepted_operation_ids"] = ["operation_fact", "operation_missing"]
+    elif rule_id == "snapshot_lineage_quarantine":
+        instance["publication_intent"] = {"classification": "quarantined", "matching_intent_count": 0}
+    elif rule_id == "provider_stream_order":
+        instance["events"] = [
+            {"sequence": 2, "event_type": "start"},
+            {"sequence": 1, "event_type": "completion"},
+        ]
+    elif rule_id == "provider_tool_binding":
+        instance["events"].append({
+            "sequence": 3, "event_type": "tool_request", "tool": "read_bound_source",
+            "call_id": "call_one", "source_id": "entity_station",
+            "campaign_id": "campaign_beta", "revision_id": "revision_12",
+            "source_set_digest": instance["source_set_digest"],
+        })
+    elif rule_id == "retrieval_determinism":
+        instance["citations"][0]["order"] = 2
+    elif rule_id == "operations_reconciliation":
+        instance["reconciliation"]["matching_intent_count"] = 2
+    else:
+        raise AssertionError(f"no violating scenario for rule {rule_id}")
+    return instance
+
+
+def _contradicting_example(family, example):
+    broken = deepcopy(example)
+    if family == "api":
+        broken["payload_digest"] = "b" * 64
+        return broken, "idempotency_digest_conflict"
+    if family == "atlas":
+        broken["head_revision"] = "../head"
+        return broken, "unsafe_binding"
+    if family == "engine":
+        broken["publication"] = True
+        return broken, "capability_rejected"
+    if family == "snapshot":
+        broken["publication_intent"]["classification"] = "quarantined"
+        return broken, "publication_intent_failure"
+    if family == "retrieval":
+        broken["citations"][0]["order"] = 2
+        return broken, "retrieval_consistency_failure"
+    if family == "provider":
+        broken["events"][1]["sequence"] = 1
+        return broken, "stream_sequence_conflict"
+    if family == "live":
+        broken["end_barrier"]["end_operation_id"] = "operation_none"
+        return broken, "live_barrier_conflict"
+    if family == "proposal":
+        broken["proposal"]["status"] = "approved"
+        return broken, "proposal_approval_conflict"
+    if family == "operations":
+        broken["reconciliation"]["classification"] = "quarantined"
+        return broken, "publication_intent_failure"
+    raise AssertionError(f"no counterexample for family {family}")
+
+
 class HostedContractPackageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -358,20 +439,49 @@ class HostedContractPackageTests(unittest.TestCase):
                 self.assertIn("contract_version", schema["required"])
                 self.assertEqual(schema["properties"]["contract_version"]["const"], 1)
 
+                example = json.loads((CONTRACT_ROOT / family["example"]).read_text(encoding="utf-8"))
+                validator = Draft202012Validator(schema)
+                with_extra_property = deepcopy(example)
+                with_extra_property["unexpected_top_level_property"] = "rejected"
+                self.assertTrue(
+                    [error for error in validator.iter_errors(with_extra_property) if error.validator == "additionalProperties"],
+                    "unknown top-level property must be rejected",
+                )
+                with_wrong_version = deepcopy(example)
+                with_wrong_version["contract_version"] = 2
+                self.assertTrue(
+                    [
+                        error
+                        for error in validator.iter_errors(with_wrong_version)
+                        if error.validator == "const" and "contract_version" in error.absolute_path
+                    ],
+                    "contract_version other than 1 must be rejected",
+                )
+
     def test_semantic_invariants_are_indexed_and_bound_to_schemas(self):
         relative = self.index["semantic_invariants"]
         specification = json.loads((CONTRACT_ROOT / relative).read_text(encoding="utf-8"))
         self.assertTrue(specification["mandatory_with_json_schema"])
         rules = {rule["id"]: rule for rule in specification["rules"]}
         declared = set()
+        schemas = {}
+        examples = {}
         for family in self.index["families"]:
             schema = json.loads((CONTRACT_ROOT / family["schema"]).read_text(encoding="utf-8"))
+            schemas[family["schema"]] = schema
+            examples[family["schema"]] = json.loads((CONTRACT_ROOT / family["example"]).read_text(encoding="utf-8"))
             for rule_id in schema.get("x-invariants", []):
                 self.assertIn(rule_id, rules)
                 self.assertEqual(rules[rule_id]["schema"], family["schema"])
                 declared.add(rule_id)
         self.assertEqual(declared, set(rules))
         self.assertEqual(declared, IMPLEMENTED_INVARIANTS)
+        for rule in specification["rules"]:
+            with self.subTest(rule=rule["id"]):
+                instance = _violating_instance(examples[rule["schema"]], rule["id"])
+                categories = {failure.category for failure in contract_errors(instance, schemas[rule["schema"]])}
+                self.assertTrue(categories, rule["id"])
+                self.assertIn(rule["category"], categories)
 
     def test_every_positive_example_validates(self):
         for family in self.index["families"]:
@@ -379,6 +489,10 @@ class HostedContractPackageTests(unittest.TestCase):
             example = json.loads((CONTRACT_ROOT / family["example"]).read_text(encoding="utf-8"))
             with self.subTest(family=family["family"]):
                 validate(example, schema)
+                broken, expected_category = _contradicting_example(family["family"], example)
+                failures = list(contract_errors(broken, schema))
+                self.assertTrue(failures, "contradicting example unexpectedly validated")
+                self.assertIn(expected_category, {failure.category for failure in failures})
 
     def test_every_negative_fixture_fails_at_expected_binding(self):
         fixture_paths = [fixture for family in self.index["families"] for fixture in family["negative_fixtures"]]

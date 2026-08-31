@@ -249,110 +249,73 @@ class GeneratorTest(unittest.TestCase):
                 (root/'10-adventures'/'available'/'old-adventure.md').exists()
             )
 
-    def test_new_records_use_canonical_mothership_paths(self):
-        expected={
-            'faction':'04-factions/faction-test.md',
-            'npc':'05-npcs/npc-test.md',
-            'adventure':'10-adventures/available/adventure-test.md',
-            'session':'12-sessions/logs/session-test.md',
-        }
+    def _assert_narrative_record(self, text):
+        forbidden={'strength:','speed:','intellect:','combat:','sanity:','fear:','body:','armor:','wounds:'}
+        lowered=text.lower()
+        self.assertTrue(forbidden.isdisjoint(lowered.splitlines()))
+        self.assertIn('visibility: warden',lowered)
+        self.assertIn('warden_only: true',lowered)
+
+    def _assert_world_record(self, text):
+        lowered=text.lower()
+        self.assertNotIn('armor:',lowered)
+        self.assertNotIn('wounds:',lowered)
+        self.assertNotIn('combat:',lowered)
+
+    def _assert_mystery_record(self, text):
+        self.assertIn('## Warden truth',text)
+        self.assertIn('player',text.lower())
+
+    def _assert_session_record(self, text):
+        self.assertIn('visibility: warden',text)
+        self.assertIn('warden_only: true',text)
+
+    def _assert_session_log_content(self, text):
+        self.assertIn('## Unconfirmed beliefs and interpretations',text)
+        self.assertIn('## Canon updates requiring review',text)
+
+    def test_record_families_create_at_canonical_paths_and_validate(self):
+        cases=(
+            # Canonical mothership paths.
+            ('faction','04-factions/faction-test.md','Test',()),
+            ('npc','05-npcs/npc-test.md','Test',()),
+            ('adventure','10-adventures/available/adventure-test.md','Test',()),
+            ('session','12-sessions/logs/session-test.md','Test',()),
+            # Narrative-only people records.
+            ('character','02-players/characters/character-ripley.md','Character',(self._assert_narrative_record,)),
+            ('npc','05-npcs/npc-mu-th-ur.md','Npc',(self._assert_narrative_record,)),
+            ('faction','04-factions/faction-company.md','Faction',(self._assert_narrative_record,)),
+            # World records.
+            ('system','03-world/systems/system-ypsilon.md','System',(self._assert_world_record,)),
+            ('location','03-world/locations/location-station.md','Location',(self._assert_world_record,)),
+            ('creature','06-creatures/creature-signal.md','Creature',(self._assert_world_record,)),
+            ('ship','07-ships/ship-prospero.md','Ship',(self._assert_world_record,)),
+            ('item','08-items/item-sample.md','Item',(self._assert_world_record,)),
+            # Mystery records.
+            ('clue','09-mysteries/clues/clue-signal.md','Clue',(self._assert_mystery_record,)),
+            ('false-belief','09-mysteries/false-beliefs/false-belief-rescue.md','False-Belief',(self._assert_mystery_record,)),
+            ('revelation','09-mysteries/revelations/revelation-origin.md','Revelation',(self._assert_mystery_record,)),
+            ('adventure','10-adventures/available/adventure-derelict.md','Adventure',(self._assert_mystery_record,)),
+            # Campaign-engine records.
+            ('clock','11-campaign-engine/clocks/clock-decay.md','Clock',()),
+            ('consequence','11-campaign-engine/consequences/consequence-loss.md','Consequence',()),
+            ('faction-turn','11-campaign-engine/faction-turns/faction-turn-001.md','Faction-Turn',()),
+            ('random-table','14-random-tables/random-table-signals.md','Random-Table',()),
+            # Session lifecycle records.
+            ('session-prep','12-sessions/preparation/session-prep-001.md','Session 001',(self._assert_session_record,)),
+            ('session','12-sessions/logs/session-001.md','Session 001',(self._assert_session_record,self._assert_session_log_content)),
+            ('debrief','12-sessions/debriefs/debrief-001.md','Session 001',(self._assert_session_record,)),
+        )
         with TemporaryDirectory() as tmp:
             root=Path(tmp)/'campaign'
             init_campaign(root,name='Test Campaign',adapter='mothership')
-            for kind,relative in expected.items():
-                created=create_entity(root,kind,f'{kind}-test','Test')
-                self.assertEqual(created.relative_to(root).as_posix(),relative)
-
-    def test_people_records_are_narrative_only_and_validate(self):
-        with TemporaryDirectory() as tmp:
-            root=Path(tmp)/'campaign'
-            init_campaign(root,name='Test Campaign',adapter='mothership')
-            expected={
-                'character':'02-players/characters/character-ripley.md',
-                'npc':'05-npcs/npc-mu-th-ur.md',
-                'faction':'04-factions/faction-company.md',
-            }
-            ids={
-                'character':'character-ripley',
-                'npc':'npc-mu-th-ur',
-                'faction':'faction-company',
-            }
-            forbidden={'strength:','speed:','intellect:','combat:','sanity:','fear:','body:','armor:','wounds:'}
-            for kind,relative in expected.items():
-                entity=create_entity(root,kind,ids[kind],kind.title())
-                self.assertEqual(entity.relative_to(root).as_posix(),relative)
-                text=entity.read_text(encoding='utf-8').lower()
-                self.assertTrue(forbidden.isdisjoint(text.splitlines()))
-                self.assertIn('visibility: warden',text)
-                self.assertIn('warden_only: true',text)
-            self.assertEqual(validate_campaign(root),0)
-
-    def test_world_record_family_creates_and_validates(self):
-        expected={
-            'system':'03-world/systems/system-ypsilon.md',
-            'location':'03-world/locations/location-station.md',
-            'creature':'06-creatures/creature-signal.md',
-            'ship':'07-ships/ship-prospero.md',
-            'item':'08-items/item-sample.md',
-        }
-        with TemporaryDirectory() as tmp:
-            root=Path(tmp)/'campaign'
-            init_campaign(root,name='Test Campaign',adapter='mothership')
-            for kind,relative in expected.items():
-                entity_id=Path(relative).stem
-                created=create_entity(root,kind,entity_id,kind.title())
-                self.assertEqual(created.relative_to(root).as_posix(),relative)
-                text=created.read_text(encoding='utf-8').lower()
-                self.assertNotIn('armor:',text)
-                self.assertNotIn('wounds:',text)
-                self.assertNotIn('combat:',text)
-            self.assertEqual(validate_campaign(root),0)
-
-    def test_mystery_record_family_creates_and_validates(self):
-        expected={
-            'clue':'09-mysteries/clues/clue-signal.md',
-            'false-belief':'09-mysteries/false-beliefs/false-belief-rescue.md',
-            'revelation':'09-mysteries/revelations/revelation-origin.md',
-            'adventure':'10-adventures/available/adventure-derelict.md',
-        }
-        with TemporaryDirectory() as tmp:
-            root=Path(tmp)/'campaign'
-            init_campaign(root,name='Test Campaign',adapter='mothership')
-            for kind,relative in expected.items():
-                created=create_entity(root,kind,Path(relative).stem,kind.title())
-                self.assertEqual(created.relative_to(root).as_posix(),relative)
-                text=created.read_text(encoding='utf-8')
-                self.assertIn('## Warden truth',text)
-                self.assertIn('player',text.lower())
-            self.assertEqual(validate_campaign(root),0)
-
-    def test_campaign_engine_record_family_creates_and_validates(self):
-        expected={'clock':'11-campaign-engine/clocks/clock-decay.md','consequence':'11-campaign-engine/consequences/consequence-loss.md','faction-turn':'11-campaign-engine/faction-turns/faction-turn-001.md','random-table':'14-random-tables/random-table-signals.md'}
-        with TemporaryDirectory() as tmp:
-            root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')
-            for kind,relative in expected.items():
-                created=create_entity(root,kind,Path(relative).stem,kind.title())
-                self.assertEqual(created.relative_to(root).as_posix(),relative)
-            self.assertEqual(validate_campaign(root),0)
-
-    def test_session_lifecycle_creates_and_validates(self):
-        expected={
-            'session-prep':'12-sessions/preparation/session-prep-001.md',
-            'session':'12-sessions/logs/session-001.md',
-            'debrief':'12-sessions/debriefs/debrief-001.md',
-        }
-        with TemporaryDirectory() as tmp:
-            root=Path(tmp)/'campaign'
-            init_campaign(root,name='Test Campaign',adapter='mothership')
-            for kind,relative in expected.items():
-                created=create_entity(root,kind,Path(relative).stem,'Session 001')
-                self.assertEqual(created.relative_to(root).as_posix(),relative)
-                text=created.read_text(encoding='utf-8')
-                self.assertIn('visibility: warden',text)
-                self.assertIn('warden_only: true',text)
-            session=(root/'12-sessions/logs/session-001.md').read_text(encoding='utf-8')
-            self.assertIn('## Unconfirmed beliefs and interpretations',session)
-            self.assertIn('## Canon updates requiring review',session)
+            for kind,relative,name,checks in cases:
+                with self.subTest(kind=kind):
+                    created=create_entity(root,kind,Path(relative).stem,name)
+                    self.assertEqual(created.relative_to(root).as_posix(),relative)
+                    text=created.read_text(encoding='utf-8')
+                    for check in checks:
+                        check(text)
             self.assertEqual(validate_campaign(root),0)
 
     def test_player_handout_enforces_adapter_secrecy_contract(self):
