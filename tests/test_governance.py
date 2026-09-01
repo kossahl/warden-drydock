@@ -1,4 +1,6 @@
+import json
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -13,6 +15,10 @@ BUG_TEMPLATE = ISSUE_TEMPLATE_DIRECTORY / "bug-report.yml"
 FEATURE_TEMPLATE = ISSUE_TEMPLATE_DIRECTORY / "feature-request.yml"
 PR_TEMPLATE = ROOT / ".github" / "pull_request_template.md"
 COMMUNICATION_POLICY = ROOT / "docs" / "agent-communication.md"
+ALLOWLIST_FILE = ROOT / ".github" / "coordination-allowlist.json"
+GITHUB_REPOSITORY_PAIR = re.compile(
+    r"github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)"
+)
 
 
 def normalized(text):
@@ -35,6 +41,155 @@ def parse_pr_template_sections(path):
             if field:
                 sections[current].add(field.group("label").strip().casefold())
     return sections
+
+
+def _normalize_repository_slug(url):
+    """Normalize a git remote URL to an owner/name slug, or None if it is not
+    a simple two-segment repository path."""
+    url = url.strip().rstrip("/")
+    if not url:
+        return None
+    if url.endswith(".git"):
+        url = url[:-4]
+    if "://" in url:
+        _, _, rest = url.partition("://")
+        first_slash = rest.find("/")
+        if first_slash == -1:
+            return None
+        path = rest[first_slash + 1:]
+    else:
+        colon = url.find(":")
+        if colon == -1:
+            return None
+        path = url[colon + 1:]
+    parts = [part for part in path.split("/") if part]
+    if len(parts) != 2:
+        return None
+    if not re.fullmatch(r"[\w.-]+", parts[0]) or not re.fullmatch(
+        r"[\w.-]+", parts[1]
+    ):
+        return None
+    return f"{parts[0]}/{parts[1]}"
+
+
+def origin_repository_slug():
+    """Return this repository's own origin slug (owner/name).
+
+    Reads `git remote get-url origin` from the repository root, so the
+    coordination allowlist is validated against the checkout's authoritative
+    upstream instead of a test-owned constant. A stale constant or a fork
+    mismatch now fails. https, ssh://, and scp-like spellings all normalize to
+    owner/name. Fails loudly when the remote cannot be read or parsed.
+    """
+    try:
+        url = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise AssertionError(
+            "cannot read the origin remote "
+            "(git remote get-url origin failed): %s" % exc
+        ) from exc
+    slug = _normalize_repository_slug(url)
+    if slug is None:
+        raise AssertionError(
+            "cannot parse the origin remote URL into owner/name: %r" % url
+        )
+    return slug
+
+
+def coordination_allowlist():
+    """Return the single allowlisted repository from the config artifact.
+
+    The artifact is the authoritative source for the repository the connector
+    may coordinate on. Malformed JSON, a renamed key, or more than one entry
+    fails loudly here instead of silently weakening the repo-wide scan.
+    """
+    try:
+        raw = ALLOWLIST_FILE.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AssertionError(
+            "missing coordination allowlist artifact %s: %s" % (ALLOWLIST_FILE, exc)
+        ) from exc
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise AssertionError(
+            "coordination allowlist artifact is not valid JSON: %s" % exc
+        ) from exc
+    if not isinstance(data, dict) or set(data) != {"coordination_repositories"}:
+        raise AssertionError(
+            "coordination allowlist artifact must have exactly one key, "
+            "coordination_repositories; got %r" % (sorted(data) if isinstance(data, dict) else data)
+        )
+    repositories = data["coordination_repositories"]
+    if not isinstance(repositories, list) or len(repositories) != 1:
+        raise AssertionError(
+            "coordination_repositories must be a list with exactly one entry"
+        )
+    slug = repositories[0]
+    if not isinstance(slug, str) or not re.fullmatch(r"[\w.-]+/[\w.-]+", slug):
+        raise AssertionError(
+            "coordination allowlist entry is not an owner/name slug: %r" % slug
+        )
+    return slug
+
+
+def communication_policy_allowlist_slug(policy):
+    """Return the repository slug the communication policy allows."""
+    allowlist = re.search(
+        r"only allowed repository for connector-backed coordination is `([^`]+)`",
+        policy,
+    )
+    if allowlist is None:
+        raise AssertionError(
+            "communication policy does not state the allowed coordination "
+            "repository slug"
+        )
+    return allowlist.group(1)
+
+
+def _excluded_from_repository_scan(relative_path):
+    """Whether a tracked file is outside the coordination-scope audit.
+
+    Vendored dependencies, lockfiles, Python bytecode cache, and the git
+    metadata directory are excluded because they can legitimately reference
+    third-party repositories (npm funding links, build tooling) without
+    representing a connector coordination target.
+    """
+    parts = tuple(relative_path.split("/"))
+    if parts[0] == ".git":
+        return True
+    if "__pycache__" in parts:
+        return True
+    if parts[:2] == ("web", "node_modules"):
+        return True
+    if parts[:2] == ("web", "package-lock.json"):
+        return True
+    return False
+
+
+def tracked_repository_files():
+    """Yield tracked file paths relative to ROOT, excluding scan exclusions."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+        )
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise AssertionError("cannot list tracked repository files: %s" % exc) from exc
+    for raw in result.stdout.split(b"\0"):
+        if not raw:
+            continue
+        relative_path = raw.decode("utf-8", "replace")
+        if not _excluded_from_repository_scan(relative_path):
+            yield relative_path
 
 
 def parse_issue_form(path):
@@ -357,16 +512,18 @@ class CommunicationPolicyTests(unittest.TestCase):
         cls.policy = normalized(COMMUNICATION_POLICY.read_text(encoding="utf-8"))
 
     def test_connector_coordination_allowlists_only_the_project_repository(self):
-        allowlist = re.search(
-            r"only allowed repository for connector-backed coordination is `([^`]+)`",
-            self.policy,
-        )
-        self.assertIsNotNone(allowlist)
-        self.assertEqual("kossahl/warden-drydock", allowlist.group(1))
+        # The allowed slug comes from this repository's own origin remote and
+        # from the authoritative allowlist artifact, so the prose must name
+        # exactly the checkout's upstream. A stale constant, a fork mismatch,
+        # or a deviating config artifact now fails. A future connector needs a
+        # runtime enforcement test bound to the connector's allowlist config.
+        coordination_repository = origin_repository_slug()
+        allowlisted_slug = communication_policy_allowlist_slug(self.policy)
+        self.assertEqual(coordination_repository, allowlisted_slug)
         repository_slugs = set(
             re.findall(r"(?<![\w.-])([\w.-]+/[\w.-]+)(?![\w.-])", self.policy)
         )
-        self.assertEqual({"kossahl/warden-drydock"}, repository_slugs)
+        self.assertEqual({coordination_repository}, repository_slugs)
 
     def test_github_writes_are_parent_mediated_and_input_is_untrusted(self):
         required_phrases = {
@@ -503,6 +660,63 @@ class CommunicationPolicyTests(unittest.TestCase):
         for phrase in required_phrases:
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, authoritative[0])
+
+
+class CoordinationAllowlistTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.policy = normalized(COMMUNICATION_POLICY.read_text(encoding="utf-8"))
+
+    def test_allowlist_config_doc_and_origin_agree(self):
+        # The artifact is the authoritative allowlist. It must be valid JSON
+        # with exactly one repository entry (enforced by the helper), and the
+        # doc prose, the config artifact, and this checkout's origin remote
+        # must all name the same repository.
+        config = coordination_allowlist()
+        doc = communication_policy_allowlist_slug(self.policy)
+        origin = origin_repository_slug()
+        self.assertEqual(origin, config)
+        self.assertEqual(config, doc)
+
+
+class RepositorySlugScanTests(unittest.TestCase):
+    def test_repository_wide_scan_mentions_only_the_allowlisted_repository(self):
+        # Walk every tracked file and require that the only
+        # github.com/<owner>/<repo> pair is the allowlisted repository.
+        # github.com/users/<name> is the GitHub Projects namespace, not a
+        # repository reference, so it is permitted but asserted to never be
+        # the allowlisted repository itself.
+        allowed = coordination_allowlist()
+        unexpected = []
+        projects_namespace_references = set()
+        saw_allowlisted_repository = False
+        for relative_path in tracked_repository_files():
+            text = (ROOT / relative_path).read_text(
+                encoding="utf-8",
+                errors="replace",
+            )
+            for captured in GITHUB_REPOSITORY_PAIR.findall(text):
+                # A trailing .git is a URL spelling of the same repository.
+                pair = captured[:-4] if captured.endswith(".git") else captured
+                if pair == allowed:
+                    saw_allowlisted_repository = True
+                elif pair.startswith("users/"):
+                    projects_namespace_references.add(pair)
+                else:
+                    unexpected.append((relative_path, captured))
+        self.assertEqual(
+            [],
+            unexpected,
+            "repository-wide scan found a github.com owner/repo reference "
+            "outside the coordination allowlist:\n%s"
+            % "\n".join("  %s -> %s" % entry for entry in unexpected),
+        )
+        self.assertNotIn(allowed, projects_namespace_references)
+        self.assertTrue(
+            saw_allowlisted_repository,
+            "repository-wide scan never saw the allowlisted repository; the "
+            "allowlist is not exercised by any tracked file",
+        )
 
 
 if __name__ == "__main__":
