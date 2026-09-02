@@ -1,5 +1,7 @@
 import json
 import re
+import shutil
+import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -33,6 +35,88 @@ IMPLEMENTED_INVARIANTS = {
     "live_end_barrier", "snapshot_lineage_quarantine", "provider_stream_order",
     "provider_tool_binding", "retrieval_determinism", "operations_reconciliation",
 }
+HOSTED_SCHEMA_ID_PREFIX = "https://warden-drydock.invalid/contracts/hosted/v1/"
+EXPECTED_SHARED_DEFINITIONS = ["schemas/v1/common.schema.json"]
+EXPECTED_FAMILY_CONTRACTS = {
+    "api": {
+        "schema": "schemas/v1/api.schema.json",
+        "example": "examples/v1/api.json",
+        "negative_fixtures": [
+            "negative/v1/unknown-version.json",
+            "negative/v1/traversal-identifier.json",
+            "negative/v1/stale-workflow-version.json",
+            "negative/v1/changed-idempotency-digest.json",
+            "negative/v1/idempotency-exact-replay-mismatch.json",
+        ],
+    },
+    "atlas": {
+        "schema": "schemas/v1/atlas.schema.json",
+        "example": "examples/v1/atlas.json",
+        "negative_fixtures": ["negative/v1/atlas-unsafe-head.json"],
+    },
+    "engine": {
+        "schema": "schemas/v1/engine.schema.json",
+        "example": "examples/v1/engine.json",
+        "negative_fixtures": ["negative/v1/engine-publication-field.json"],
+    },
+    "snapshot": {
+        "schema": "schemas/v1/snapshot.schema.json",
+        "example": "examples/v1/snapshot.json",
+        "negative_fixtures": ["negative/v1/snapshot-unsafe-path.json", "negative/v1/snapshot-missing-bindings.json"],
+    },
+    "retrieval": {
+        "schema": "schemas/v1/retrieval.schema.json",
+        "example": "examples/v1/retrieval.json",
+        "negative_fixtures": ["negative/v1/missing-source-binding.json", "negative/v1/retrieval-count-mismatch.json"],
+    },
+    "provider": {
+        "schema": "schemas/v1/provider.schema.json",
+        "example": "examples/v1/provider.json",
+        "negative_fixtures": [
+            "negative/v1/duplicate-stream-sequence.json",
+            "negative/v1/secret-leakage.json",
+            "negative/v1/provider-authority-widening.json",
+            "negative/v1/provider-unbound-tool.json",
+        ],
+    },
+    "live": {
+        "schema": "schemas/v1/live.schema.json",
+        "example": "examples/v1/live.json",
+        "negative_fixtures": [
+            "negative/v1/stale-controller-epoch.json",
+            "negative/v1/live-unaccepted-barrier.json",
+            "negative/v1/live-replay-digest-mismatch.json",
+        ],
+    },
+    "proposal": {
+        "schema": "schemas/v1/proposal.schema.json",
+        "example": "examples/v1/proposal.json",
+        "negative_fixtures": ["negative/v1/invalid-authority-transition.json", "negative/v1/mismatched-approval-binding.json"],
+    },
+    "operations": {
+        "schema": "schemas/v1/operations.schema.json",
+        "example": "examples/v1/operations.json",
+        "negative_fixtures": [
+            "negative/v1/private-path-leakage.json",
+            "negative/v1/ambiguous-publication-intent.json",
+            "negative/v1/audit-free-text.json",
+        ],
+    },
+}
+
+
+def reconcile_index_paths(index, contract_root=CONTRACT_ROOT):
+    indexed_schemas = {item["schema"] for item in index["families"]} | set(index["shared_definitions"])
+    indexed_examples = {item["example"] for item in index["families"]}
+    indexed_negative = {fixture for item in index["families"] for fixture in item["negative_fixtures"]}
+    disk_schemas = {path.relative_to(contract_root).as_posix() for path in (contract_root / "schemas").rglob("*.json")}
+    disk_examples = {path.relative_to(contract_root).as_posix() for path in (contract_root / "examples").rglob("*.json")}
+    disk_negative = {path.relative_to(contract_root).as_posix() for path in (contract_root / "negative").rglob("*.json")}
+    return {
+        "schemas": (indexed_schemas, disk_schemas),
+        "examples": (indexed_examples, disk_examples),
+        "negative": (indexed_negative, disk_negative),
+    }
 
 
 class ContractValidationError(AssertionError):
@@ -407,25 +491,171 @@ class HostedContractPackageTests(unittest.TestCase):
     def setUpClass(cls):
         cls.index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
 
-    def test_index_is_closed_versioned_and_complete(self):
-        self.assertEqual(self.index["contract_version"], 1)
-        self.assertEqual(self.index["contract_index"], "warden_drydock_hosted_contracts")
-        families = self.index["families"]
+    def _assert_closed_and_complete(self, index, contract_root=CONTRACT_ROOT):
+        families = index["families"]
+        self.assertEqual(index["contract_version"], 1)
+        self.assertEqual(index["contract_index"], "warden_drydock_hosted_contracts")
         self.assertEqual(len(families), 9)
         self.assertEqual(len({item["family"] for item in families}), len(families))
         self.assertTrue(all(item["negative_fixtures"] for item in families))
+        for area, (indexed, disk) in reconcile_index_paths(index, contract_root).items():
+            self.assertEqual(indexed, disk, area)
+        indexed_all = {relative for indexed, _ in reconcile_index_paths(index, contract_root).values() for relative in indexed}
+        for relative in indexed_all:
+            self.assertTrue((contract_root / relative).is_file(), relative)
 
-        indexed_schemas = {item["schema"] for item in families} | set(self.index["shared_definitions"])
-        indexed_examples = {item["example"] for item in families}
-        indexed_negative = {fixture for item in families for fixture in item["negative_fixtures"]}
-        disk_schemas = {path.relative_to(CONTRACT_ROOT).as_posix() for path in (CONTRACT_ROOT / "schemas").rglob("*.json")}
-        disk_examples = {path.relative_to(CONTRACT_ROOT).as_posix() for path in (CONTRACT_ROOT / "examples").rglob("*.json")}
-        disk_negative = {path.relative_to(CONTRACT_ROOT).as_posix() for path in (CONTRACT_ROOT / "negative").rglob("*.json")}
-        self.assertEqual(indexed_schemas, disk_schemas)
-        self.assertEqual(indexed_examples, disk_examples)
-        self.assertEqual(indexed_negative, disk_negative)
-        for relative in indexed_schemas | indexed_examples | indexed_negative:
-            self.assertTrue((CONTRACT_ROOT / relative).is_file(), relative)
+    def _assert_index_groupings(self, index, contract_root=CONTRACT_ROOT):
+        for family in index["families"]:
+            schema = json.loads((contract_root / family["schema"]).read_text(encoding="utf-8"))
+            self.assertTrue(schema["$id"].endswith(family["schema"].rsplit("/", 1)[1]))
+            for relative in family["negative_fixtures"]:
+                fixture = json.loads((contract_root / relative).read_text(encoding="utf-8"))
+                self.assertEqual(fixture["schema"], family["schema"])
+
+    def _assert_family_contracts_match_authority(self, index, contract_root=CONTRACT_ROOT):
+        family_names = {item["family"] for item in index["families"]}
+        self.assertEqual(family_names, set(EXPECTED_FAMILY_CONTRACTS))
+        self.assertEqual(
+            index["shared_definitions"],
+            EXPECTED_SHARED_DEFINITIONS,
+            "shared definition paths",
+        )
+        for family in index["families"]:
+            canonical = EXPECTED_FAMILY_CONTRACTS[family["family"]]
+            self.assertEqual(family["schema"], canonical["schema"], f"{family['family']} schema path")
+            self.assertEqual(family["example"], canonical["example"], f"{family['family']} example path")
+            self.assertEqual(
+                family["negative_fixtures"],
+                canonical["negative_fixtures"],
+                f"{family['family']} negative fixture paths",
+            )
+            schema = json.loads((contract_root / family["schema"]).read_text(encoding="utf-8"))
+            self.assertEqual(
+                schema["$id"],
+                HOSTED_SCHEMA_ID_PREFIX + canonical["schema"].rsplit("/", 1)[1],
+                f"{family['family']} $id",
+            )
+
+    def test_index_is_closed_versioned_and_complete(self):
+        self._assert_closed_and_complete(self.index)
+
+    def test_index_closure_check_fails_when_a_listed_fixture_is_removed(self):
+        missing_fixture = deepcopy(self.index)
+        missing_fixture["families"][0]["negative_fixtures"].pop()
+        with self.assertRaises(AssertionError):
+            self._assert_closed_and_complete(missing_fixture)
+
+        missing_family = deepcopy(self.index)
+        missing_family["families"].pop()
+        with self.assertRaises(AssertionError):
+            self._assert_closed_and_complete(missing_family)
+
+    def test_index_groupings_are_confirmed_by_fixture_and_schema_declarations(self):
+        self._assert_index_groupings(self.index)
+
+    def test_family_contracts_are_pinned_by_canonical_authority(self):
+        self._assert_family_contracts_match_authority(self.index)
+
+    def _mutated_contract_root(self):
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        root = Path(temp_dir.name) / "contracts"
+        shutil.copytree(CONTRACT_ROOT, root)
+        return root, deepcopy(self.index)
+
+    def test_lockstep_example_rename_fails_authority_while_old_checks_stay_green(self):
+        root, mutated = self._mutated_contract_root()
+        for family in mutated["families"]:
+            if family["family"] == "api":
+                (root / family["example"]).rename(root / "examples" / "v1" / "api-renamed.json")
+                family["example"] = "examples/v1/api-renamed.json"
+        self._assert_closed_and_complete(mutated, root)
+        self._assert_index_groupings(mutated, root)
+        with self.assertRaises(AssertionError):
+            self._assert_family_contracts_match_authority(mutated, root)
+
+    def test_lockstep_negative_fixture_rename_fails_authority_while_old_checks_stay_green(self):
+        root, mutated = self._mutated_contract_root()
+        for family in mutated["families"]:
+            if family["family"] == "api":
+                source = "negative/v1/unknown-version.json"
+                target = "negative/v1/unknown-version-renamed.json"
+                (root / source).rename(root / target)
+                index = family["negative_fixtures"].index(source)
+                family["negative_fixtures"][index] = target
+        self._assert_closed_and_complete(mutated, root)
+        self._assert_index_groupings(mutated, root)
+        with self.assertRaises(AssertionError):
+            self._assert_family_contracts_match_authority(mutated, root)
+
+    def test_lockstep_shared_definition_rename_fails_authority_while_old_checks_stay_green(self):
+        root, mutated = self._mutated_contract_root()
+        (root / mutated["shared_definitions"][0]).rename(root / "schemas" / "v1" / "common-renamed.schema.json")
+        mutated["shared_definitions"] = ["schemas/v1/common-renamed.schema.json"]
+        self._assert_closed_and_complete(mutated, root)
+        self._assert_index_groupings(mutated, root)
+        with self.assertRaises(AssertionError):
+            self._assert_family_contracts_match_authority(mutated, root)
+
+    def test_lockstep_example_directory_move_fails_authority_while_old_checks_stay_green(self):
+        root, mutated = self._mutated_contract_root()
+        for family in mutated["families"]:
+            if family["family"] == "api":
+                target = "examples/v2/api.json"
+                (root / target).parent.mkdir()
+                (root / family["example"]).rename(root / target)
+                family["example"] = target
+        self._assert_closed_and_complete(mutated, root)
+        self._assert_index_groupings(mutated, root)
+        with self.assertRaises(AssertionError):
+            self._assert_family_contracts_match_authority(mutated, root)
+
+    def test_lockstep_negative_fixture_directory_move_fails_authority_while_old_checks_stay_green(self):
+        root, mutated = self._mutated_contract_root()
+        for family in mutated["families"]:
+            if family["family"] == "api":
+                source = "negative/v1/unknown-version.json"
+                target = "negative/v2/unknown-version.json"
+                (root / target).parent.mkdir()
+                (root / source).rename(root / target)
+                index = family["negative_fixtures"].index(source)
+                family["negative_fixtures"][index] = target
+        self._assert_closed_and_complete(mutated, root)
+        self._assert_index_groupings(mutated, root)
+        with self.assertRaises(AssertionError):
+            self._assert_family_contracts_match_authority(mutated, root)
+
+    def test_lockstep_shared_definition_directory_move_fails_authority_while_old_checks_stay_green(self):
+        root, mutated = self._mutated_contract_root()
+        source = "schemas/v1/common.schema.json"
+        target = "schemas/v2/common.schema.json"
+        (root / target).parent.mkdir()
+        (root / source).rename(root / target)
+        mutated["shared_definitions"] = [target]
+        self._assert_closed_and_complete(mutated, root)
+        self._assert_index_groupings(mutated, root)
+        with self.assertRaises(AssertionError):
+            self._assert_family_contracts_match_authority(mutated, root)
+
+    def test_lockstep_schema_directory_move_fails_authority_while_old_checks_stay_green(self):
+        root, mutated = self._mutated_contract_root()
+        for family in mutated["families"]:
+            if family["family"] == "api":
+                source = family["schema"]
+                target = "schemas/v2/api.schema.json"
+                (root / target).parent.mkdir()
+                (root / source).rename(root / target)
+                family["schema"] = target
+                for relative in family["negative_fixtures"]:
+                    fixture_path = root / relative
+                    fixture_path.write_text(
+                        fixture_path.read_text(encoding="utf-8").replace(source, target),
+                        encoding="utf-8",
+                    )
+        self._assert_closed_and_complete(mutated, root)
+        self._assert_index_groupings(mutated, root)
+        with self.assertRaises(AssertionError):
+            self._assert_family_contracts_match_authority(mutated, root)
 
     def test_schema_metadata_and_closed_top_level_objects(self):
         for family in self.index["families"]:
