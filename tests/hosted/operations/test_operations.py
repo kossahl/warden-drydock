@@ -7,17 +7,39 @@ import pathlib
 import tarfile
 import tempfile
 import unittest
+import uuid
 
 import yaml
 
 from tests.hosted.operations._migration_wrappers import assert_no_outer_transaction_wrapper
-from warden_drydock.hosted.operations.migrate import migration_files
+from warden_drydock.hosted.operations.migrate import migration_body, migration_files
 from warden_drydock.hosted.operations.recovery import build_manifest, create_snapshot_archive, extract_snapshot_archive, safe_members, snapshot_archive_inventory, verify_manifest
 from warden_drydock.hosted.operations.runtime_guard import parse_version, require_minimum
 from warden_drydock.hosted.operations.secrets import SecretStore
 
 
 ROOT = pathlib.Path(__file__).parents[3]
+
+# Opt-in live PostgreSQL gate matching tests.hosted.http.test_postgres_http:
+# the migration-execution regression tests below require a live database and the
+# psycopg driver, and skip cleanly when either is unavailable.
+DATABASE_URL = os.environ.get("DRYDOCK_TEST_DATABASE_URL")
+try:
+    import psycopg
+except ImportError:  # pragma: no cover - opt-in live boundary
+    psycopg = None
+
+
+MIGRATIONS_ROOT = ROOT / "warden_drydock" / "hosted" / "migrations"
+PRE_0010_MIGRATIONS = (
+    "0003_ai_live_backend.sql",
+    "0008_live_end_barrier_provenance.sql",
+    "0009_live_session_current_pointer.sql",
+)
+
+
+def _migration_body(name: str) -> str:
+    return migration_body(MIGRATIONS_ROOT / name)
 
 
 class ComposePolicyTests(unittest.TestCase):
@@ -93,7 +115,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_migrations_are_ordered_and_outer_transactions_removed(self) -> None:
         files = migration_files(ROOT / "warden_drydock" / "hosted" / "migrations")
-        self.assertEqual(["0001", "0002", "0003", "0004", "0005", "0006", "0007"], [path.name[:4] for path in files])
+        self.assertEqual(["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"], [path.name[:4] for path in files])
         for path in files:
             assert_no_outer_transaction_wrapper(path)
 
@@ -315,6 +337,179 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("ZeroFreeBSTR", provider)
         self.assertIn("OpenAIResponsesAdapter().verify()", provider)
         self.assertNotIn("OPENAI_API_KEY=", provider)
+
+
+@unittest.skipUnless(DATABASE_URL and psycopg, "live PostgreSQL migration 0010 regression test is opt-in")
+class PostgresMigration0010RegressionTests(unittest.TestCase):
+    """Executes migration 0010_live_session_monotonic_order.sql against a real
+    hosted_live_session table (isolated in a unique scratch schema) and asserts
+    the pre-release policy:
+
+      * non-empty table FAILS CLOSED (pre_release_live_session_reset_required),
+        the whole transaction rolls back (no column/index/marker change, data
+        unchanged), and readiness stays closed because the '0010' migration
+        marker is absent (health.readiness() requires that marker); and
+      * an empty table succeeds, adding the bigint sequence-backed session_seq
+        (NOT NULL, nextval default) plus the (campaign_id, session_seq DESC)
+        ordering index and the '0010' marker.
+
+    The migration body is applied through psycopg inside the same
+    BEGIN/COMMIT + marker-insert transaction wrapper the migrate.run_migrations
+    runner uses, so a raise in the leading DO-block aborts the whole
+    transaction (rollback). No psql binary is required. Each test builds state
+    in a scratch schema and drops it in tearDown.
+    """
+
+    def setUp(self) -> None:
+        self.schema = "drydock_migr_" + uuid.uuid4().hex[:24]
+        connection = psycopg.connect(DATABASE_URL, autocommit=True)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(f'CREATE SCHEMA "{self.schema}"')
+        finally:
+            connection.close()
+        self.connect = lambda: psycopg.connect(DATABASE_URL)
+
+    def tearDown(self) -> None:
+        connection = self.connect()
+        try:
+            connection.autocommit = True
+            with connection.cursor() as cursor:
+                cursor.execute(f'DROP SCHEMA IF EXISTS "{self.schema}" CASCADE')
+        finally:
+            connection.close()
+
+    def _session(self):
+        """A fresh connection whose search_path resolves to the scratch schema."""
+        connection = self.connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(f'SET search_path TO "{self.schema}"')
+        except BaseException:
+            connection.close()
+            raise
+        return connection
+
+    def _build_pre_0010_state(self, connection) -> None:
+        """Recreate the token-identical pre-0010 hosted_live_session schema and the
+        hosted_schema_migration table inside the scratch schema."""
+        with connection.cursor() as cursor:
+            for name in PRE_0010_MIGRATIONS:
+                cursor.execute(_migration_body(name))
+            cursor.execute(
+                "CREATE TABLE hosted_schema_migration ("
+                "version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
+            )
+
+    _MINIMAL_SESSION_ROW = (
+        "INSERT INTO hosted_live_session"
+        "(session_id, campaign_id, base_revision, reported_head_revision,"
+        " workflow_version, controller_epoch, controller_id, mode)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+    )
+    _MINIMAL_SESSION_VALUES = ("session_x", "campaign_y", "rev1", "rev1", 1, 1, "controller_a", "active")
+
+    def test_non_empty_table_fails_closed_and_rolls_back(self) -> None:
+        # Phase 1: build the pre-0010 schema in a scratch schema and insert a
+        # minimal live-session row (schema from 0003/0008/0009), then commit.
+        connection = self._session()
+        try:
+            self._build_pre_0010_state(connection)
+            with connection.cursor() as cursor:
+                cursor.execute(self._MINIMAL_SESSION_ROW, self._MINIMAL_SESSION_VALUES)
+            connection.commit()
+
+            # Phase 2: apply migration 0010. The leading DO-block must fail
+            # closed while the table is non-empty, aborting the transaction.
+            with connection.cursor() as cursor:
+                with self.assertRaisesRegex(psycopg.Error, "pre_release_live_session_reset_required"):
+                    cursor.execute(_migration_body("0010_live_session_monotonic_order.sql"))
+            connection.rollback()
+        finally:
+            connection.close()
+
+        # Phase 3: fresh session verifies the failure transaction left no trace.
+        check = self._session()
+        try:
+            with check.cursor() as cursor:
+                cursor.execute(
+                    "SELECT count(*) FROM information_schema.columns "
+                    "WHERE table_schema=current_schema() AND table_name='hosted_live_session' "
+                    "AND column_name='session_seq'"
+                )
+                self.assertEqual(0, cursor.fetchone()[0], "session_seq column must not be applied on failure")
+                cursor.execute(
+                    "SELECT count(*) FROM pg_indexes "
+                    "WHERE schemaname=current_schema() AND indexname='hosted_live_session_campaign_seq_idx'"
+                )
+                self.assertEqual(0, cursor.fetchone()[0], "ordering index must not be applied on failure")
+                cursor.execute(
+                    "SELECT count(*) FROM pg_class WHERE oid=to_regclass('hosted_live_session_seq_seq')"
+                )
+                self.assertEqual(0, cursor.fetchone()[0], "backing sequence must not be created on failure")
+                cursor.execute("SELECT count(*) FROM hosted_schema_migration WHERE version='0010'")
+                self.assertEqual(0, cursor.fetchone()[0], "'0010' marker must be absent on failure (readiness closed)")
+                cursor.execute("SELECT session_id, mode FROM hosted_live_session")
+                self.assertEqual(("session_x", "active"), cursor.fetchone(), "pre-existing row must be unchanged")
+        finally:
+            check.close()
+
+    def test_empty_table_applies_sequence_default_and_ordering_index(self) -> None:
+        # Phase 1: pre-0010 schema with an EMPTY hosted_live_session table.
+        connection = self._session()
+        try:
+            self._build_pre_0010_state(connection)
+            connection.commit()
+            # Phase 2: apply migration 0010 on empty data plus the runner's marker insert.
+            with connection.cursor() as cursor:
+                cursor.execute(_migration_body("0010_live_session_monotonic_order.sql"))
+                cursor.execute("INSERT INTO hosted_schema_migration(version) VALUES ('0010')")
+            connection.commit()
+        finally:
+            connection.close()
+
+        # Phase 3: fresh session verifies the additive result and that the
+        # sequence default actually assigns increasing session_seq values.
+        check = self._session()
+        try:
+            with check.cursor() as cursor:
+                cursor.execute(
+                    "SELECT data_type, is_nullable, column_default FROM information_schema.columns "
+                    "WHERE table_schema=current_schema() AND table_name='hosted_live_session' "
+                    "AND column_name='session_seq'"
+                )
+                data_type, is_nullable, column_default = cursor.fetchone()
+                self.assertEqual("bigint", data_type)
+                self.assertEqual("NO", is_nullable)
+                self.assertIn("nextval", column_default)
+                cursor.execute(
+                    "SELECT count(*) FROM pg_class WHERE oid=to_regclass('hosted_live_session_seq_seq')"
+                )
+                self.assertEqual(1, cursor.fetchone()[0], "backing sequence must exist")
+                cursor.execute(
+                    "SELECT indexdef FROM pg_indexes "
+                    "WHERE schemaname=current_schema() AND indexname='hosted_live_session_campaign_seq_idx'"
+                )
+                indexdef = cursor.fetchone()
+                self.assertIsNotNone(indexdef, "ordering index must exist")
+                self.assertIn("session_seq DESC", indexdef[0])
+                cursor.execute("SELECT count(*) FROM hosted_schema_migration WHERE version='0010'")
+                self.assertEqual(1, cursor.fetchone()[0], "'0010' marker must be recorded on success")
+                # Sequence default assigns strictly increasing, non-null values.
+                for session_id in ("session_a", "session_b"):
+                    cursor.execute(
+                        self._MINIMAL_SESSION_ROW,
+                        (session_id, "campaign_y", "rev1", "rev1", 1, 1, "controller_a", "ended"),
+                    )
+                cursor.execute("SELECT session_seq FROM hosted_live_session WHERE session_id='session_a'")
+                first = cursor.fetchone()[0]
+                cursor.execute("SELECT session_seq FROM hosted_live_session WHERE session_id='session_b'")
+                second = cursor.fetchone()[0]
+                self.assertIsNotNone(first)
+                self.assertIsNotNone(second)
+                self.assertLess(first, second)
+        finally:
+            check.close()
 
 
 if __name__ == "__main__":

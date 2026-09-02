@@ -1,0 +1,23 @@
+{
+  "contract_name": "hosted_live_http_semantic_invariants",
+  "contract_version": 1,
+  "mandatory_with_json_schema": true,
+  "authority_layer_rules": ["http_live_device_replay", "http_live_end_barrier"],
+  "authority_layer_note": "http_live_device_replay and http_live_end_barrier are enforced by the live session service authority layer against the persisted session (hosted_live_receipt / end_barrier) and are reflected in the live_capture_result / live_session_view outcomes. validate_http_semantics validates request bodies and path/body equality; it does not re-validate response views, so these two rules are not mandatory with the JSON schema alone.",
+  "rules": [
+    {"id":"http_operation_digest","category":"idempotency_digest_conflict","applies_to":["live_start_request","live_takeover_request","live_capture_request","live_end_request"]},
+    {"id":"http_path_body_equality","category":"unsafe_binding","applies_to":["live_start_request","live_takeover_request","live_capture_request","live_end_request"]},
+    {"id":"http_live_session_binding","category":"unsafe_binding","applies_to":["live_takeover_request","live_capture_request","live_end_request"]},
+    {"id":"http_live_device_replay","category":"idempotency_digest_conflict","applies_to":["live_capture_request"]},
+    {"id":"http_live_end_barrier","category":"live_barrier_conflict","applies_to":["live_end_request"]}
+  ],
+  "algorithms": {
+    "operation_digest": "payload_digest is lowercase SHA-256 over canonical JSON of the request body excluding the closed meta envelope (contract_name, contract_version, request_id, idempotency_key, payload_digest, operation_request).",
+    "bound_digest": "The persisted live receipt digest additionally binds campaign_id, base_revision, session_id, controller_id, controller_epoch, expected_workflow_version, event_type, event_id, device_id, operation_id, device_order, text, and optional record_id (Blocker F3.1). Reusing an operation id on a different device or session is never an exact replay.",
+    "replay": "capture() consults the persisted session-local receipt BEFORE controller authority checks. An identical bound operation already acknowledged returns exact_replay idempotently (including after takeover).",
+    "replay_after_takeover": "Because the bound digest includes controller identity and epoch, replaying an acknowledged operation_id under a changed controller epoch or controller identity produces a differing bound digest and therefore idempotency_digest_conflict, never stale_controller. The stale_controller category is reserved for authority checks on a not-yet-acknowledged operation.",
+    "session_binding": "Mutations must reference the active session belonging to the route campaign; a body/path campaign mismatch or a session_id belonging to another campaign is rejected as unsafe_binding. This rule is enforced by the live session service authority layer on the persisted session, not by the JSON schema alone.",
+    "end_barrier": "end() computes readiness using exact {device_id, operation_id} receipt identities before adding the end receipt, and rejects any proposal omitting an already-acknowledged capture. Required identities are closed objects, unique, and the exact end identity may not appear; another device may reuse the same operation_id.",
+    "read_only_get": "GET /campaigns/{campaign_id}/live/session is strictly read-only and accepts no query parameters (parse_flat_query rejects unknown parameters as invalid_query_binding). It never mutates persisted state; head reporting and other mutations require the CSRF-gated POST mutation routes."
+  }
+}

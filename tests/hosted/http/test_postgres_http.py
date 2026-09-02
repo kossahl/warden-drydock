@@ -245,5 +245,215 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
             cursor.execute("DELETE FROM hosted_publication_intent WHERE campaign_id=%s", (campaign_id,))
 
 
+@unittest.skipUnless(DATABASE_URL and psycopg, "live PostgreSQL live-session test is opt-in")
+class PostgresLiveSessionIntegrationTests(unittest.TestCase):
+    """PostgreSQL-backed live lifecycle: start, capture (with provenance), end
+    barrier, restart/recovery, multiple ended-session selection, concurrent start,
+    and concurrent identical exact-replay (P2-E)."""
+
+    def setUp(self) -> None:
+        self.connect = lambda: psycopg.connect(DATABASE_URL)
+        self.suffix = uuid.uuid4().hex[:16]
+        self.campaign_id = f"campaign_{self.suffix}"
+
+    def tearDown(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("DELETE FROM hosted_live_receipt WHERE session_id IN (SELECT session_id FROM hosted_live_session WHERE campaign_id=%s)", (self.campaign_id,))
+            cursor.execute("DELETE FROM hosted_live_capture WHERE session_id IN (SELECT session_id FROM hosted_live_session WHERE campaign_id=%s)", (self.campaign_id,))
+            cursor.execute("DELETE FROM hosted_live_session WHERE campaign_id=%s", (self.campaign_id,))
+            cursor.execute("DELETE FROM hosted_atlas_projection_checkpoint WHERE campaign_id=%s", (self.campaign_id,))
+            cursor.execute("DELETE FROM hosted_http_operation_receipt WHERE operation LIKE %s AND idempotency_key LIKE %s", (r"live\_%", f"idem_{self.suffix}%"))
+            cursor.execute("DELETE FROM hosted_campaign_head WHERE campaign_id=%s", (self.campaign_id,))
+            cursor.execute("DELETE FROM hosted_publication_intent WHERE campaign_id=%s", (self.campaign_id,))
+
+    @staticmethod
+    def operation(name, request_id, key, **extra):
+        value = {"contract_name": "operation_request", "contract_version": 2,
+                 "request_id": request_id, "operation": name, "idempotency_key": key,
+                 "payload_digest": "0" * 64, "expected_revision": None,
+                 "expected_workflow_version": None}
+        value.update(extra)
+        return value
+
+    @staticmethod
+    def bind(payload):
+        Payload = payload.get("operation_request", payload)
+        Payload["payload_digest"] = canonical_digest(request_digest_input(payload))
+        return payload
+
+    def _app(self, directory):
+        root = Path(directory) / "runtime"
+        snapshots = Path(directory) / "snapshots"
+        return root, snapshots, SliceApplication(
+            root, snapshot_root=snapshots, provider=SyntheticProvider(),
+            receipts=PostgresHTTPRepository(self.connect),
+            proposal_repository=PostgresProposalRepository(self.connect),
+            workflow_repository=PostgresWorkflowRepository(self.connect),
+            ai_repository=PostgresAIRepository(self.connect),
+            atlas_repository=PostgresAtlasProjectionRepository(self.connect),
+        )
+
+    def _ready_campaign(self, app):
+        readiness = app.provider_readiness()[1]
+        consent = self.bind({"contract_name": "provider_consent_request", "contract_version": 2,
+            "operation_request": self.operation("provider_consent", f"request_consent_{self.suffix}", f"idem_consent_{self.suffix}"),
+            "input": {"explicit": True, "consent_identity_digest": readiness["consent_identity_digest"]}})
+        app.provider_consent(consent)
+        campaign = self.bind({"contract_name": "campaign_create_request", "contract_version": 2,
+            "operation_request": self.operation("campaign_create", f"request_campaign_{self.suffix}", f"idem_campaign_{self.suffix}"),
+            "input": {"campaign_id": self.campaign_id, "campaign_name": "Live PG", "adapter_id": "mothership"}})
+        return app.create_campaign(campaign)[1]["head_revision"]
+
+    def _start_payload(self, head_revision, session_id, controller_id="controller_alpha"):
+        return self.bind({"contract_name": "live_start_request", "contract_version": 2,
+            "operation_request": self.operation("live_start", f"request_start_{session_id}", f"idem_start_{session_id}_{self.suffix}"),
+            "campaign_id": self.campaign_id, "session_id": session_id,
+            "head_revision": head_revision, "controller_id": controller_id})
+
+    def _capture_payload(self, session_id, *, event_id="event_fact", operation_id="operation_fact", device_id="device_one", device_order=1, controller_id="controller_alpha", ewv=1, text="Door opened", key_suffix="cap0"):
+        return self.bind({"contract_name": "live_capture_request", "contract_version": 2,
+            "operation_request": self.operation("live_capture", f"request_cap_{session_id}_{key_suffix}", f"idem_cap_{session_id}_{key_suffix}_{self.suffix}", expected_workflow_version=ewv),
+            "campaign_id": self.campaign_id, "session_id": session_id,
+            "controller_id": controller_id, "controller_epoch": 1,
+            "event_id": event_id, "device_id": device_id, "operation_id": operation_id,
+            "device_order": device_order, "capture_type": "confirmed_fact", "text": text, "record_id": "record-door"})
+
+    def test_multi_device_barrier_identity_survives_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, app = self._app(directory); head = self._ready_campaign(app)
+            app.live_start(self.campaign_id, self._start_payload(head, "pair"))
+            app.live_capture(self.campaign_id, self._capture_payload("pair", ewv=1, key_suffix="a"))
+            app.live_capture(self.campaign_id, self._capture_payload("pair", device_id="device_two", event_id="event_two", ewv=2, key_suffix="b"))
+            app.live_end(self.campaign_id, self._end_payload("pair", required_operation_ids=[("device_one", "operation_fact"), ("device_two", "operation_fact")], ewv=3))
+            _, _, restarted = self._app(directory); _, view = restarted.live_read(self.campaign_id)
+            barrier = view["end_barrier"]
+            self.assertEqual("device_one", barrier["end_device_id"])
+            self.assertEqual(2, len(barrier["required_operation_ids"]))
+            self.assertEqual(2, len(barrier["acknowledged_operation_ids"]))
+
+    def test_stale_device_order_rejected_after_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, app = self._app(directory); head = self._ready_campaign(app)
+            app.live_start(self.campaign_id, self._start_payload(head, "orders"))
+            app.live_capture(self.campaign_id, self._capture_payload("orders", device_order=2))
+            _, _, restarted = self._app(directory)
+            for order in (2, 1):
+                with self.assertRaises(HTTPFailure) as ctx:
+                    restarted.live_capture(self.campaign_id, self._capture_payload("orders", event_id=f"event_{order}", operation_id=f"op_{order}", device_order=order, ewv=2, key_suffix=f"bad{order}"))
+                self.assertEqual(422, ctx.exception.status)
+
+    def _end_payload(self, session_id, *, required_operation_ids, ewv, controller_id="controller_alpha"):
+        return self.bind({"contract_name": "live_end_request", "contract_version": 2,
+            "operation_request": self.operation("live_end", f"request_end_{session_id}", f"idem_end_{session_id}_{self.suffix}", expected_workflow_version=ewv),
+            "campaign_id": self.campaign_id, "session_id": session_id,
+            "controller_id": controller_id, "controller_epoch": 1,
+            "device_id": "device_one", "operation_id": "operation_end",
+            "required_operation_ids": [{"device_id": d, "operation_id": o} for d, o in required_operation_ids]})
+
+    def test_live_lifecycle_survives_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, app = self._app(directory)
+            head = self._ready_campaign(app)
+            app.live_start(self.campaign_id, self._start_payload(head, "session_alpha"))
+            status, result = app.live_capture(self.campaign_id, self._capture_payload("session_alpha"))
+            self.assertEqual((200, "accepted"), (status, result["outcome"]))
+            self.assertEqual("record-door", result["session"]["events"][0]["record_id"])
+            app.live_end(self.campaign_id, self._end_payload("session_alpha", required_operation_ids=[("device_one", "operation_fact")], ewv=2))
+            # Restart against the same PostgreSQL.
+            _, _, restarted = self._app(directory)
+            status, view = restarted.live_read(self.campaign_id)
+            self.assertEqual(200, status)
+            self.assertEqual("ended_review_pending", view["mode"])
+            self.assertEqual(["record-door"], [item["record_id"] for item in view["events"]])
+            self.assertEqual([{"device_id":"device_one","operation_id":"operation_fact"}], view["end_barrier"]["required_operation_ids"])
+            self.assertEqual([{"device_id":"device_one","operation_id":"operation_fact"}], view["end_barrier"]["acknowledged_operation_ids"])
+            self.assertTrue(view["end_barrier"]["ready_for_proposal"])
+
+    def test_multiple_ended_sessions_select_most_recent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, app = self._app(directory)
+            head = self._ready_campaign(app)
+            app.live_start(self.campaign_id, self._start_payload(head, "session_one"))
+            app.live_end(self.campaign_id, self._end_payload("session_one", required_operation_ids=[], ewv=1))
+            app.live_start(self.campaign_id, self._start_payload(head, "session_two"))
+            app.live_end(self.campaign_id, self._end_payload("session_two", required_operation_ids=[], ewv=1))
+            app.live_start(self.campaign_id, self._start_payload(head, "session_three"))
+            app.live_end(self.campaign_id, self._end_payload("session_three", required_operation_ids=[], ewv=1))
+            _, view = app.live_read(self.campaign_id)
+            self.assertEqual("session_three", view["session_id"])
+            self.assertEqual("ended_review_pending", view["mode"])
+
+    def test_concurrent_identical_captures_replay_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, app = self._app(directory)
+            head = self._ready_campaign(app)
+            app.live_start(self.campaign_id, self._start_payload(head, "session_conc"))
+            from concurrent.futures import ThreadPoolExecutor
+
+            def attempt(_):
+                connect = lambda: psycopg.connect(DATABASE_URL)
+                capture_payload = {"contract_name": "live_capture_request", "contract_version": 2,
+                    "operation_request": self.operation("live_capture", f"request_conc_{self.suffix}", f"idem_conc_{self.suffix}", expected_workflow_version=1),
+                    "campaign_id": self.campaign_id, "session_id": "session_conc",
+                    "controller_id": "controller_alpha", "controller_epoch": 1,
+                    "event_id": "event_conc", "device_id": "device_one", "operation_id": "operation_conc",
+                    "device_order": 1, "capture_type": "confirmed_fact", "text": "Concurrent", "record_id": None}
+                target = capture_payload["operation_request"]
+                target["payload_digest"] = canonical_digest(request_digest_input(capture_payload))
+                local_app = SliceApplication(
+                    Path(directory) / "runtime", snapshot_root=Path(directory) / "snapshots",
+                    provider=SyntheticProvider(), receipts=PostgresHTTPRepository(connect),
+                    proposal_repository=PostgresProposalRepository(connect),
+                    workflow_repository=PostgresWorkflowRepository(connect),
+                    ai_repository=PostgresAIRepository(connect),
+                    atlas_repository=PostgresAtlasProjectionRepository(connect),
+                )
+                s, r = local_app.live_capture(self.campaign_id, capture_payload)
+                return r["outcome"]
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                outcomes = list(pool.map(attempt, range(4)))
+            self.assertEqual(1, outcomes.count("accepted"))
+            self.assertEqual(3, outcomes.count("exact_replay"))
+
+    def test_concurrent_start_yields_one_session(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, app = self._app(directory)
+            head = self._ready_campaign(app)
+            from concurrent.futures import ThreadPoolExecutor
+
+            def attempt(index):
+                connect = lambda: psycopg.connect(DATABASE_URL)
+                session_id = f"session_concstart_{index}_{self.suffix[-6:]}"
+                start_payload = {"contract_name": "live_start_request", "contract_version": 2,
+                    "operation_request": self.operation("live_start", f"request_cs_{index}_{self.suffix}", f"idem_cs_{index}_{self.suffix}"),
+                    "campaign_id": self.campaign_id, "session_id": session_id,
+                    "head_revision": head, "controller_id": "controller_alpha"}
+                target = start_payload["operation_request"]
+                target["payload_digest"] = canonical_digest(request_digest_input(start_payload))
+                local_app = SliceApplication(
+                    Path(directory) / "runtime", snapshot_root=Path(directory) / "snapshots",
+                    provider=SyntheticProvider(), receipts=PostgresHTTPRepository(connect),
+                    proposal_repository=PostgresProposalRepository(connect),
+                    workflow_repository=PostgresWorkflowRepository(connect),
+                    ai_repository=PostgresAIRepository(connect),
+                    atlas_repository=PostgresAtlasProjectionRepository(connect),
+                )
+                try:
+                    status, _ = local_app.live_start(self.campaign_id, start_payload)
+                    return status
+                except HTTPFailure as exc:
+                    return exc.status
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                outcomes = list(pool.map(attempt, range(4)))
+            self.assertEqual(1, outcomes.count(201))
+            # The remaining concurrent starts conflict as active_session_conflict.
+            self.assertEqual(3, outcomes.count(409))
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute("SELECT count(*) FROM hosted_live_session WHERE campaign_id=%s AND mode='active'", (self.campaign_id,))
+                self.assertEqual(1, cursor.fetchone()[0])
+
+
 if __name__ == "__main__":
     unittest.main()

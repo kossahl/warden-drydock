@@ -11,7 +11,8 @@ import threading
 from datetime import datetime, timezone
 
 from warden_drydock import __version__
-from warden_drydock.hosted.ai.models import Action, GenerationRecord, ProviderConsent
+from warden_drydock.hosted.ai.models import Action, CaptureType, GenerationRecord, ProviderConsent
+from warden_drydock.hosted.ai.live import LiveSessionService, StaleController, StaleWorkflow
 from warden_drydock.hosted.ai.provider import OpenAIResponsesAdapter, ProviderUnavailable
 from warden_drydock.hosted.ai.repository import InMemoryAIRepository
 from warden_drydock.hosted.ai.retrieval import DeterministicSourceSelector, EngineSourceLoader
@@ -131,6 +132,10 @@ class SliceApplication:
         "proposal_correction_request": {"contract_name", "contract_version", "operation_request", "proposal_id", "proposal_version", "source_revision", "base_revision", "change_id", "subject_id", "after_content"},
         "proposal_rejection_request": {"contract_name", "contract_version", "operation_request", "proposal_id", "proposal_version", "source_revision", "base_revision"},
         "proposal_approval_request": {"contract_name", "contract_version", "operation_request", "proposal_id", "proposal_version", "source_revision", "base_revision", "expected_campaign_head", "diff_digest", "proposal_payload_digest", "warden_confirmed"},
+        "live_start_request": {"contract_name", "contract_version", "operation_request", "campaign_id", "session_id", "head_revision", "controller_id"},
+        "live_takeover_request": {"contract_name", "contract_version", "operation_request", "campaign_id", "session_id", "controller_id", "controller_epoch"},
+        "live_capture_request": {"contract_name", "contract_version", "operation_request", "campaign_id", "session_id", "controller_id", "controller_epoch", "event_id", "device_id", "operation_id", "device_order", "capture_type", "text", "record_id"},
+        "live_end_request": {"contract_name", "contract_version", "operation_request", "campaign_id", "session_id", "controller_id", "controller_epoch", "device_id", "operation_id", "required_operation_ids"},
     }
 
     def __init__(self, root: Path | None = None, *, snapshot_root: Path | None = None,
@@ -168,6 +173,7 @@ class SliceApplication:
         )
         self.atlas = AtlasQueryService(self.atlas_repository)
         self.ai_repository = ai_repository or InMemoryAIRepository()
+        self.live = LiveSessionService(self.ai_repository)
         self.provider = provider or OpenAIResponsesAdapter()
         loader = EngineSourceLoader(self.engine, self._workspace_for_revision)
         self.ai = GroundedAIService(
@@ -775,6 +781,10 @@ class SliceApplication:
                 "proposal_correction_request": "proposal_correct",
                 "proposal_rejection_request": "proposal_reject",
                 "proposal_approval_request": "proposal_approve",
+                "live_start_request": "live_start",
+                "live_takeover_request": "live_takeover",
+                "live_capture_request": "live_capture",
+                "live_end_request": "live_end",
             }[expected]
             if operation.get("operation") != expected_operation:
                 raise HTTPFailure(422, "unsafe_binding", "invalid_operation_shape", stage, self._request_id(payload))
@@ -877,6 +887,46 @@ class SliceApplication:
                 and type(payload.get("proposal_version")) is int and payload["proposal_version"] >= 1
                 and payload.get("warden_confirmed") is True
             )
+        elif expected == "live_start_request":
+            valid = (
+                all(public(payload.get(field)) for field in (
+                    "campaign_id", "session_id", "head_revision", "controller_id",
+                ))
+            )
+        elif expected == "live_takeover_request":
+            valid = (
+                all(public(payload.get(field)) for field in ("campaign_id", "session_id", "controller_id"))
+                and type(payload.get("controller_epoch")) is int and payload["controller_epoch"] >= 1
+            )
+        elif expected == "live_capture_request":
+            record_id = payload.get("record_id")
+            valid = (
+                all(public(payload.get(field)) for field in (
+                    "campaign_id", "session_id", "controller_id", "event_id", "device_id", "operation_id",
+                ))
+                and type(payload.get("controller_epoch")) is int and payload["controller_epoch"] >= 1
+                and type(payload.get("device_order")) is int and payload["device_order"] >= 1
+                and payload.get("capture_type") in {"confirmed_fact", "unresolved_question"}
+                and isinstance(payload.get("text"), str)
+                and 1 <= len(payload["text"]) <= 100_000
+                and (record_id is None or (domain(record_id)))
+            )
+        elif expected == "live_end_request":
+            required_operation_ids = payload.get("required_operation_ids")
+            valid = (
+                all(public(payload.get(field)) for field in (
+                    "campaign_id", "session_id", "controller_id", "device_id", "operation_id",
+                ))
+                and type(payload.get("controller_epoch")) is int and payload["controller_epoch"] >= 1
+                and isinstance(required_operation_ids, list)
+                and all(
+                    isinstance(item, dict)
+                    and set(item) == {"device_id", "operation_id"}
+                    and public(item["device_id"]) and public(item["operation_id"])
+                    for item in required_operation_ids
+                )
+                and len({(item["device_id"], item["operation_id"]) for item in required_operation_ids}) == len(required_operation_ids)
+            )
         if not valid:
             raise HTTPFailure(422, "unsafe_binding", "invalid_request_value", stage, request_id)
         if expected == "campaign_create_request" and payload["input"].get("adapter_id") != "mothership":
@@ -894,6 +944,7 @@ class SliceApplication:
                 "idempotency_digest_conflict", "capability_rejected",
                 "source_digest_conflict", "proposal_approval_conflict",
                 "stale_revision", "stream_sequence_conflict",
+                "stale_controller", "stale_workflow",
             } else 422
             raise HTTPFailure(
                 status, exc.finding.category, exc.finding.code, stage,
@@ -1512,6 +1563,206 @@ class SliceApplication:
                 "published_revision": self._revision_ref(manifest), "error": None,
                 "exact_replay": exact_replay}
         return None
+
+    @staticmethod
+    def _live_operation_version(payload: dict) -> int:
+        operation = payload["operation_request"]
+        return operation["expected_workflow_version"]
+
+    def _live_stored_session(self, campaign_id: str, session_id: str):
+        try:
+            session = self.ai_repository.get_session(session_id)
+        except KeyError as exc:
+            raise HTTPFailure(404, "not_found", "session_not_found", "live") from exc
+        if session.campaign_id != campaign_id:
+            raise HTTPFailure(422, "unsafe_binding", "session_campaign_mismatch", "live")
+        return session
+
+    def _live_session_view(self, session) -> dict:
+        events = [
+            {
+                "event_id": item.event_id, "event_type": item.capture_type.value,
+                "device_id": item.device_id, "operation_id": item.operation_id,
+                "device_order": item.device_order, "payload_digest": item.payload_digest,
+                "base_revision": session.base_revision,
+                "grounding_eligible": item.capture_type is CaptureType.CONFIRMED_FACT,
+                "record_id": item.record_id,
+            }
+            for item in session.captures
+        ]
+        acknowledgements = [
+            {"device_id": device_id, "operation_id": operation_id,
+             "payload_digest": payload_digest, "outcome": "accepted"}
+            for (device_id, operation_id), payload_digest in sorted(session.receipts.items())
+        ]
+        barrier = None
+        if session.end_barrier is not None:
+            required_ids = [{"device_id": device, "operation_id": operation}
+                            for device, operation in session.end_barrier.required_operation_ids]
+            end_identity = (session.end_barrier.end_device_id, session.end_barrier.end_operation_id)
+            acknowledged_ids = [{"device_id": device, "operation_id": operation}
+                                for device, operation in sorted(session.receipts)
+                                if (device, operation) != end_identity]
+            barrier = {
+                "end_device_id": session.end_barrier.end_device_id,
+                "end_operation_id": session.end_barrier.end_operation_id,
+                "required_operation_ids": required_ids,
+                "acknowledged_operation_ids": acknowledged_ids,
+                "ready_for_proposal": session.end_barrier.ready_for_proposal,
+            }
+        return {
+            "contract_name": "live_session_view", "contract_version": 2,
+            "session_id": session.session_id, "campaign_id": session.campaign_id,
+            "base_revision": session.base_revision,
+            "reported_head_revision": session.reported_head_revision,
+            "workflow_version": session.workflow_version,
+            "controller": {
+                "epoch": session.controller_epoch,
+                "controller_id": session.controller_id, "mode": "controller",
+            },
+            "mode": session.mode, "events": events,
+            "acknowledgements": acknowledgements, "end_barrier": barrier,
+            "overlay": {
+                "overlay_id": self._id("overlay", session.session_id),
+                "authority": "non_canon", "base_revision": session.base_revision,
+                "confirmed_fact_ids": [
+                    item.event_id for item in session.captures
+                    if item.capture_type is CaptureType.CONFIRMED_FACT
+                ],
+                "question_ids": [
+                    item.event_id for item in session.captures
+                    if item.capture_type is CaptureType.UNRESOLVED_QUESTION
+                ],
+            },
+        }
+
+    def live_start(self, campaign_id: str, payload: dict) -> tuple[int, dict]:
+        self._closed_request(payload, "live_start_request", "live_start")
+        self._semantic(payload, context={"path_params": {"campaign_id": campaign_id}}, stage="live_start")
+        operation = payload["operation_request"]
+        if payload["campaign_id"] != campaign_id:
+            raise HTTPFailure(422, "unsafe_binding", "session_campaign_mismatch", "live_start", operation["request_id"])
+        # P1-2: only persist a session pinned to a real, publication-eligible revision.
+        try:
+            _, manifest = self._campaign_revision(payload["campaign_id"], payload["head_revision"])
+        except HTTPFailure as exc:
+            raise HTTPFailure(404, "not_found", "revision_not_found", "live_start", operation["request_id"]) from exc
+        if not self.workflow.publication_eligible(manifest):
+            raise HTTPFailure(422, "unsafe_binding", "revision_not_publication_eligible", "live_start", operation["request_id"])
+        try:
+            session = self.live.start(
+                payload["session_id"], payload["campaign_id"], payload["head_revision"],
+                payload["controller_id"],
+            )
+        except ValueError as exc:
+            if str(exc) == "active_session_conflict":
+                raise HTTPFailure(409, "idempotency_digest_conflict", "active_session_conflict", "live_start", operation["request_id"]) from exc
+            if str(exc) == "idempotency_digest_conflict":
+                raise HTTPFailure(409, "idempotency_digest_conflict", "idempotency_digest_conflict", "live_start", operation["request_id"]) from exc
+            raise HTTPFailure(422, "unsafe_binding", "invalid_live_binding", "live_start", operation["request_id"]) from exc
+        except RuntimeError as exc:
+            raise HTTPFailure(503, "service_unavailable", "live_feature_disabled", "live_start", operation["request_id"], True) from exc
+        return 201, self._live_session_view(session)
+
+    def live_read(self, campaign_id: str) -> tuple[int, dict]:
+        # Strictly read-only (P2-C): a GET must not mutate persisted state. The
+        # current session is the highest persisted session_seq (always unambiguous).
+        session = self.ai_repository.campaign_session(campaign_id)
+        if session is None:
+            raise HTTPFailure(404, "not_found", "session_not_found", "live_read")
+        return 200, self._live_session_view(session)
+
+    def live_takeover(self, campaign_id: str, payload: dict) -> tuple[int, dict]:
+        self._closed_request(payload, "live_takeover_request", "live_takeover")
+        stored = self._live_stored_session(campaign_id, payload["session_id"])
+        self._semantic(payload, context={"path_params": {"campaign_id": campaign_id}, "stored_session": self._live_session_view(stored)}, stage="live_takeover")
+        operation = payload["operation_request"]
+        try:
+            session = self.live.takeover(
+                payload["session_id"], payload["controller_id"], payload["controller_epoch"],
+                operation["expected_workflow_version"],
+            )
+        except StaleController as exc:
+            raise HTTPFailure(409, "stale_controller", "stale_controller_epoch", "live_takeover", operation["request_id"]) from exc
+        except StaleWorkflow as exc:
+            raise HTTPFailure(409, "stale_workflow", "stale_workflow_version", "live_takeover", operation["request_id"]) from exc
+        except ValueError as exc:
+            # P2-5: repository CAS failures surface as stale workflow/controller.
+            if str(exc) == "stale_workflow_version":
+                raise HTTPFailure(409, "stale_workflow", "stale_workflow_version", "live_takeover", operation["request_id"]) from exc
+            if str(exc) == "stale_controller_epoch":
+                raise HTTPFailure(409, "stale_controller", "stale_controller_epoch", "live_takeover", operation["request_id"]) from exc
+            raise HTTPFailure(422, "unsafe_binding", "invalid_live_binding", "live_takeover", operation["request_id"]) from exc
+        return 200, self._live_session_view(session)
+
+    def live_capture(self, campaign_id: str, payload: dict) -> tuple[int, dict]:
+        self._closed_request(payload, "live_capture_request", "live_capture")
+        stored = self._live_stored_session(campaign_id, payload["session_id"])
+        self._semantic(payload, context={"path_params": {"campaign_id": campaign_id}, "stored_session": self._live_session_view(stored)}, stage="live_capture")
+        operation = payload["operation_request"]
+        try:
+            outcome = self.live.capture(
+                payload["session_id"], payload["controller_id"], payload["controller_epoch"],
+                self._live_operation_version(payload),
+                event_id=payload["event_id"], device_id=payload["device_id"],
+                operation_id=payload["operation_id"], device_order=payload["device_order"],
+                capture_type=CaptureType(payload["capture_type"]), text=payload["text"],
+                record_id=payload.get("record_id"),
+            )
+        except StaleController as exc:
+            raise HTTPFailure(409, "stale_controller", "stale_controller_epoch", "live_capture", operation["request_id"]) from exc
+        except StaleWorkflow as exc:
+            raise HTTPFailure(409, "stale_workflow", "stale_workflow_version", "live_capture", operation["request_id"]) from exc
+        except ValueError as exc:
+            # P2-5: repository CAS failures surface as stale workflow/controller.
+            if str(exc) == "stale_workflow_version":
+                raise HTTPFailure(409, "stale_workflow", "stale_workflow_version", "live_capture", operation["request_id"]) from exc
+            if str(exc) == "stale_controller_epoch":
+                raise HTTPFailure(409, "stale_controller", "stale_controller_epoch", "live_capture", operation["request_id"]) from exc
+            if str(exc) == "idempotency_digest_conflict":
+                raise HTTPFailure(409, "idempotency_digest_conflict", "idempotency_digest_conflict", "live_capture", operation["request_id"]) from exc
+            raise HTTPFailure(422, "unsafe_binding", "unsafe_binding", "live_capture", operation["request_id"]) from exc
+        session = self.ai_repository.get_session(payload["session_id"])
+        result = {
+            "contract_name": "live_capture_result", "contract_version": 2,
+            "outcome": outcome, "campaign_id": payload["campaign_id"],
+            "session_id": payload["session_id"], "event_id": payload["event_id"],
+            "device_id": payload["device_id"], "operation_id": payload["operation_id"],
+            "session": self._live_session_view(session),
+        }
+        return 200, result
+
+    def live_end(self, campaign_id: str, payload: dict) -> tuple[int, dict]:
+        self._closed_request(payload, "live_end_request", "live_end")
+        stored = self._live_stored_session(campaign_id, payload["session_id"])
+        self._semantic(payload, context={"path_params": {"campaign_id": campaign_id}, "stored_session": self._live_session_view(stored)}, stage="live_end")
+        operation = payload["operation_request"]
+        try:
+            session = self.live.end(
+                payload["session_id"], payload["controller_id"], payload["controller_epoch"],
+                self._live_operation_version(payload),
+                device_id=payload["device_id"], operation_id=payload["operation_id"],
+                required_operation_ids=tuple(
+                    (item["device_id"], item["operation_id"])
+                    for item in payload["required_operation_ids"]
+                ),
+            )
+        except StaleController as exc:
+            raise HTTPFailure(409, "stale_controller", "stale_controller_epoch", "live_end", operation["request_id"]) from exc
+        except StaleWorkflow as exc:
+            raise HTTPFailure(409, "stale_workflow", "stale_workflow_version", "live_end", operation["request_id"]) from exc
+        except ValueError as exc:
+            # P2-5: repository CAS failures surface as stale workflow/controller.
+            if str(exc) == "stale_workflow_version":
+                raise HTTPFailure(409, "stale_workflow", "stale_workflow_version", "live_end", operation["request_id"]) from exc
+            if str(exc) == "stale_controller_epoch":
+                raise HTTPFailure(409, "stale_controller", "stale_controller_epoch", "live_end", operation["request_id"]) from exc
+            if str(exc) == "idempotency_digest_conflict":
+                raise HTTPFailure(409, "idempotency_digest_conflict", "idempotency_digest_conflict", "live_end", operation["request_id"]) from exc
+            if str(exc) == "live_unaccepted_barrier":
+                raise HTTPFailure(409, "live_barrier_conflict", "live_unaccepted_barrier", "live_end", operation["request_id"]) from exc
+            raise HTTPFailure(422, "unsafe_binding", "unsafe_binding", "live_end", operation["request_id"]) from exc
+        return 200, self._live_session_view(session)
 
     def _validate_proposal_change(
         self, campaign_id: str, base_revision: str, change: ExactTextChange,

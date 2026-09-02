@@ -11,6 +11,7 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 import urllib.error
 import urllib.request
@@ -541,6 +542,22 @@ class LiveSessionServiceTests(unittest.TestCase):
             event_id="event_" + operation.split("_")[-1], device_id="device_one", operation_id=operation,
             device_order=len(self.session.captures) + 1, capture_type=kind, text=text)
 
+    def test_device_order_is_strictly_increasing_and_replay_is_exact(self):
+        self.live.capture("session_one", "controller_one", 1, 1, event_id="event_a", device_id="device_one", operation_id="op_a", device_order=2, capture_type=CaptureType.CONFIRMED_FACT, text="A")
+        self.live.capture("session_one", "controller_one", 1, 2, event_id="event_b", device_id="device_one", operation_id="op_b", device_order=3, capture_type=CaptureType.CONFIRMED_FACT, text="B")
+        with self.assertRaises(ValueError):
+            self.live.capture("session_one", "controller_one", 1, 3, event_id="event_c", device_id="device_one", operation_id="op_c", device_order=3, capture_type=CaptureType.CONFIRMED_FACT, text="C")
+        with self.assertRaises(ValueError):
+            self.live.capture("session_one", "controller_one", 1, 3, event_id="event_d", device_id="device_one", operation_id="op_d", device_order=1, capture_type=CaptureType.CONFIRMED_FACT, text="D")
+        self.assertEqual("exact_replay", self.live.capture("session_one", "controller_one", 1, 1, event_id="event_a", device_id="device_one", operation_id="op_a", device_order=2, capture_type=CaptureType.CONFIRMED_FACT, text="A"))
+
+    def test_end_barrier_preserves_shared_operation_ids_by_device(self):
+        self.live.capture("session_one", "controller_one", 1, 1, event_id="event_a", device_id="device_one", operation_id="shared", device_order=1, capture_type=CaptureType.CONFIRMED_FACT, text="A")
+        self.live.capture("session_one", "controller_one", 1, 2, event_id="event_b", device_id="device_two", operation_id="shared", device_order=1, capture_type=CaptureType.CONFIRMED_FACT, text="B")
+        ended = self.live.end("session_one", "controller_one", 1, 3, device_id="device_one", operation_id="end", required_operation_ids=(("device_one", "shared"), ("device_two", "shared")))
+        self.assertTrue(ended.end_barrier.ready_for_proposal)
+        self.assertEqual(2, len(ended.end_barrier.required_operation_ids))
+
     def test_base_revision_stays_pinned_when_head_advances(self):
         self.live.observe("session_one", reported_head_revision="revision_two")
         self.assertEqual("revision_one", self.session.base_revision)
@@ -556,17 +573,17 @@ class LiveSessionServiceTests(unittest.TestCase):
         version = self.session.workflow_version
         outcome = self.capture()
         self.assertEqual("accepted", outcome)
-        outcome = self.live.capture("session_one", "controller_one", 1, self.session.workflow_version,
+        outcome = self.live.capture("session_one", "controller_one", 1, version,
             event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1,
             capture_type=CaptureType.CONFIRMED_FACT, text="Door opened")
         self.assertEqual("exact_replay", outcome)
         self.assertEqual(1, len(self.session.captures))
         with self.assertRaises(ValueError):
-            self.live.capture("session_one", "controller_one", 1, self.session.workflow_version,
+            self.live.capture("session_one", "controller_one", 1, version,
                 event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1,
                 capture_type=CaptureType.CONFIRMED_FACT, text="Different")
         with self.assertRaises(ValueError):
-            self.live.capture("session_one", "controller_one", 1, self.session.workflow_version,
+            self.live.capture("session_one", "controller_one", 1, version,
                 event_id="changed_event", device_id="device_one", operation_id="operation_one", device_order=2,
                 capture_type=CaptureType.CONFIRMED_FACT, text="Door opened")
         self.assertGreater(self.session.workflow_version, version)
@@ -585,7 +602,7 @@ class LiveSessionServiceTests(unittest.TestCase):
 
     def test_provider_outage_does_not_block_typed_capture_or_end(self):
         self.assertEqual("accepted", self.capture())
-        ended = self.live.end("session_one", "controller_one", 1, self.session.workflow_version, device_id="device_one", operation_id="end_one")
+        ended = self.live.end("session_one", "controller_one", 1, self.session.workflow_version, device_id="device_one", operation_id="end_one", required_operation_ids=(("device_one", "operation_one"),))
         self.assertEqual("ended_review_pending", ended.mode)
         self.assertEqual("revision_one", ended.base_revision)
 
@@ -606,6 +623,209 @@ class LiveSessionServiceTests(unittest.TestCase):
         self.assertEqual("ended_review_pending", replay.mode)
         with self.assertRaises(StaleWorkflow):
             self.live.end("session_one", "controller_one", 1, self.session.workflow_version, device_id="device_one", operation_id="end_two")
+
+    def test_end_barrier_rejects_omitted_acknowledged_capture_with_empty_required_set(self):
+        self.capture("operation_a", CaptureType.CONFIRMED_FACT, "Fact A")
+        with self.assertRaises(ValueError):
+            self.live.end("session_one", "controller_one", 1, self.session.workflow_version,
+                device_id="device_one", operation_id="end_one", required_operation_ids=())
+
+    def test_start_replay_binds_controller_identity(self):
+        with self.assertRaises(ValueError):
+            self.live.start("session_one", "campaign_one", "revision_one", "other_controller")
+        self.assertEqual("controller_one", self.session.controller_id)
+
+    def test_concurrent_start_yields_one_session(self):
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            outcomes = list(pool.map(
+                lambda _: self.live.start("session_new", "campaign_new", "revision_new", "controller_new"),
+                range(4),
+            ))
+        self.assertEqual(1, len([item for item in self.repository.sessions.values() if item.campaign_id == "campaign_new"]))
+        self.assertTrue(all(item == outcomes[0] for item in outcomes))
+
+    def test_end_operation_cannot_self_certify_readiness(self):
+        # P1-A: the end operation is rejected inside required_operation_ids.
+        with self.assertRaises(ValueError):
+            self.live.end("session_one", "controller_one", 1, self.session.workflow_version,
+                device_id="device_one", operation_id="operation_end",
+                required_operation_ids=(("device_one", "operation_end"),))
+        # Readiness is computed exclusively against capture acknowledgements BEFORE
+        # the end receipt is added, so an unacknowledged required capture (and zero
+        # captures) can never be certified by the end operation itself.
+        ended = self.live.end("session_one", "controller_one", 1, self.session.workflow_version,
+            device_id="device_one", operation_id="operation_end",
+            required_operation_ids=(("device_one", "operation_never_acked"),))
+        self.assertFalse(ended.end_barrier.ready_for_proposal)
+        self.assertEqual((("device_one", "operation_never_acked"),), ended.end_barrier.required_operation_ids)
+
+    def test_capture_cas_loss_returns_exact_replay(self):
+        # P2-D: force the optimistic CAS loss on save_session. The working session is
+        # the shared stored object, so the receipt lands on the persisted state before
+        # the loss; the retry reload then sees the identical digest and returns
+        # exact_replay instead of propagating stale_workflow_version.
+        repo = InMemoryAIRepository()
+        service = LiveSessionService(repo)
+        service.start("session_opt", "campaign_opt", "revision_opt", "controller_opt")
+
+        def losing_save(session, *, expected_workflow_version=None, expected_epoch=None):
+            raise ValueError("stale_workflow_version")
+
+        original = repo.save_session
+        repo.save_session = losing_save
+        try:
+            outcome = service.capture(
+                "session_opt", "controller_opt", 1, 1,
+                event_id="event_opt", device_id="device_opt", operation_id="operation_opt",
+                device_order=1, capture_type=CaptureType.CONFIRMED_FACT, text="Racing capture",
+            )
+        finally:
+            repo.save_session = original
+        self.assertEqual("exact_replay", outcome)
+
+    def test_capture_cas_loss_true_conflict_preserved(self):
+        # P2-D: when save_session CAS-loses AND the persisted state holds a DIFFERENT
+        # digest under the same key (a divergent concurrent writer committed first),
+        # the retry cannot resolve to exact_replay and the original conflict is
+        # preserved as stale_workflow_version.
+        repo = InMemoryAIRepository()
+        service = LiveSessionService(repo)
+        service.start("session_opt", "campaign_opt", "revision_opt", "controller_opt")
+
+        def conflicting_save(session, *, expected_workflow_version=None, expected_epoch=None):
+            # A divergent winner already committed a different digest for the key.
+            stored = repo.sessions[session.session_id]
+            stored.receipts[("device_opt", "operation_other")] = "f" * 64
+            stored.workflow_version += 1
+            raise ValueError("stale_workflow_version")
+
+        original = repo.save_session
+        repo.save_session = conflicting_save
+        try:
+            with self.assertRaises(ValueError) as raised:
+                service.capture(
+                    "session_opt", "controller_opt", 1, 1,
+                    event_id="event_other", device_id="device_opt", operation_id="operation_other",
+                    device_order=1, capture_type=CaptureType.CONFIRMED_FACT, text="Diverged",
+                )
+        finally:
+            repo.save_session = original
+        self.assertEqual("stale_workflow_version", str(raised.exception))
+
+    def test_campaign_session_selects_most_recent_ended_session(self):
+        # P1-B: after multiple ended sessions, readback selects the newest by
+        # persisted creation order, identically to PostgreSQL.
+        self.live.end("session_one", "controller_one", 1, self.session.workflow_version,
+            device_id="device_one", operation_id="end_one")
+        second = self.live.start("session_two", "campaign_one", "revision_one", "controller_one")
+        self.live.end("session_two", "controller_one", 1, second.workflow_version,
+            device_id="device_one", operation_id="end_two")
+        third = self.live.start("session_three", "campaign_one", "revision_one", "controller_one")
+        self.live.end("session_three", "controller_one", 1, third.workflow_version,
+            device_id="device_one", operation_id="end_three")
+        selected = self.repository.campaign_session("campaign_one")
+        self.assertEqual("session_three", selected.session_id)
+
+    def test_campaign_session_uses_persisted_seq_not_insertion_or_id(self):
+        # P1: preview_legacy-equivalent - session_z created first (seq 1), session_a
+        # second (seq 2). Readback must select the newest by persisted seq (session_a),
+        # NOT by lexicographic/reverse-insertion order.
+        z = self.live.start("session_z", "campaign_seq", "revision_one", "controller_one")
+        self.live.end("session_z", "controller_one", 1, z.workflow_version,
+            device_id="device_one", operation_id="end_z")
+        a = self.live.start("session_a", "campaign_seq", "revision_one", "controller_one")
+        self.live.end("session_a", "controller_one", 1, a.workflow_version,
+            device_id="device_one", operation_id="end_a")
+        selected = self.repository.campaign_session("campaign_seq")
+        self.assertEqual("session_a", selected.session_id)
+        self.assertGreater(selected.session_seq, self.repository.sessions["session_z"].session_seq)
+
+    def test_campaign_session_readback_highest_seq_is_unambiguous(self):
+        # P1, Option C: session_seq is set at INSERT time for every session, so the
+        # highest-seq session is returned with no legacy ambiguity/fallback.
+        selected = self.repository.campaign_session("campaign_one")
+        self.assertEqual("session_one", selected.session_id)
+        # Even if two sessions were somehow to share a seq value, selection is
+        # simply the highest persisted seq (no identifier fallback, no error).
+        self.live.capture("session_one", "controller_one", 1, self.session.workflow_version,
+            event_id="event_load", device_id="device_one", operation_id="operation_load", device_order=1,
+            capture_type=CaptureType.CONFIRMED_FACT, text="Loaded")
+        ended = self.live.end("session_one", "controller_one", 1, self.session.workflow_version,
+                device_id="device_one", operation_id="end_load", required_operation_ids=(("device_one", "operation_load"),))
+        second = self.live.start("session_two", "campaign_one", "revision_one", "controller_one")
+        self.live.end("session_two", "controller_one", 1, second.workflow_version,
+            device_id="device_one", operation_id="end_two", required_operation_ids=())
+        self.assertGreater(
+            self.repository.sessions["session_two"].session_seq,
+            self.repository.sessions["session_one"].session_seq,
+        )
+        self.assertEqual("session_two", self.repository.campaign_session("campaign_one").session_id)
+
+    def test_reused_operation_digest_is_not_exact_replay_across_device_or_session(self):
+        first = self.live.capture("session_one", "controller_one", 1, self.session.workflow_version,
+            event_id="event_one", device_id="device_one", operation_id="operation_shared", device_order=1,
+            capture_type=CaptureType.CONFIRMED_FACT, text="Door opened")
+        self.assertEqual("accepted", first)
+        # Same operation id, different device: not a replay, distinct binding/digest.
+        other = self.live.capture("session_one", "controller_one", 1, self.session.workflow_version,
+            event_id="event_two", device_id="device_two", operation_id="operation_shared", device_order=2,
+            capture_type=CaptureType.CONFIRMED_FACT, text="Door opened")
+        self.assertEqual("accepted", other)
+        # Same operation id, changed payload on the original device: digest conflict.
+        with self.assertRaises(ValueError):
+            self.live.capture("session_one", "controller_one", 1, 1,
+                event_id="event_three", device_id="device_one", operation_id="operation_shared", device_order=3,
+                capture_type=CaptureType.CONFIRMED_FACT, text="Changed")
+        # A different session sharing the operation id is not an exact replay.
+        second = self.live.start("session_two", "campaign_two", "revision_two", "controller_two")
+        accepted = self.live.capture("session_two", "controller_two", 1, second.workflow_version,
+            event_id="event_four", device_id="device_one", operation_id="operation_shared", device_order=1,
+            capture_type=CaptureType.CONFIRMED_FACT, text="Door opened")
+        self.assertEqual("accepted", accepted)
+
+    def test_capture_persists_optional_affected_record_provenance(self):
+        self.live.capture("session_one", "controller_one", 1, self.session.workflow_version,
+            event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1,
+            capture_type=CaptureType.CONFIRMED_FACT, text="Door opened", record_id="record-door")
+        self.assertEqual("record-door", self.session.captures[0].record_id)
+
+    def test_end_barrier_completion_requires_acknowledged_required_set(self):
+        self.capture("operation_a", CaptureType.CONFIRMED_FACT, "Fact A")
+        self.capture("operation_b", CaptureType.CONFIRMED_FACT, "Fact B")
+        # Fail closed: a barrier that omits an acknowledged capture must be rejected.
+        with self.assertRaises(ValueError):
+            self.live.end("session_one", "controller_one", 1, self.session.workflow_version,
+                device_id="device_one", operation_id="end_one", required_operation_ids=(("device_one", "operation_a"),))
+        # Completion is reported only after every required operation is acknowledged.
+        ended = self.live.end("session_one", "controller_one", 1, self.session.workflow_version,
+            device_id="device_one", operation_id="end_one",
+            required_operation_ids=(("device_one", "operation_a"), ("device_one", "operation_b")))
+        self.assertEqual("ended_review_pending", ended.mode)
+        self.assertIsNotNone(ended.end_barrier)
+        self.assertTrue(ended.end_barrier.ready_for_proposal)
+        self.assertEqual((("device_one", "operation_a"), ("device_one", "operation_b")), ended.end_barrier.required_operation_ids)
+
+    def test_end_barrier_not_ready_when_required_operation_unacknowledged(self):
+        self.capture("operation_a", CaptureType.CONFIRMED_FACT, "Fact A")
+        ended = self.live.end("session_one", "controller_one", 1, self.session.workflow_version,
+            device_id="device_one", operation_id="end_one",
+            required_operation_ids=(("device_one", "operation_a"), ("device_one", "operation_missing")))
+        self.assertEqual("ended_review_pending", ended.mode)
+        self.assertIsNotNone(ended.end_barrier)
+        self.assertFalse(ended.end_barrier.ready_for_proposal)
+
+    def test_concurrent_identical_captures_replay_exactly_once(self):
+        self.live.capture("session_one", "controller_one", 1, 1,
+            event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1,
+            capture_type=CaptureType.CONFIRMED_FACT, text="Door opened")
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            outcomes = list(pool.map(lambda _: self.live.capture(
+                "session_one", "controller_one", 1, 1,
+                event_id="event_one", device_id="device_one", operation_id="operation_one", device_order=1,
+                capture_type=CaptureType.CONFIRMED_FACT, text="Door opened"), range(4)))
+        self.assertEqual(["exact_replay"] * 4, outcomes)
+        self.assertEqual(1, len(self.session.captures))
+        self.assertEqual({("device_one", "operation_one")}, set(self.session.receipts))
 
 
 def _entity_text(kind, entity_id, name):

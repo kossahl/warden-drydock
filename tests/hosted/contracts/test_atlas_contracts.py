@@ -205,7 +205,7 @@ class AtlasContractTests(unittest.TestCase):
             (CONTRACT_ROOT.parents[1] / "index.json").read_text(encoding="utf-8")
         )
         self.assertEqual(
-            ["v2/index.json", "atlas/v2/index.json"],
+            ["v2/index.json", "atlas/v2/index.json", "live/v1/index.json"],
             [item["index"] for item in aggregate["packages"]],
         )
         self.assertIn("does not mutate", self.index["compatibility"])

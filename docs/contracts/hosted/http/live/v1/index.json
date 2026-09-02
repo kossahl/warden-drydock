@@ -1,0 +1,17 @@
+{
+  "contract_name": "hosted_live_http_contract_index",
+  "contract_version": 1,
+  "schema": "live.schema.json",
+  "routes": "routes.json",
+  "examples": "examples.json",
+  "semantic_invariants": "semantic-invariants.json",
+  "negative_fixtures": [
+    "negative/stale-controller-epoch.json",
+    "negative/stale-workflow-version.json",
+    "negative/digest-conflict.json",
+    "negative/session-campaign-mismatch.json",
+    "negative/unaccepted-barrier.json",
+    "negative/replay-after-takeover.json"
+  ],
+  "compatibility": "This new dedicated live HTTP family starts at v1 while the other active HTTP packages (general hosted HTTP v2 and Campaign Atlas HTTP v2) remain at v2. It performs session-local persisted idempotency on hosted_live_receipt and does not route live mutations through the global HTTP operation receipt store."
+}

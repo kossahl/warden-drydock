@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://warden-drydock.invalid/contracts/hosted/http/live/v1/live.schema.json",
+  "title": "Warden Drydock live HTTP transport contracts v1",
+  "oneOf": [
+    {"$ref":"#/$defs/live_start_request"},
+    {"$ref":"#/$defs/live_takeover_request"},
+    {"$ref":"#/$defs/live_capture_request"},
+    {"$ref":"#/$defs/live_end_request"},
+    {"$ref":"#/$defs/live_session_view"},
+    {"$ref":"#/$defs/live_capture_result"},
+    {"$ref":"#/$defs/error_response"}
+  ],
+  "$defs": {
+    "public_id": {"type":"string","minLength":3,"maxLength":80,"pattern":"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
+    "domain_id": {"type":"string","minLength":3,"maxLength":200,"pattern":"^[a-z0-9][a-z0-9-]*$"},
+    "digest": {"type":"string","pattern":"^[a-f0-9]{64}$"},
+    "capture_type": {"enum":["confirmed_fact","unresolved_question"]},
+    "operation_request": {
+      "type":"object","additionalProperties":false,
+      "required":["contract_name","contract_version","request_id","operation","idempotency_key","payload_digest","expected_revision","expected_workflow_version"],
+      "properties":{
+        "contract_name":{"const":"operation_request"},"contract_version":{"const":2},
+        "request_id":{"$ref":"#/$defs/public_id"},
+        "operation":{"enum":["live_start","live_takeover","live_capture","live_end"]},
+        "idempotency_key":{"$ref":"#/$defs/public_id"},"payload_digest":{"$ref":"#/$defs/digest"},
+        "expected_revision":{"oneOf":[{"$ref":"#/$defs/public_id"},{"type":"null"}]},
+        "expected_workflow_version":{"oneOf":[{"type":"integer","minimum":1},{"type":"null"}]}
+      }
+    },
+    "event": {
+      "type":"object","additionalProperties":false,
+      "required":["event_id","event_type","device_id","operation_id","device_order","payload_digest","base_revision","grounding_eligible","record_id"],
+      "properties":{
+        "event_id":{"$ref":"#/$defs/public_id"},"event_type":{"$ref":"#/$defs/capture_type"},
+        "device_id":{"$ref":"#/$defs/public_id"},"operation_id":{"$ref":"#/$defs/public_id"},
+        "device_order":{"type":"integer","minimum":1},"payload_digest":{"$ref":"#/$defs/digest"},
+        "base_revision":{"$ref":"#/$defs/public_id"},"grounding_eligible":{"type":"boolean"},
+        "record_id":{"oneOf":[{"$ref":"#/$defs/domain_id"},{"type":"null"}]}
+      }
+    },
+    "acknowledgement": {
+      "type":"object","additionalProperties":false,
+      "required":["device_id","operation_id","payload_digest","outcome"],
+      "properties":{"device_id":{"$ref":"#/$defs/public_id"},"operation_id":{"$ref":"#/$defs/public_id"},"payload_digest":{"$ref":"#/$defs/digest"},"outcome":{"enum":["accepted","exact_replay","digest_conflict"]}}
+    },
+    "end_barrier": {
+      "type":"object","additionalProperties":false,
+      "required":["end_device_id","end_operation_id","required_operation_ids","acknowledged_operation_ids","ready_for_proposal"],
+      "properties":{"end_device_id":{"$ref":"#/$defs/public_id"},"end_operation_id":{"$ref":"#/$defs/public_id"},"required_operation_ids":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/receipt_identity"}},"acknowledged_operation_ids":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/receipt_identity"}},"ready_for_proposal":{"type":"boolean"}}
+    },
+    "receipt_identity":{"type":"object","additionalProperties":false,"required":["device_id","operation_id"],"properties":{"device_id":{"$ref":"#/$defs/public_id"},"operation_id":{"$ref":"#/$defs/public_id"}}},
+    "overlay": {
+      "type":"object","additionalProperties":false,
+      "required":["overlay_id","authority","base_revision","confirmed_fact_ids","question_ids"],
+      "properties":{"overlay_id":{"$ref":"#/$defs/public_id"},"authority":{"const":"non_canon"},"base_revision":{"$ref":"#/$defs/public_id"},"confirmed_fact_ids":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/public_id"}},"question_ids":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/public_id"}}}
+    },
+    "session_content": {
+      "type":"object","additionalProperties":false,
+      "required":["contract_name","contract_version","session_id","campaign_id","base_revision","reported_head_revision","workflow_version","controller","mode","events","acknowledgements","end_barrier","overlay"],
+      "properties":{
+        "contract_name":{"const":"live_session_view"},"contract_version":{"const":2},
+        "session_id":{"$ref":"#/$defs/public_id"},"campaign_id":{"$ref":"#/$defs/public_id"},
+        "base_revision":{"$ref":"#/$defs/public_id"},"reported_head_revision":{"$ref":"#/$defs/public_id"},
+        "workflow_version":{"type":"integer","minimum":1},
+        "controller":{"type":"object","additionalProperties":false,"required":["epoch","controller_id","mode"],"properties":{"epoch":{"type":"integer","minimum":1},"controller_id":{"$ref":"#/$defs/public_id"},"mode":{"const":"controller"}}},
+        "mode":{"enum":["active","ended_review_pending","ended"]},
+        "events":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/event"}},
+        "acknowledgements":{"type":"array","items":{"$ref":"#/$defs/acknowledgement"}},
+        "end_barrier":{"oneOf":[{"$ref":"#/$defs/end_barrier"},{"type":"null"}]},
+        "overlay":{"$ref":"#/$defs/overlay"}
+      }
+    },
+    "live_start_request": {
+      "type":"object","additionalProperties":false,
+      "required":["contract_name","contract_version","operation_request","campaign_id","session_id","head_revision","controller_id"],
+      "properties":{
+        "contract_name":{"const":"live_start_request"},"contract_version":{"const":2},
+        "operation_request":{"$ref":"#/$defs/operation_request"},
+        "campaign_id":{"$ref":"#/$defs/public_id"},"session_id":{"$ref":"#/$defs/public_id"},
+        "head_revision":{"$ref":"#/$defs/public_id"},"controller_id":{"$ref":"#/$defs/public_id"}
+      }
+    },
+    "live_takeover_request": {
+      "type":"object","additionalProperties":false,
+      "required":["contract_name","contract_version","operation_request","campaign_id","session_id","controller_id","controller_epoch"],
+      "properties":{
+        "contract_name":{"const":"live_takeover_request"},"contract_version":{"const":2},
+        "operation_request":{"$ref":"#/$defs/operation_request"},
+        "campaign_id":{"$ref":"#/$defs/public_id"},"session_id":{"$ref":"#/$defs/public_id"},
+        "controller_id":{"$ref":"#/$defs/public_id"},"controller_epoch":{"type":"integer","minimum":1}
+      }
+    },
+    "live_capture_request": {
+      "type":"object","additionalProperties":false,
+      "required":["contract_name","contract_version","operation_request","campaign_id","session_id","controller_id","controller_epoch","event_id","device_id","operation_id","device_order","capture_type","text","record_id"],
+      "properties":{
+        "contract_name":{"const":"live_capture_request"},"contract_version":{"const":2},
+        "operation_request":{"$ref":"#/$defs/operation_request"},
+        "campaign_id":{"$ref":"#/$defs/public_id"},"session_id":{"$ref":"#/$defs/public_id"},
+        "controller_id":{"$ref":"#/$defs/public_id"},"controller_epoch":{"type":"integer","minimum":1},
+        "event_id":{"$ref":"#/$defs/public_id"},"device_id":{"$ref":"#/$defs/public_id"},
+        "operation_id":{"$ref":"#/$defs/public_id"},"device_order":{"type":"integer","minimum":1},
+        "capture_type":{"$ref":"#/$defs/capture_type"},"text":{"type":"string","minLength":1,"maxLength":100000},
+        "record_id":{"oneOf":[{"$ref":"#/$defs/domain_id"},{"type":"null"}]}
+      }
+    },
+    "live_end_request": {
+      "type":"object","additionalProperties":false,
+      "required":["contract_name","contract_version","operation_request","campaign_id","session_id","controller_id","controller_epoch","device_id","operation_id","required_operation_ids"],
+      "properties":{
+        "contract_name":{"const":"live_end_request"},"contract_version":{"const":2},
+        "operation_request":{"$ref":"#/$defs/operation_request"},
+        "campaign_id":{"$ref":"#/$defs/public_id"},"session_id":{"$ref":"#/$defs/public_id"},
+        "controller_id":{"$ref":"#/$defs/public_id"},"controller_epoch":{"type":"integer","minimum":1},
+        "device_id":{"$ref":"#/$defs/public_id"},"operation_id":{"$ref":"#/$defs/public_id"},
+        "required_operation_ids":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/receipt_identity"}}
+      }
+    },
+    "live_session_view": {"$ref":"#/$defs/session_content"},
+    "live_capture_result": {
+      "type":"object","additionalProperties":false,
+      "required":["contract_name","contract_version","outcome","campaign_id","session_id","event_id","device_id","operation_id","session"],
+      "properties":{
+        "contract_name":{"const":"live_capture_result"},"contract_version":{"const":2},
+        "outcome":{"enum":["accepted","exact_replay","digest_conflict"]},
+        "campaign_id":{"$ref":"#/$defs/public_id"},"session_id":{"$ref":"#/$defs/public_id"},
+        "event_id":{"$ref":"#/$defs/public_id"},"device_id":{"$ref":"#/$defs/public_id"},
+        "operation_id":{"$ref":"#/$defs/public_id"},"session":{"$ref":"#/$defs/session_content"}
+      }
+    },
+    "error": {
+      "type":"object","additionalProperties":false,
+      "required":["category","code","stage","request_id","retryable"],
+      "properties":{
+        "category":{"enum":["unsupported_contract_version","unsafe_binding","idempotency_digest_conflict","stale_revision","stale_controller","stale_workflow","live_barrier_conflict","capability_rejected","service_unavailable","not_found"]},
+        "code":{"type":"string","pattern":"^[a-z][a-z0-9_]+$"},"stage":{"type":"string","pattern":"^[a-z][a-z0-9_]+$"},
+        "request_id":{"$ref":"#/$defs/public_id"},"retryable":{"type":"boolean"}
+      }
+    },
+    "error_response": {
+      "type":"object","additionalProperties":false,"required":["contract_name","contract_version","error"],
+      "properties":{"contract_name":{"const":"error_response"},"contract_version":{"const":2},"error":{"$ref":"#/$defs/error"}}
+    }
+  }
+}
