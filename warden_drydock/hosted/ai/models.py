@@ -121,6 +121,21 @@ class Capture:
     capture_type: CaptureType
     text: str
     payload_digest: str
+    record_id: str | None = None
+
+
+@dataclass(frozen=True)
+class LiveEndBarrier:
+    """Exact operation set/watermark persisted when a live session ends (Decision A).
+
+    ``ready_for_proposal`` is True only when every required operation id has been
+    acknowledged on the session-local persisted receipt set.
+    """
+
+    end_operation_id: str
+    end_device_id: str
+    required_operation_ids: tuple[tuple[str, str], ...]
+    ready_for_proposal: bool
 
 
 @dataclass
@@ -135,3 +150,53 @@ class LiveSession:
     mode: str = "active"
     captures: list[Capture] = field(default_factory=list)
     receipts: dict[tuple[str, str], str] = field(default_factory=dict)
+    end_barrier: LiveEndBarrier | None = None
+    # Persisted monotonic creation marker (P1, Option C). Assigned at INSERT time for
+    # every session from the first supported deployment (the ordering migration fails
+    # closed if rows existed before it), so the ordering is always unambiguous.
+    session_seq: int = 0
+
+
+def live_operation_digest(
+    *,
+    campaign_id: str,
+    base_revision: str,
+    session_id: str,
+    controller_id: str,
+    controller_epoch: int,
+    workflow_version: int,
+    event_type: str,
+    event_id: str | None,
+    device_id: str,
+    operation_id: str,
+    device_order: int | None,
+    text: str,
+    record_id: str | None = None,
+    required_operation_ids: tuple[tuple[str, str], ...] | None = None,
+) -> str:
+    """Canonical digest binding ALL live mutation state (Blocker F3.1).
+
+    Idempotency must not be reachable by replaying an identical operation id across
+    a different session, device, controller epoch, workflow version, or payload.
+    The end barrier additionally binds the exact required operation set so a
+    changed barrier is never treated as an exact replay.
+    """
+    binding: dict[str, object] = {
+        "campaign_id": campaign_id,
+        "base_revision": base_revision,
+        "session_id": session_id,
+        "controller_id": controller_id,
+        "controller_epoch": controller_epoch,
+        "workflow_version": workflow_version,
+        "event_type": event_type,
+        "event_id": event_id,
+        "device_id": device_id,
+        "operation_id": operation_id,
+        "device_order": device_order,
+        "text": text,
+    }
+    if record_id is not None:
+        binding["record_id"] = record_id
+    if required_operation_ids is not None:
+        binding["required_operation_ids"] = tuple(sorted(required_operation_ids))
+    return canonical_digest(binding)

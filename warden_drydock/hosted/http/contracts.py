@@ -17,6 +17,13 @@ _REQUEST_META = {
     "operation_request",
 }
 
+_LIVE_OPERATION_REQUESTS = frozenset({
+    "live_start_request",
+    "live_takeover_request",
+    "live_capture_request",
+    "live_end_request",
+})
+
 
 @dataclass(frozen=True)
 class SemanticFinding:
@@ -69,8 +76,10 @@ def validate_http_semantics(
         "proposal_correction_request",
         "proposal_rejection_request",
         "proposal_approval_request",
-    }:
+    } | set(_LIVE_OPERATION_REQUESTS):
         _operation_digest(payload)
+    if name in set(_LIVE_OPERATION_REQUESTS):
+        _live_session_binding(payload, context)
     if name == "provider_consent_request":
         _consent_identity(payload, context)
     if name == "provider_readiness_response":
@@ -119,6 +128,10 @@ def _require_route_context(name: object, context: Mapping[str, object]) -> None:
         "proposal_correction_request": ("proposal", "path_params"),
         "proposal_rejection_request": ("proposal", "path_params"),
         "proposal_approval_request": ("proposal", "path_params"),
+        "live_start_request": ("path_params",),
+        "live_takeover_request": ("path_params", "stored_session"),
+        "live_capture_request": ("path_params", "stored_session"),
+        "live_end_request": ("path_params", "stored_session"),
     }.get(name, ())
     missing = [key for key in required if key not in context]
     if not missing:
@@ -127,6 +140,10 @@ def _require_route_context(name: object, context: Mapping[str, object]) -> None:
         _fail("http_consent_identity", "capability_rejected", "consent_identity_unavailable")
     if name == "generation_view":
         _fail("http_source_set_binding", "source_digest_conflict", "source_envelope_unavailable")
+    if name in set(_LIVE_OPERATION_REQUESTS):
+        if "path_params" in missing:
+            _fail("http_path_body_equality", "unsafe_binding", "route_binding_unavailable")
+        _fail("http_live_session_binding", "unsafe_binding", "session_binding_unavailable")
     if "path_params" in missing:
         _fail("http_path_body_equality", "unsafe_binding", "route_binding_unavailable")
     if "generation" in missing:
@@ -134,6 +151,18 @@ def _require_route_context(name: object, context: Mapping[str, object]) -> None:
     if name in {"proposal_view", "proposal_approval_result"}:
         _fail("http_proposal_provenance", "source_digest_conflict", "stored_provenance_unavailable")
     _fail("http_single_record_append", "proposal_validation_failure", "proposal_context_unavailable")
+
+
+def _live_session_binding(payload: Mapping[str, object], context: Mapping[str, object]) -> None:
+    if payload.get("contract_name") == "live_start_request":
+        return
+    stored = context.get("stored_session")
+    if stored is None:
+        return
+    if payload.get("campaign_id") != stored.get("campaign_id"):
+        _fail("http_live_session_binding", "unsafe_binding", "session_campaign_mismatch")
+    if payload.get("session_id") != stored.get("session_id"):
+        _fail("http_live_session_binding", "unsafe_binding", "session_id_mismatch")
 
 
 def _operation_digest(payload: Mapping[str, object]) -> None:

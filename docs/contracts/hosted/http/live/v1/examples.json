@@ -1,0 +1,268 @@
+{
+  "contract_name": "hosted_live_http_examples",
+  "contract_version": 1,
+  "examples": [
+    {
+      "name": "live_start",
+      "payload": {
+        "contract_name": "live_start_request",
+        "contract_version": 2,
+        "operation_request": {
+          "contract_name": "operation_request",
+          "contract_version": 2,
+          "request_id": "request_start",
+          "operation": "live_start",
+          "idempotency_key": "idem_start",
+          "payload_digest": "3d17ce0bc318d6c5462d23649c51a9fc7a162a3317c841293cc9237d0f04b434",
+          "expected_revision": null,
+          "expected_workflow_version": null
+        },
+        "campaign_id": "campaign_alpha",
+        "session_id": "session_alpha",
+        "head_revision": "revision_12",
+        "controller_id": "controller_alpha"
+      }
+    },
+    {
+      "name": "live_session_read",
+      "payload": {
+        "contract_name": "live_session_view",
+        "contract_version": 2,
+        "session_id": "session_alpha",
+        "campaign_id": "campaign_alpha",
+        "base_revision": "revision_12",
+        "reported_head_revision": "revision_12",
+        "workflow_version": 1,
+        "controller": {
+          "epoch": 1,
+          "controller_id": "controller_alpha",
+          "mode": "controller"
+        },
+        "mode": "active",
+        "events": [],
+        "acknowledgements": [],
+        "end_barrier": null,
+        "overlay": {
+          "overlay_id": "overlay_alpha",
+          "authority": "non_canon",
+          "base_revision": "revision_12",
+          "confirmed_fact_ids": [],
+          "question_ids": []
+        }
+      }
+    },
+    {
+      "name": "live_takeover",
+      "payload": {
+        "contract_name": "live_takeover_request",
+        "contract_version": 2,
+        "operation_request": {
+          "contract_name": "operation_request",
+          "contract_version": 2,
+          "request_id": "request_takeover",
+          "operation": "live_takeover",
+          "idempotency_key": "idem_takeover",
+          "payload_digest": "cc7a7ceb5811b3cf10c49ba3962af385ca1a5f0a8b5ba874e930c5f558d244c9",
+          "expected_revision": null,
+          "expected_workflow_version": 1
+        },
+        "campaign_id": "campaign_alpha",
+        "session_id": "session_alpha",
+        "controller_id": "controller_beta",
+        "controller_epoch": 1
+      }
+    },
+    {
+      "name": "live_capture",
+      "payload": {
+        "contract_name": "live_capture_request",
+        "contract_version": 2,
+        "operation_request": {
+          "contract_name": "operation_request",
+          "contract_version": 2,
+          "request_id": "request_capture",
+          "operation": "live_capture",
+          "idempotency_key": "idem_capture",
+          "payload_digest": "f1ea8107e2250d60c64bbb0375977892beae3076df8e0586ddfe5df6b454e264",
+          "expected_revision": null,
+          "expected_workflow_version": 1
+        },
+        "campaign_id": "campaign_alpha",
+        "session_id": "session_alpha",
+        "controller_id": "controller_beta",
+        "controller_epoch": 1,
+        "event_id": "event_fact",
+        "device_id": "device_alpha",
+        "operation_id": "operation_fact",
+        "device_order": 1,
+        "capture_type": "confirmed_fact",
+        "text": "Door opened into the station.",
+        "record_id": "record-one"
+      }
+    },
+    {
+      "name": "live_capture_result_accept",
+      "payload": {
+        "contract_name": "live_capture_result",
+        "contract_version": 2,
+        "outcome": "accepted",
+        "campaign_id": "campaign_alpha",
+        "session_id": "session_alpha",
+        "event_id": "event_fact",
+        "device_id": "device_alpha",
+        "operation_id": "operation_fact",
+        "session": {
+          "contract_name": "live_session_view",
+          "contract_version": 2,
+          "session_id": "session_alpha",
+          "campaign_id": "campaign_alpha",
+          "base_revision": "revision_12",
+          "reported_head_revision": "revision_12",
+          "workflow_version": 2,
+          "controller": {
+            "epoch": 1,
+            "controller_id": "controller_beta",
+            "mode": "controller"
+          },
+          "mode": "active",
+          "events": [
+            {
+              "event_id": "event_fact",
+              "event_type": "confirmed_fact",
+              "device_id": "device_alpha",
+              "operation_id": "operation_fact",
+              "device_order": 1,
+              "payload_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "base_revision": "revision_12",
+              "grounding_eligible": true,
+              "record_id": "record-one"
+            }
+          ],
+          "acknowledgements": [
+            {
+              "device_id": "device_alpha",
+              "operation_id": "operation_fact",
+              "payload_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "outcome": "accepted"
+            }
+          ],
+          "end_barrier": null,
+          "overlay": {
+            "overlay_id": "overlay_alpha",
+            "authority": "non_canon",
+            "base_revision": "revision_12",
+            "confirmed_fact_ids": [
+              "event_fact"
+            ],
+            "question_ids": []
+          }
+        }
+      }
+    },
+    {
+      "name": "live_end",
+      "payload": {
+        "contract_name": "live_end_request",
+        "contract_version": 2,
+        "operation_request": {
+          "contract_name": "operation_request",
+          "contract_version": 2,
+          "request_id": "request_end",
+          "operation": "live_end",
+          "idempotency_key": "idem_end",
+          "payload_digest": "e4d1ba40c193e9197d9ecead2816b407d9292fb8886431e17b6fd1e3b6fd9f3b",
+          "expected_revision": null,
+          "expected_workflow_version": 2
+        },
+        "campaign_id": "campaign_alpha",
+        "session_id": "session_alpha",
+        "controller_id": "controller_beta",
+        "controller_epoch": 1,
+        "device_id": "device_alpha",
+        "operation_id": "operation_end",
+        "required_operation_ids": [
+          {"device_id":"device_alpha","operation_id":"operation_fact"}
+        ]
+      }
+    },
+    {
+      "name": "live_session_ended",
+      "payload": {
+        "contract_name": "live_session_view",
+        "contract_version": 2,
+        "session_id": "session_alpha",
+        "campaign_id": "campaign_alpha",
+        "base_revision": "revision_12",
+        "reported_head_revision": "revision_12",
+        "workflow_version": 3,
+        "controller": {
+          "epoch": 1,
+          "controller_id": "controller_beta",
+          "mode": "controller"
+        },
+        "mode": "ended_review_pending",
+        "events": [
+          {
+            "event_id": "event_fact",
+            "event_type": "confirmed_fact",
+            "device_id": "device_alpha",
+            "operation_id": "operation_fact",
+            "device_order": 1,
+            "payload_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "base_revision": "revision_12",
+            "grounding_eligible": true,
+            "record_id": "record-one"
+          }
+        ],
+        "acknowledgements": [
+          {
+            "device_id": "device_alpha",
+            "operation_id": "operation_fact",
+            "payload_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "outcome": "accepted"
+          },
+          {
+            "device_id": "device_alpha",
+            "operation_id": "operation_end",
+            "payload_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "outcome": "accepted"
+          }
+        ],
+        "end_barrier": {
+          "end_device_id": "device_alpha",
+          "end_operation_id": "operation_end",
+          "required_operation_ids": [
+            {"device_id":"device_alpha","operation_id":"operation_fact"}
+          ],
+          "acknowledged_operation_ids": [
+            {"device_id":"device_alpha","operation_id":"operation_fact"}
+          ],
+          "ready_for_proposal": true
+        },
+        "overlay": {
+          "overlay_id": "overlay_alpha",
+          "authority": "non_canon",
+          "base_revision": "revision_12",
+          "confirmed_fact_ids": [
+            "event_fact"
+          ],
+          "question_ids": []
+        }
+      }
+    },
+    {
+      "name": "live_stale_workflow_error",
+      "payload": {
+        "contract_name": "error_response",
+        "contract_version": 2,
+        "error": {
+          "category": "stale_workflow",
+          "code": "stale_workflow_version",
+          "stage": "live_capture",
+          "request_id": "request_capture",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}

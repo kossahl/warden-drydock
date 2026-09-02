@@ -46,13 +46,13 @@ class HostedHttpV2ContractTests(unittest.TestCase):
 
     def test_active_package_index_is_explicit_and_complete(self) -> None:
         aggregate = json.loads((HTTP_ROOT / "index.json").read_text(encoding="utf-8"))
-        self.assertEqual(3, aggregate["contract_version"])
+        self.assertEqual(4, aggregate["contract_version"])
         self.assertEqual(
-            ["hosted_http_v2", "hosted_atlas_http_v2"],
+            ["hosted_http_v2", "hosted_atlas_http_v2", "hosted_live_http_v1"],
             [item["name"] for item in aggregate["packages"]],
         )
         self.assertEqual(
-            ["v2/index.json", "atlas/v2/index.json"],
+            ["v2/index.json", "atlas/v2/index.json", "live/v1/index.json"],
             [item["index"] for item in aggregate["packages"]],
         )
         self.assertIn("active", aggregate["packages_semantics"])

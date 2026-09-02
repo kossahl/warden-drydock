@@ -41,6 +41,10 @@ _ROUTES = {
     "atlas_workflow": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/workflow-summary$"),
     "atlas_generations": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/generations$"),
     "atlas_proposals": re.compile(r"^/api/v1/campaigns/([^/]+)/atlas/proposals$"),
+    "live_session": re.compile(r"^/api/v1/campaigns/([^/]+)/live/session$"),
+    "live_takeover": re.compile(r"^/api/v1/campaigns/([^/]+)/live/session/takeover$"),
+    "live_capture": re.compile(r"^/api/v1/campaigns/([^/]+)/live/session/captures$"),
+    "live_end": re.compile(r"^/api/v1/campaigns/([^/]+)/live/session/end$"),
 }
 
 
@@ -293,6 +297,11 @@ class Handler(SimpleHTTPRequestHandler):
                 status, payload = app.atlas_proposal_collection(
                     match.group(1), **query,
                 )
+            elif match := _ROUTES["live_session"].fullmatch(path):
+                # P2-C: GET is strictly read-only; the route takes no mutation
+                # query parameters.
+                query = parse_flat_query(raw_query, singleton=frozenset())
+                status, payload = app.live_read(match.group(1))
             else:
                 raise HTTPFailure(404, "not_found", "route_not_found", "routing")
             self._send_json(status, payload)
@@ -347,6 +356,14 @@ class Handler(SimpleHTTPRequestHandler):
                 status, response = app.reject_proposal(match.group(1), int(match.group(2)), payload)
             elif match := _ROUTES["approve"].fullmatch(path):
                 status, response = app.approve_proposal(match.group(1), int(match.group(2)), payload)
+            elif match := _ROUTES["live_session"].fullmatch(path):
+                status, response = app.live_start(match.group(1), payload)
+            elif match := _ROUTES["live_takeover"].fullmatch(path):
+                status, response = app.live_takeover(match.group(1), payload)
+            elif match := _ROUTES["live_capture"].fullmatch(path):
+                status, response = app.live_capture(match.group(1), payload)
+            elif match := _ROUTES["live_end"].fullmatch(path):
+                status, response = app.live_end(match.group(1), payload)
             else:
                 raise HTTPFailure(404, "not_found", "route_not_found", "routing")
             self._send_json(status, response)

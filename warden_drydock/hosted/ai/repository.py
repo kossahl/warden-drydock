@@ -4,13 +4,28 @@ from contextlib import contextmanager
 from copy import deepcopy
 import hashlib
 import hmac
+import itertools
 import json
 import uuid
 from typing import Iterator
 import threading
 from datetime import datetime, timedelta, timezone
 
-from .models import Action, Capture, CaptureType, GenerationRecord, GenerationRequest, LiveSession, ProviderConsent, SourceEnvelope, SourceExcerpt, StreamEvent
+from .models import Action, Capture, CaptureType, GenerationRecord, GenerationRequest, LiveEndBarrier, LiveSession, ProviderConsent, SourceEnvelope, SourceExcerpt, StreamEvent
+
+
+def _select_current_from_seq(sessions):
+    """Select the current readback session from non-active sessions by the
+    persisted monotonic session_seq marker (P1, Option C).
+
+    session_seq is set at INSERT time for EVERY session from the first supported
+    deployment (the ordering migration fails closed if rows existed before it), so
+    the ordering is always unambiguous. Selection is simply the highest persisted
+    session_seq, with no lexicographic or ambiguity fallback.
+    """
+    if not sessions:
+        return None
+    return max(sessions, key=lambda item: item.session_seq)
 
 
 class InMemoryAIRepository:
@@ -24,6 +39,7 @@ class InMemoryAIRepository:
         self._provider_consent: ProviderConsent | None = None
         self._lock = threading.RLock()
         self._created_at: dict[str, datetime] = {}
+        self._session_seq_counter = itertools.count(1)
 
     @contextmanager
     def transaction(self) -> Iterator["InMemoryAIRepository"]:
@@ -69,20 +85,43 @@ class InMemoryAIRepository:
     def active_session(self, campaign_id: str) -> LiveSession | None:
         return next((item for item in self.sessions.values() if item.campaign_id == campaign_id and item.mode == "active"), None)
 
+    def campaign_session(self, campaign_id: str) -> LiveSession | None:
+        """Return the persisted session for the campaign regardless of mode.
+
+        Active sessions are preferred. Otherwise the session with the highest
+        persisted monotonic session_seq is returned. session_seq is set at INSERT
+        time for every session, so the ordering is always unambiguous (no legacy
+        fallback). Selection uses only persisted session data, identical across the
+        InMemory and PostgreSQL repositories.
+        """
+        active = next(
+            (item for item in self.sessions.values() if item.campaign_id == campaign_id and item.mode == "active"),
+            None,
+        )
+        if active is not None:
+            return active
+        non_active = [item for item in self.sessions.values() if item.campaign_id == campaign_id and item.mode != "active"]
+        if not non_active:
+            return None
+        return _select_current_from_seq(non_active)
+
     def get_session(self, session_id: str) -> LiveSession:
         return self.sessions[session_id]
 
     def create_session(self, session: LiveSession) -> None:
-        self.sessions[session.session_id] = session
+        with self._lock:
+            session.session_seq = next(self._session_seq_counter)
+            self.sessions[session.session_id] = session
 
     def save_session(self, session: LiveSession, *, expected_workflow_version: int | None = None, expected_epoch: int | None = None) -> None:
-        current = self.sessions.get(session.session_id)
-        if current is not session and current is not None:
-            if expected_workflow_version is not None and current.workflow_version != expected_workflow_version:
-                raise ValueError("stale_workflow_version")
-            if expected_epoch is not None and current.controller_epoch != expected_epoch:
-                raise ValueError("stale_controller_epoch")
-        self.sessions[session.session_id] = session
+        with self._lock:
+            current = self.sessions.get(session.session_id)
+            if current is not session and current is not None:
+                if expected_workflow_version is not None and current.workflow_version != expected_workflow_version:
+                    raise ValueError("stale_workflow_version")
+                if expected_epoch is not None and current.controller_epoch != expected_epoch:
+                    raise ValueError("stale_controller_epoch")
+            self.sessions[session.session_id] = session
 
     def update_reported_head(self, session_id: str, revision_id: str) -> None:
         self.sessions[session_id].reported_head_revision = revision_id
@@ -231,24 +270,94 @@ class PostgresAIRepository:
             row = cursor.fetchone()
         return self.get_session(row[0]) if row else None
 
+    def campaign_session(self, campaign_id: str) -> LiveSession | None:
+        """Return the persisted session for the campaign regardless of mode.
+
+        Active sessions are preferred; otherwise the session with the highest
+        persisted monotonic session_seq is returned, matching the InMemory repository
+        rule exactly (both use _select_current_from_seq). session_seq is set at INSERT
+        time for every session, so the ordering is always unambiguous.
+        """
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT session_id FROM hosted_live_session WHERE campaign_id=%s AND mode='active'", (campaign_id,))
+            row = cursor.fetchone()
+            if row is not None:
+                return self.get_session(row[0])
+            cursor.execute(
+                "SELECT session_id, session_seq FROM hosted_live_session "
+                "WHERE campaign_id=%s AND mode <> 'active' ORDER BY session_id",
+                (campaign_id,),
+            )
+            rows = cursor.fetchall()
+        if not rows:
+            return None
+        sessions = [self.get_session(session_id) for session_id, _ in rows]
+        return _select_current_from_seq(sessions)
+
     def get_session(self, session_id: str) -> LiveSession:
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT campaign_id,base_revision,reported_head_revision,workflow_version,controller_epoch,controller_id,mode FROM hosted_live_session WHERE session_id=%s", (session_id,))
+            cursor.execute("SELECT campaign_id,base_revision,reported_head_revision,workflow_version,controller_epoch,controller_id,mode,end_barrier,session_seq FROM hosted_live_session WHERE session_id=%s", (session_id,))
             row = cursor.fetchone()
             if not row:
                 raise KeyError(session_id)
-            session = LiveSession(session_id, *row)
-            cursor.execute("SELECT event_id,device_id,operation_id,device_order,capture_type,content,payload_digest FROM hosted_live_capture WHERE session_id=%s ORDER BY device_order,event_id", (session_id,))
+            session = LiveSession(
+                session_id, row[0], row[1], row[2], row[3], row[4], row[5], row[6],
+                end_barrier=self._decode_end_barrier(row[7]) if row[7] is not None else None,
+                session_seq=row[8] if row[8] is not None else 0,
+            )
+            cursor.execute("SELECT event_id,device_id,operation_id,device_order,capture_type,content,payload_digest,record_id FROM hosted_live_capture WHERE session_id=%s ORDER BY device_order,event_id", (session_id,))
             for item in cursor.fetchall():
-                capture = Capture(item[0], item[1], item[2], item[3], CaptureType(item[4]), item[5], item[6])
+                capture = Capture(
+                    item[0], item[1], item[2], item[3], CaptureType(item[4]), item[5], item[6],
+                    record_id=item[7],
+                )
                 session.captures.append(capture)
             cursor.execute("SELECT device_id,operation_id,payload_digest FROM hosted_live_receipt WHERE session_id=%s", (session_id,))
             session.receipts = {(item[0], item[1]): item[2] for item in cursor.fetchall()}
             return session
 
+    @staticmethod
+    def _decode_end_barrier(value: object) -> LiveEndBarrier:
+        data = json.loads(value) if isinstance(value, str) else value
+        return LiveEndBarrier(
+            end_operation_id=data["end_operation_id"],
+            end_device_id=data["end_device_id"],
+            required_operation_ids=tuple(
+                (item["device_id"], item["operation_id"])
+                for item in data["required_operation_ids"]
+            ),
+            ready_for_proposal=bool(data["ready_for_proposal"]),
+        )
+
+    @staticmethod
+    def _encode_end_barrier(barrier: LiveEndBarrier | None) -> object:
+        if barrier is None:
+            return None
+        return json.dumps({
+            "end_operation_id": barrier.end_operation_id,
+            "end_device_id": barrier.end_device_id,
+            "required_operation_ids": [
+                {"device_id": device_id, "operation_id": operation_id}
+                for device_id, operation_id in barrier.required_operation_ids
+            ],
+            "ready_for_proposal": barrier.ready_for_proposal,
+        }, separators=(",", ":"), sort_keys=True)
+
     def create_session(self, session: LiveSession) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("INSERT INTO hosted_live_session(session_id,campaign_id,base_revision,reported_head_revision,workflow_version,controller_epoch,controller_id,mode) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)", (session.session_id, session.campaign_id, session.base_revision, session.reported_head_revision, session.workflow_version, session.controller_epoch, session.controller_id, session.mode))
+            try:
+                cursor.execute("INSERT INTO hosted_live_session(session_id,campaign_id,base_revision,reported_head_revision,workflow_version,controller_epoch,controller_id,mode,end_barrier) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)", (session.session_id, session.campaign_id, session.base_revision, session.reported_head_revision, session.workflow_version, session.controller_epoch, session.controller_id, session.mode, self._encode_end_barrier(session.end_barrier)))
+            except Exception as exc:
+                # The one-active-session unique partial index surfaces as a unique
+                # violation; map it to the advertised active_session_conflict domain
+                # error so the HTTP layer can return 409.
+                if (
+                    getattr(exc, "sqlstate", None) == "23505"
+                    or "hosted_live_one_active_campaign_idx" in str(exc)
+                    or "hosted_live_session_pkey" in str(exc)
+                ):
+                    raise ValueError("active_session_conflict") from exc
+                raise
 
     def save_session(self, session: LiveSession, *, expected_workflow_version: int | None = None, expected_epoch: int | None = None) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
@@ -260,11 +369,11 @@ class PostgresAIRepository:
             if expected_epoch is not None:
                 clauses.append("controller_epoch=%s")
                 bindings.append(expected_epoch)
-            cursor.execute("UPDATE hosted_live_session SET reported_head_revision=%s,workflow_version=%s,controller_epoch=%s,controller_id=%s,mode=%s WHERE " + " AND ".join(clauses), (session.reported_head_revision, session.workflow_version, session.controller_epoch, session.controller_id, session.mode, *bindings))
+            cursor.execute("UPDATE hosted_live_session SET reported_head_revision=%s,workflow_version=%s,controller_epoch=%s,controller_id=%s,mode=%s,end_barrier=%s WHERE " + " AND ".join(clauses), (session.reported_head_revision, session.workflow_version, session.controller_epoch, session.controller_id, session.mode, self._encode_end_barrier(session.end_barrier), *bindings))
             if cursor.rowcount != 1:
                 raise ValueError("stale_workflow_version")
             for item in session.captures:
-                cursor.execute("INSERT INTO hosted_live_capture(session_id,event_id,device_id,operation_id,device_order,capture_type,payload_digest,content) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", (session.session_id, item.event_id, item.device_id, item.operation_id, item.device_order, item.capture_type.value, item.payload_digest, item.text))
+                cursor.execute("INSERT INTO hosted_live_capture(session_id,event_id,device_id,operation_id,device_order,capture_type,payload_digest,content,record_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING", (session.session_id, item.event_id, item.device_id, item.operation_id, item.device_order, item.capture_type.value, item.payload_digest, item.text, item.record_id))
             for (device_id, operation_id), payload_digest in session.receipts.items():
                 cursor.execute("INSERT INTO hosted_live_receipt(session_id,device_id,operation_id,payload_digest) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING", (session.session_id, device_id, operation_id, payload_digest))
                 if cursor.rowcount == 0:

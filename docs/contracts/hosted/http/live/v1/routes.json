@@ -1,0 +1,18 @@
+{
+  "contract_name": "hosted_live_http_routes",
+  "contract_version": 1,
+  "base_path": "/api/v1",
+  "implemented_by_this_package": true,
+  "routes": [
+    {"id":"live_session_start","method":"POST","path":"/campaigns/{campaign_id}/live/session","request":"live_start_request","response":"live_session_view","success":[201],"error_status":{"404":["not_found"],"409":["idempotency_digest_conflict"],"422":["unsafe_binding"],"503":["service_unavailable"]}},
+    {"id":"live_session_read","method":"GET","path":"/campaigns/{campaign_id}/live/session","query_parameters":[],"response":"live_session_view","success":[200],"error_status":{"404":["not_found"]}},
+    {"id":"live_takeover","method":"POST","path":"/campaigns/{campaign_id}/live/session/takeover","request":"live_takeover_request","response":"live_session_view","success":[200],"error_status":{"404":["not_found"],"409":["stale_controller","stale_workflow"],"422":["unsafe_binding"]}},
+    {"id":"live_capture","method":"POST","path":"/campaigns/{campaign_id}/live/session/captures","request":"live_capture_request","response":"live_capture_result","success":[200],"error_status":{"404":["not_found"],"409":["idempotency_digest_conflict","stale_controller","stale_workflow"],"422":["unsafe_binding"]}},
+    {"id":"live_end","method":"POST","path":"/campaigns/{campaign_id}/live/session/end","request":"live_end_request","response":"live_session_view","success":[200],"error_status":{"404":["not_found"],"409":["idempotency_digest_conflict","stale_controller","stale_workflow","live_barrier_conflict"],"422":["unsafe_binding"]}}
+  ],
+  "acknowledgement_map": {
+    "capture_outcome": "accepted | exact_replay | digest_conflict",
+    "acceptance_status": "live_session_start always returns 201 for a newly started session; live_capture always returns 200 with outcome accepted or exact_replay, and 409 idempotency_digest_conflict when the same operation id is replayed with a changed bound digest",
+    "authority_conflict_status": "409 stale_controller (stale controller epoch/id), 409 stale_workflow (version or ended session)"
+  }
+}
