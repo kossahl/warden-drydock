@@ -212,11 +212,14 @@ class EditorBackendTests(unittest.TestCase):
         )
         self.assertEqual((200, replay), (status, exact_replay))
 
-    def test_restart_does_not_quarantine_editor_publication_for_semantic_diff_digest(self):
+    def test_restart_recovers_editor_publication_and_exact_replay_once(self):
         _, _, (_, proposal) = self._edit("idem_editor_pending_recovery")
+        approval = self._editor_approval_payload(proposal)
         with mock.patch.object(self.app.workflow, "finalize_head", side_effect=SystemExit("publication crash")):
             with self.assertRaises(SystemExit):
-                self._approve_editor(proposal)
+                self.app.editor_proposal_approve(
+                    proposal["proposal_id"], proposal["proposal_version"], approval,
+                )
 
         restarted = SliceApplication(
             Path(self.tmp.name), provider=SyntheticProvider(), receipts=self.receipts,
@@ -227,6 +230,53 @@ class EditorBackendTests(unittest.TestCase):
         self.assertNotEqual(proposal["base_revision"]["revision_id"], head)
         self.assertEqual(2, len(restarted.revisions.store.inventory()))
         self.assertFalse(any(restarted.revisions.store.quarantine.rglob("snapshot-manifest-v1.json")))
+        recovered = restarted.proposal_repository.get(proposal["proposal_id"], proposal["proposal_version"])
+        self.assertEqual(ProposalStatus.PUBLISHED, recovered.status)
+        self.assertEqual(head, recovered.published_revision_id)
+        self.assertEqual(3, restarted._editor_version("campaign_alpha"))
+        self.assertEqual(
+            1,
+            sum(
+                1 for item in restarted.proposal_repository.audit
+                if item == (proposal["proposal_id"], proposal["proposal_version"], "published")
+            ),
+        )
+        self.assertEqual(
+            1,
+            sum(
+                1 for item in restarted.workflow.audit
+                if item == (
+                    restarted._id("intent", proposal["proposal_id"], proposal["proposal_version"]),
+                    "finalized",
+                )
+            ),
+        )
+
+        status, retry = restarted.editor_proposal_approve(
+            proposal["proposal_id"], proposal["proposal_version"], deepcopy(approval),
+        )
+        self.assertEqual((200, "published", head), (status, retry["outcome"], retry["published_revision"]["revision_id"]))
+        workflow_after_retry = restarted._editor_version("campaign_alpha")
+        audit_after_retry = tuple(restarted.proposal_repository.audit)
+        intent_audit_after_retry = tuple(restarted.workflow.audit)
+        inventory_after_retry = tuple(restarted.revisions.store.inventory())
+
+        status, exact_replay = restarted.editor_proposal_approve(
+            proposal["proposal_id"], proposal["proposal_version"], deepcopy(approval),
+        )
+        self.assertEqual((200, retry), (status, exact_replay))
+        self.assertEqual(workflow_after_retry, restarted._editor_version("campaign_alpha"))
+        self.assertEqual(audit_after_retry, tuple(restarted.proposal_repository.audit))
+        self.assertEqual(intent_audit_after_retry, tuple(restarted.workflow.audit))
+        self.assertEqual(inventory_after_retry, tuple(restarted.revisions.store.inventory()))
+        self.assertEqual(
+            (200, retry),
+            restarted.receipts.replay(
+                "editor_proposal_approve",
+                approval["operation_request"]["idempotency_key"],
+                approval["operation_request"]["payload_digest"],
+            ),
+        )
 
     def test_removal_impact_derives_typed_incoming_references(self):
         revision = self.app.workflow.head("campaign_alpha")

@@ -347,6 +347,76 @@ class SliceApplication:
         self.workflow.quarantine_intent(intent.intent_id)
         self._delete_pending_atlas_projection(manifest)
 
+    def _recover_editor_publication(
+        self, manifest: SnapshotManifest, intent: PublicationIntent,
+        proposal: ProposalVersion, existing_record_ids: set[str],
+    ) -> None:
+        """Finish an editor approval after the snapshot was durably published.
+
+        Editor approval has two durable workflow counters: the publication
+        intent/head and the campaign editor workflow.  Generic reconciliation
+        only handles the first pair, which leaves an editor proposal stuck in
+        ``approving`` after a process crash.
+        """
+        metadata = proposal.editor_metadata
+        if (
+            intent.kind is not PublicationKind.APPROVAL
+            or proposal.status is not ProposalStatus.APPROVING
+            or not isinstance(metadata, dict)
+            or metadata.get("contract_name") != "editor_proposal_view"
+            or metadata.get("proposal_id") != proposal.proposal_id
+            or metadata.get("proposal_version") != proposal.version
+            or metadata.get("campaign_id") != proposal.campaign_id
+        ):
+            raise ValueError("pending editor publication provenance is invalid")
+
+        expected_workflow = metadata.get("editor_workflow_version")
+        if type(expected_workflow) is not int or expected_workflow < 1:
+            raise ValueError("pending editor workflow binding is invalid")
+        published_revision = {
+            "revision_id": manifest.revision_id,
+            "ordinal": manifest.ordinal,
+            "tree_digest": manifest.tree_digest,
+            "immutable": True,
+        }
+        terminal_metadata = self._editor_terminal_value(
+            metadata, proposal.proposal_id, proposal.version, "approve",
+            expected_workflow, published_revision=published_revision,
+            existing_record_ids=existing_record_ids,
+            validate=False,
+        )
+        atomic_finalize = getattr(self.workflow, "finalize_editor_publication", None)
+        if atomic_finalize is not None:
+            try:
+                atomic_finalize(
+                    intent, proposal.proposal_id, proposal.version,
+                    expected_workflow, terminal_metadata,
+                )
+            except (PublicationIntentError, StaleHeadError):
+                self._quarantine_invalid_pending_publication(manifest, intent)
+                raise
+            return
+
+        # The in-memory repository models the same CAS boundaries but has no
+        # cross-repository transaction.  Keep this fallback editor-specific so
+        # generic publication recovery cannot silently consume editor state.
+        self.workflow.finalize_head(intent)
+        self.proposal_repository.finalize(
+            proposal, ProposalStatus.PUBLISHED, manifest,
+        )
+        save_editor = getattr(self.proposal_repository, "save_editor_metadata", None)
+        if save_editor is not None:
+            save_editor(
+                proposal.proposal_id, proposal.version, terminal_metadata,
+                manifest.revision_id,
+            )
+        advance_editor = getattr(self.proposal_repository, "advance_editor", None)
+        if advance_editor is not None:
+            if not advance_editor(proposal.campaign_id, expected_workflow):
+                raise StaleHeadError("editor workflow compare-and-swap failed")
+        else:
+            self._editor_workflow[proposal.campaign_id] = expected_workflow + 1
+
     def _recover_pending_atlas_publications(self) -> None:
         """Resolve the snapshot/projection-before-head crash window deterministically."""
         for manifest in self.revisions.store.inventory():
@@ -363,6 +433,7 @@ class SliceApplication:
             except KeyError:
                 self._discard_pending_publication(manifest)
                 continue
+            proposal = None
             try:
                 provenance = (
                     candidate.history_entry.proposal_id,
@@ -403,7 +474,13 @@ class SliceApplication:
                     self._atlas_provenance_overrides.pop(manifest.revision_id, None)
                 if expected != candidate:
                     raise ValueError("pending Atlas projection binding mismatch")
-                self.revisions.reconcile_manifest(manifest)
+                if proposal is not None and proposal.editor_metadata:
+                    self._recover_editor_publication(
+                        manifest, intent, proposal,
+                        {record.record_id for record in candidate.records},
+                    )
+                else:
+                    self.revisions.reconcile_manifest(manifest)
             except (KeyError, ValueError):
                 self._quarantine_invalid_pending_publication(manifest, intent)
             except (PublicationIntentError, StaleHeadError):
@@ -1861,6 +1938,54 @@ class SliceApplication:
             "editor_workflow_version": workflow_version,
         }
 
+    def _editor_terminal_value(
+        self, value: dict, proposal_id: str, version: int, action: str,
+        expected_workflow: int, *, published_revision: dict | None = None,
+        impact: dict | None = None, existing_record_ids: set[str] | None = None,
+        validate: bool = True,
+    ) -> dict:
+        terminal = deepcopy(value)
+        terminal["core_proposal"]["proposal"]["status"] = (
+            "approved" if action == "approve" else "rejected"
+        )
+        terminal["publication"] = {
+            "status": "published" if published_revision is not None else "not_published",
+            "published_revision": published_revision,
+        }
+        if action == "approve":
+            terminal["core_proposal"]["approval_binding"] = {
+                "proposal_id": proposal_id, "proposal_version": version,
+                "diff_digest": terminal["diff"]["diff_digest"],
+                "base_revision": terminal["base_revision"]["revision_id"],
+                "source_revision": terminal["source_revision"]["revision_id"],
+                "expected_campaign_head": terminal["expected_campaign_head"]["revision_id"],
+                "expected_editor_workflow_version": expected_workflow,
+                "validation_status": terminal["validation"]["status"],
+                "validation_digest": terminal["validation"]["validation_digest"],
+                "authority_change_ids": [
+                    item["change_id"] for item in terminal["diff"]["authority_changes"]
+                ],
+                "visibility_change_ids": [
+                    item["change_id"] for item in terminal["diff"]["visibility_changes"]
+                ],
+                "warden_confirmed": True,
+            }
+        terminal["editor_workflow_version"] = expected_workflow + 1
+        terminal["core_proposal"]["proposal"]["expected_editor_workflow_version"] = expected_workflow + 1
+        for binding in terminal["record_bindings"]:
+            binding["expected_editor_workflow_version"] = expected_workflow + 1
+        if terminal["core_proposal"].get("approval_binding") is not None:
+            terminal["core_proposal"]["approval_binding"]["expected_editor_workflow_version"] = expected_workflow + 1
+        terminal["proposal_payload_digest"] = canonical_digest({
+            key: item for key, item in terminal.items() if key != "proposal_payload_digest"
+        })
+        if validate:
+            self._editor_semantic(
+                terminal, stage="editor_" + action, impact=impact,
+                existing_record_ids=existing_record_ids,
+            )
+        return terminal
+
     def _editor_action(self, proposal_id: str, version: int, payload: dict, action: str):
         with self._editor_mutation_lock:
             operation = payload.get("operation_request")
@@ -1906,46 +2031,13 @@ class SliceApplication:
             value = stored["value"]
             atomic_metadata = None
 
-            def terminal_value(published_revision=None):
-                terminal = deepcopy(value)
-                terminal["core_proposal"]["proposal"]["status"] = "approved" if action == "approve" else "rejected"
-                terminal["publication"] = {
-                    "status": "published" if published_revision is not None else "not_published",
-                    "published_revision": published_revision,
-                }
-                if action == "approve":
-                    terminal["core_proposal"]["approval_binding"] = {
-                        "proposal_id": proposal_id, "proposal_version": version,
-                        "diff_digest": terminal["diff"]["diff_digest"],
-                        "base_revision": terminal["base_revision"]["revision_id"],
-                        "source_revision": terminal["source_revision"]["revision_id"],
-                        "expected_campaign_head": terminal["expected_campaign_head"]["revision_id"],
-                        "expected_editor_workflow_version": expected,
-                        "validation_status": terminal["validation"]["status"],
-                        "validation_digest": terminal["validation"]["validation_digest"],
-                        "authority_change_ids": [item["change_id"] for item in terminal["diff"]["authority_changes"]],
-                        "visibility_change_ids": [item["change_id"] for item in terminal["diff"]["visibility_changes"]],
-                        "warden_confirmed": True,
-                    }
-                terminal["editor_workflow_version"] = expected + 1
-                terminal["core_proposal"]["proposal"]["expected_editor_workflow_version"] = expected + 1
-                for record_binding in terminal["record_bindings"]:
-                    record_binding["expected_editor_workflow_version"] = expected + 1
-                if terminal["core_proposal"].get("approval_binding") is not None:
-                    terminal["core_proposal"]["approval_binding"]["expected_editor_workflow_version"] = expected + 1
-                terminal["proposal_payload_digest"] = canonical_digest({
-                    key: item for key, item in terminal.items() if key != "proposal_payload_digest"
-                })
-                self._editor_semantic(
-                    terminal, stage="editor_" + action, impact=impact,
-                    existing_record_ids=self._editor_record_ids(stored["campaign_id"], stored["base"]),
-                )
-                return terminal
-
             if action == "reject":
                 atomic_reject = getattr(self.workflow, "finalize_editor_rejection", None)
                 if atomic_reject is not None:
-                    atomic_metadata = terminal_value()
+                    atomic_metadata = self._editor_terminal_value(
+                        value, proposal_id, version, action, expected, impact=impact,
+                        existing_record_ids=self._editor_record_ids(stored["campaign_id"], stored["base"]),
+                    )
                     if not atomic_reject(
                         stored["campaign_id"], proposal_id, version, expected, atomic_metadata
                     ):
@@ -1964,7 +2056,11 @@ class SliceApplication:
                         "revision_id": intent.revision_id, "ordinal": intent.ordinal,
                         "tree_digest": intent.tree_digest, "immutable": True,
                     }
-                    atomic_metadata = terminal_value(published)
+                    atomic_metadata = self._editor_terminal_value(
+                        value, proposal_id, version, action, expected,
+                        published_revision=published, impact=impact,
+                        existing_record_ids=self._editor_record_ids(stored["campaign_id"], stored["base"]),
+                    )
                     return atomic_publish(
                         intent, proposal_id, version, expected, atomic_metadata
                     )
@@ -1987,7 +2083,12 @@ class SliceApplication:
                         raise HTTPFailure(409, "unsafe_binding", "workflow_conflict", "editor_" + action, self._request_id(payload))
                 else:
                     self._editor_workflow[stored["campaign_id"]] = expected + 1
-                value = terminal_value(published_revision if action == "approve" else None)
+                value = self._editor_terminal_value(
+                    value, proposal_id, version, action, expected,
+                    published_revision=published_revision if action == "approve" else None,
+                    impact=impact,
+                    existing_record_ids=self._editor_record_ids(stored["campaign_id"], stored["base"]),
+                )
             else:
                 value = atomic_metadata
             stored["value"] = value
