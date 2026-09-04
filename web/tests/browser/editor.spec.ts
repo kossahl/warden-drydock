@@ -90,6 +90,7 @@ test("editor action errors focus the editor error without reducing accessibility
 test("create correction uses the candidate ID, reads campaign context, and opens the created record", async ({ page }) => {
   await installAtlasApi(page);
   const editorReads: string[] = [];
+  let initialBody: Record<string, any> | null = null;
   let correctionBody: Record<string, any> | null = null;
   const createdProposal = {
     ...proposal,
@@ -106,6 +107,7 @@ test("create correction uses the candidate ID, reads campaign context, and opens
       return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: { ...editorRecord, record_id: "campaign-main" } }) });
     }
     if (request.method() === "POST" && path.endsWith("/editor/records/proposals")) {
+      initialBody = JSON.parse(request.postData() ?? "{}");
       return route.fulfill({ status: 201, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify(createdProposal) });
     }
     if (request.method() === "POST" && path.endsWith("/corrections")) {
@@ -120,11 +122,20 @@ test("create correction uses the candidate ID, reads campaign context, and opens
   await page.goto("/campaigns/campaign_atlas/records/__new__?revision=revision_two");
   const editor = page.locator(".editor").filter({ hasText: "Create record" });
   await editor.getByLabel("Record ID").fill("record-created");
+  await editor.getByRole("button", { name: "Add typed connection" }).click();
+  await editor.getByLabel("Target for connection_1").fill("record-target");
   await editor.getByRole("button", { name: "Submit create proposal" }).click();
   await editor.getByRole("button", { name: "Create correction/rebase" }).click();
   await expect.poll(() => editorReads.length).toBe(2);
   expect(editorReads.every((path) => !path.endsWith("/records/new-record/editor"))).toBe(true);
-  await expect.poll(() => correctionBody?.candidate?.record_id).toBe("record-created");
+  expect((initialBody as any)?.candidate?.connections?.[0]?.connection_id).toMatch(/^connection_[0-9]+$/);
+  expect((initialBody as any)?.candidate?.connections?.[0]?.target_record_id).toBe("record-target");
+  await editor.getByLabel("Displayed name").fill("Corrected created record");
+  await editor.getByLabel("Context").fill("Corrected connection context.");
+  await editor.getByRole("button", { name: "Submit correction/rebase" }).click();
+  await expect.poll(() => (correctionBody as any)?.candidate?.record_id).toBe("record-created");
+  await expect.poll(() => (correctionBody as any)?.candidate?.displayed_name).toBe("Corrected created record");
+  expect((correctionBody as any)?.candidate?.connections?.[0]?.context).toBe("Corrected connection context.");
   await editor.getByRole("button", { name: "Approve and publish exact proposal" }).click();
   await page.getByRole("button", { name: "Approve and publish" }).click();
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-created\?revision=revision_three$/);

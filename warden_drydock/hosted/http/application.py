@@ -1600,20 +1600,29 @@ class SliceApplication:
             if {item.get("reference_id") for item in resolutions} != expected_refs or len(resolutions) != len(expected_refs):
                 raise HTTPFailure(422, "proposal_validation_failure", "incomplete_removal_resolution", "editor_proposal", self._request_id(payload))
             documents = {record.record_id: (parse_document(record.content, record.record_id, record.record_type), record.content) for record in self.atlas_repository.get(campaign_id, revision_id).records}
+            source_mutations = {}
             for reference in removal_impact["incoming_references"]:
                 resolution = next(item for item in resolutions if item.get("reference_id") == reference["reference_id"])
                 if resolution.get("action") == "accept_unresolved" and not reference["permitted_unresolved"]:
                     raise HTTPFailure(422, "proposal_validation_failure", "resolution_not_permitted", "editor_proposal", self._request_id(payload))
                 if resolution.get("action") == "redirect" and resolution.get("replacement_target_record_id") not in self._editor_record_ids(campaign_id, revision_id) - {record_id}:
                     raise HTTPFailure(422, "proposal_validation_failure", "unknown_connection_target", "editor_proposal", self._request_id(payload))
-                source, source_content = deepcopy(documents[reference["source_record_id"]][0]), documents[reference["source_record_id"]][1]
+                source_record_id = reference["source_record_id"]
+                if source_record_id not in source_mutations:
+                    source_mutations[source_record_id] = [
+                        deepcopy(documents[source_record_id][0]),
+                        documents[source_record_id][1],
+                        reference["connection_id"],
+                    ]
+                source, source_content, _ = source_mutations[source_record_id]
                 connection = next(item for item in source["connections"] if item["connection_id"] == reference["connection_id"])
                 if resolution["action"] == "redirect":
                     connection["target_record_id"] = resolution["replacement_target_record_id"]
                 else:
                     source["connections"] = [item for item in source["connections"] if item["connection_id"] != reference["connection_id"]]
                 source["content_digest"] = document_digest(source)
-                changes.append(change_for(source_content, source, self._id("change", campaign_id, revision_id, reference["source_record_id"], reference["connection_id"]), ChangeKind.UPDATE))
+            for source_record_id, (source, source_content, first_connection_id) in source_mutations.items():
+                changes.append(change_for(source_content, source, self._id("change", campaign_id, revision_id, source_record_id, first_connection_id), ChangeKind.UPDATE))
 
         self._editor_validate_changes(
             campaign_id, revision_id, changes, self._request_id(payload),
@@ -1640,9 +1649,9 @@ class SliceApplication:
         if kind == "remove":
             for connection in removal_impact["outgoing_connections"]:
                 cards.append({"change_id": self._id("change", change.change_id, connection["connection_id"]), "kind": "connection_removed", "subject_record_id": record_id, "before": None, "after": None, "property_changes": [], "connection": connection, "resolution": None, "derived_backlinks": [{"source_record_id": record_id, "target_record_id": connection["target_record_id"], "connection_id": connection["connection_id"], "effect": "removed"}]})
-            for reference, source_change in zip(removal_impact["incoming_references"], changes[1:]):
+            for reference in removal_impact["incoming_references"]:
                 resolution = next(item for item in resolutions if item["reference_id"] == reference["reference_id"])
-                cards.append({"change_id": source_change.change_id, "kind": "reference_resolution", "subject_record_id": reference["source_record_id"], "before": reference, "after": resolution, "property_changes": [], "connection": None, "resolution": resolution, "derived_backlinks": [{"source_record_id": reference["source_record_id"], "target_record_id": resolution.get("replacement_target_record_id") or reference["target_record_id"], "connection_id": reference["connection_id"], "effect": "updated" if resolution["action"] == "redirect" else "removed"}]})
+                cards.append({"change_id": self._id("change", campaign_id, revision_id, reference["source_record_id"], reference["connection_id"]), "kind": "reference_resolution", "subject_record_id": reference["source_record_id"], "before": reference, "after": resolution, "property_changes": [], "connection": None, "resolution": resolution, "derived_backlinks": [{"source_record_id": reference["source_record_id"], "target_record_id": resolution.get("replacement_target_record_id") or reference["target_record_id"], "connection_id": reference["connection_id"], "effect": "updated" if resolution["action"] == "redirect" else "removed"}]})
         authority_changes, visibility_changes = self._editor_transition_changes(before_doc, after_doc, change.change_id)
         validation_digest = canonical_digest({"status": "passed", "error_count": 0, "findings": []})
         affected_record_count = len({card["subject_record_id"] for card in cards})
@@ -1660,7 +1669,8 @@ class SliceApplication:
         if correction_of is not None:
             value["correction_of"] = correction_of
         if kind == "remove":
-            value["record_bindings"] = [proposal_binding] + [dict(proposal_binding, record_id=ref["source_record_id"], record_digest=documents[ref["source_record_id"]][0]["content_digest"]) for ref in removal_impact["incoming_references"]]
+            source_record_ids = list(dict.fromkeys(ref["source_record_id"] for ref in removal_impact["incoming_references"]))
+            value["record_bindings"] = [proposal_binding] + [dict(proposal_binding, record_id=source_record_id, record_digest=documents[source_record_id][0]["content_digest"]) for source_record_id in source_record_ids]
         value["proposal_payload_digest"] = canonical_digest({key: item for key, item in value.items() if key != "proposal_payload_digest"})
         self._editor_semantic(
             value, stage="editor_proposal", impact=removal_impact,

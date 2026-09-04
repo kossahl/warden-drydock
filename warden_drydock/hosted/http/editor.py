@@ -235,7 +235,9 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
 
     sections = {item["section_id"]: item["body"] for item in new["sections"]}
     consumed: set[str] = set()
-    for position, (heading_index, heading) in enumerate(headings):
+    # Replace from the end so offsets collected from the original source stay
+    # valid while earlier sections are still waiting to be changed.
+    for position, (heading_index, heading) in reversed(list(enumerate(headings))):
         if heading.casefold() == "connections":
             continue
         section_id = _heading_id(heading)
@@ -250,10 +252,13 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         replacement = [] if body_text == "" else body_text.splitlines(keepends=True)
         if replacement and not replacement[-1].endswith("\n"):
             replacement[-1] += "\n"
+        # ``parse_document`` represents the blank line before the next
+        # heading as the body's trailing newline.  Keep that structural line
+        # when the reviewed body itself ends with a newline, including at EOF.
+        if replacement and body_text.endswith("\n"):
+            replacement.append("\n")
         lines[heading_index + 1:next_index] = replacement
         consumed.add(section_id)
-        shift = len(replacement) - (next_index - heading_index - 1)
-        headings = [(i if i <= heading_index else i + shift, h) for i, h in headings]
 
     # A typed candidate may intentionally remove a section.  Remove only the
     # matching heading block; headings, comments, and bytes in retained blocks

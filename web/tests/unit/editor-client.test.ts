@@ -1,4 +1,4 @@
-import { httpEditorApi, recomputeRecordDigest, type EditorRecord } from "../../src/editor/editorClient";
+import { httpEditorApi, nextConnectionId, recomputeRecordDigest, type EditorRecord } from "../../src/editor/editorClient";
 
 const record = (): EditorRecord => ({
   record_id: "record-one", record_type: "npc", displayed_name: "One", status: "draft", authority: "preparation",
@@ -12,6 +12,16 @@ describe("record editor client bindings", () => {
     const changed = record(); changed.content_digest = "f".repeat(64); changed.displayed_name = "Changed";
     expect(await recomputeRecordDigest(changed)).not.toBe(first);
     expect(first).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("allocates unique public connection IDs after removal", () => {
+    const connections = [
+      { connection_id: "connection_1", target_record_id: "one", relationship: "related-to", state: "current", context: "One" },
+      { connection_id: "connection_3", target_record_id: "three", relationship: "related-to", state: "current", context: "Three" },
+    ];
+    const next = nextConnectionId(connections);
+    expect(next).toBe("connection_4");
+    expect(next).toMatch(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/);
   });
 
   it("sends a closed removal request and carries the CSRF token after the first response", async () => {

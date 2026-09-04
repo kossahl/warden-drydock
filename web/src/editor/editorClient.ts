@@ -4,6 +4,17 @@ export type ImmutableRevisionRef = RevisionRef & { immutable: true };
 export interface EditorField { field_id: string; value: string | number | boolean | null; }
 export interface EditorSection { section_id: string; body: string; }
 export interface EditorConnection { connection_id: string; target_record_id: string; relationship: string; state: string; context: string; }
+export const nextConnectionId = (connections: EditorConnection[]) => {
+  const used = new Set(connections.map((connection) => connection.connection_id));
+  let suffix = 1;
+  for (const connectionId of used) {
+    const match = /^connection_(\d+)$/.exec(connectionId);
+    if (match) suffix = Math.max(suffix, Number(match[1]) + 1);
+  }
+  let candidate = `connection_${suffix}`;
+  while (used.has(candidate)) candidate = `connection_${++suffix}`;
+  return candidate;
+};
 export interface EditorRecord { record_id: string; record_type: string; displayed_name: string; status: string; authority: "preparation" | "canon" | "revealed"; visibility: EditorVisibility; fields: EditorField[]; sections: EditorSection[]; connections: EditorConnection[]; content_digest: string; }
 export interface EditorBinding { campaign_id: string; base_revision: RevisionRef; record_id: string; record_digest: string | null; expected_editor_workflow_version: number; }
 export interface EditorRecordView { contract_name: "editor_record_view"; contract_version: 1; campaign_id: string; viewed_revision: RevisionRef; head_revision: RevisionRef; editor_workflow_version: number; historical: boolean; editable: boolean; record: EditorRecord; }
