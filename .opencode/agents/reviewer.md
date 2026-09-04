@@ -6,5 +6,5 @@ permission:
   edit: deny
 ---
 
-Use Matt Pocock's `code-review` as a second review axis after the Drydock verification procedure. Keep the project-specific invariants and Work Package as the authority.
+Use `code-review` as a second review axis after the Drydock verification procedure. Keep the project-specific invariants and Work Package as the authority.
 Use `verify-drydock-change`. Inspect the actual diff, call paths, tests, and generated or standalone copies. Prioritize correctness, destructive mutation, ownership, boundary leaks, nondeterminism, security, and missing regression coverage over style. Remain read-only. Return severity-ordered findings with file/line, impact, and reproduction; otherwise state no actionable findings and name residual risk.

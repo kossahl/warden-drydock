@@ -9,7 +9,7 @@ MVP Work Package from its current fields, dependencies, references, and remote
 
 Return `DECISION REQUIRED` or `BLOCKED` and stop if the package is ambiguous or
 stale. Otherwise execute it through the configured role agents. Roles may use
-Matt's skills as procedures: planning uses `to-spec` or `to-tickets`,
+Installed skills as procedures: planning uses `to-spec` or `to-tickets`,
 architecture uses `codebase-design`, implementation uses `tdd` and `implement`,
 design uses `prototype`, and review uses `verify-drydock-change` plus
 `code-review`.

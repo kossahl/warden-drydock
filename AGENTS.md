@@ -78,8 +78,8 @@ A user should not need to understand Python packaging, submodules, templates, or
 
 ## Skills and agents
 
-Matt Pocock's globally installed skills provide reusable engineering
-procedures. The repository's agents provide roles, ownership, permissions, and
+The globally installed skills provide reusable engineering procedures. The
+repository's agents provide roles, ownership, permissions, and
 Drydock-specific invariants. Use both together.
 
 Use the existing project agent definitions for delegated work:
@@ -95,7 +95,7 @@ Use the existing project agent definitions for delegated work:
 - `reviewer`: `verify-drydock-change` and `code-review`;
 - `docs_maintainer`: `writing-for-agents` where applicable.
 
-Matt's skills are procedures, not authority. This file, the active Work
+Skills are procedures, not authority. This file, the active Work
 Package, accepted decisions, and the selected project agent take precedence
 over generic skill instructions.
 

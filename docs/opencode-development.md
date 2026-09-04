@@ -39,7 +39,7 @@ The orchestrator can delegate to the same ten roles used by the Project:
 
 ## Skills and roles
 
-Matt Pocock's skills are reusable procedures. The Drydock agents remain the
+The installed skills are reusable procedures. The Drydock agents remain the
 authority for role selection, file ownership, permissions, Work Package scope,
 and repository invariants.
 
@@ -60,7 +60,7 @@ remain authoritative for Drydock-specific planning and verification. Matt's
 skills must not bypass the private GitHub Project, versioned Work Packages,
 baseline checks, ownership rules, or parent-owned GitHub communication.
 
-Matt's upstream instructions sometimes refer to Claude's `Skill` tool or
+Some upstream skill instructions refer to Claude's `Skill` tool or
 generic sub-agents. OpenCode should map those references to the project role
 agents and the table above. If nested invocation is unavailable, invoke the
 referenced skill directly and record that limitation in the handoff.

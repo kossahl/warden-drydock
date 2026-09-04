@@ -22,7 +22,7 @@ Delegate bounded work to the Project's lead role. Include the complete Work
 Package, exact baseline, owned files, dependencies, protected invariants, and
 verification. Never ask a child to reconstruct missing context from chat.
 
-Use Matt Pocock's skills as procedures inside the selected role:
+Use the installed skills as procedures inside the selected role:
 
 - `product_strategist`: `to-spec` or `to-tickets`;
 - `architect`: `codebase-design` or `improve-codebase-architecture`;
@@ -35,7 +35,7 @@ Do not hand control of Work Package selection, GitHub communication, branch
 ownership, or review completion to a generic skill.
 
 After implementation, invoke `reviewer` independently. The reviewer uses
-`verify-drydock-change` and may use Matt's `code-review` as a second review
+`verify-drydock-change` and may use `code-review` as a second review
 axis. Return actionable
 findings to the owning implementer as a new correction task. Repeat until the
 reviewer reports no actionable findings. Use `test_engineer`, `architect`, or
