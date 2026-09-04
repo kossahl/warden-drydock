@@ -242,7 +242,7 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         if section_id not in sections:
             continue
         next_index = headings[position + 1][0] if position + 1 < len(headings) else len(lines)
-        body_text = sections[section_id]
+        body_text = normalize_text(sections[section_id])
         old_body = next((item["body"] for item in old["sections"] if item["section_id"] == section_id), None)
         if old_body == body_text:
             consumed.add(section_id)
@@ -277,7 +277,7 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         for item in missing:
             inserted.extend([f"## {item['section_id']}{newline}"])
             if item["body"]:
-                inserted.extend(item["body"].replace("\r\n", "\n").splitlines(keepends=True))
+                inserted.extend(normalize_text(item["body"]).splitlines(keepends=True))
                 if not inserted[-1].endswith("\n"):
                     inserted[-1] += newline
             inserted.append(newline)
@@ -301,7 +301,10 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
             lines.append(newline)
         lines.extend([f"## Connections{newline}", newline])
         lines.extend(f"{_connection_line(item)}{newline}" for item in new["connections"])
-    result = "".join(lines)
+    # Candidate text may arrive from a browser with CRLF already embedded in a
+    # section body.  Normalize the assembled result before restoring the source
+    # convention so CRLF never becomes CRCRLF.
+    result = normalize_text("".join(lines))
     return result.replace("\n", newline) if newline != "\n" else result
 
 

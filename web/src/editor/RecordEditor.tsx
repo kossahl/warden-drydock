@@ -78,7 +78,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, navigate }: { c
   const submitDecision = async () => {
     if (!proposal || !approvalDialog) return;
     const approving = approvalDialog === "approve"; setBusy(true); setError(""); setConflict(false);
-    try { const result = approving ? await httpEditorApi.approve(proposal) : await httpEditorApi.reject(proposal, rejectionReason); setApprovalDialog(null); if (approving) { setMessage("Proposal approved and published."); const revision = result.published_revision as RevisionRef | undefined; if (revision && navigate) navigate(`/campaigns/${encodeURIComponent(campaignId)}?revision=${encodeURIComponent(revision.revision_id)}`); } else { setProposal(null); setMessage("Proposal rejected. No campaign revision changed."); } }
+    try { const result = approving ? await httpEditorApi.approve(proposal) : await httpEditorApi.reject(proposal, rejectionReason); setApprovalDialog(null); if (approving) { setMessage("Proposal approved and published."); const revision = result.published_revision as RevisionRef | undefined; const createdRecordId = proposal.mutation_kind === "create" ? proposal.record_bindings[0]?.record_id : undefined; if (revision && navigate) navigate(createdRecordId ? `/campaigns/${encodeURIComponent(campaignId)}/records/${encodeURIComponent(createdRecordId)}?revision=${encodeURIComponent(revision.revision_id)}` : `/campaigns/${encodeURIComponent(campaignId)}?revision=${encodeURIComponent(revision.revision_id)}`); } else { setProposal(null); setMessage("Proposal rejected. No campaign revision changed."); } }
     catch (reason) { setConflict(staleCategories.includes(errorCategory(reason))); focusEditorError.current = true; setError(`${approving ? "Approval" : "Rejection"} blocked (${errorText(reason)}). Refresh and review the current head.`); }
     finally { setBusy(false); }
   };
@@ -86,19 +86,26 @@ export function RecordEditor({ campaignId, revisionId, recordId, navigate }: { c
     if (!proposal || !draft || !validate()) return;
     setBusy(true); setError(""); setConflict(false);
     try {
-      const base = await httpEditorApi.read(campaignId, proposal.base_revision.revision_id, draft.record_id);
-      const headRecord = base.viewed_revision.revision_id === base.head_revision.revision_id
-        ? base.record
-        : (await httpEditorApi.read(campaignId, base.head_revision.revision_id, draft.record_id)).record;
+      const proposalRecordId = proposal.record_bindings[0]?.record_id;
+      const sourceRecordId = proposal.mutation_kind === "create" ? "campaign-main" : draft.record_id;
+      const correctionDraft = proposal.mutation_kind === "create" && proposalRecordId
+        ? { ...draft, record_id: proposalRecordId }
+        : draft;
+      const base = await httpEditorApi.read(campaignId, proposal.base_revision.revision_id, sourceRecordId);
+      const headRecord = proposal.mutation_kind === "create"
+        ? null
+        : base.viewed_revision.revision_id === base.head_revision.revision_id
+          ? base.record
+          : (await httpEditorApi.read(campaignId, base.head_revision.revision_id, sourceRecordId)).record;
       const currentImpact = proposal.mutation_kind === "remove"
-        ? await httpEditorApi.impact(campaignId, base.head_revision.revision_id, draft.record_id)
+        ? await httpEditorApi.impact(campaignId, base.head_revision.revision_id, sourceRecordId)
         : undefined;
       const value = await httpEditorApi.correct(
-        proposal, proposal.mutation_kind === "remove" ? null : draft, resolutions,
-        base.head_revision, base.editor_workflow_version, headRecord.content_digest,
+        proposal, proposal.mutation_kind === "remove" ? null : correctionDraft, resolutions,
+        base.head_revision, base.editor_workflow_version, headRecord?.content_digest,
         currentImpact,
       );
-      setView(base); setProposal(value); setImpact(currentImpact ?? null); setMessage("Correction created as a new immutable proposal version.");
+      setView(base); setDraft(correctionDraft); setProposal(value); setImpact(currentImpact ?? null); setMessage("Correction created as a new immutable proposal version.");
     }
     catch (reason) { setConflict(staleCategories.includes(errorCategory(reason))); focusEditorError.current = true; setError(`Correction blocked (${errorText(reason)}). Reload the current head and rebase the fields.`); }
     finally { setBusy(false); }

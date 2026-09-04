@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from jsonschema import Draft202012Validator
 
@@ -56,7 +57,7 @@ class EditorBackendTests(unittest.TestCase):
         operation["payload_digest"] = canonical_digest(request_digest_input(payload))
         return revision, payload, self.app.editor_record_edit("campaign_alpha", revision, "campaign-main", payload)
 
-    def _approve_editor(self, proposal):
+    def _editor_approval_payload(self, proposal):
         action = {
             "contract_name": "editor_proposal_approval_request", "contract_version": 1,
             "proposal": {"proposal_id": proposal["proposal_id"], "proposal_version": proposal["proposal_version"]},
@@ -89,7 +90,13 @@ class EditorBackendTests(unittest.TestCase):
         }
         action["operation_request"] = operation
         operation["payload_digest"] = canonical_digest(request_digest_input(action))
-        return self.app.editor_proposal_approve(proposal["proposal_id"], proposal["proposal_version"], action)
+        return action
+
+    def _approve_editor(self, proposal):
+        return self.app.editor_proposal_approve(
+            proposal["proposal_id"], proposal["proposal_version"],
+            self._editor_approval_payload(proposal),
+        )
 
     def _create_record(self, record_id, *, record_type="npc", connections=None):
         revision = self.app.workflow.head("campaign_alpha")
@@ -177,6 +184,50 @@ class EditorBackendTests(unittest.TestCase):
         self.assertEqual("published", restarted.editor_proposal_read(proposal["proposal_id"], 1)[1]["publication"]["status"])
         self.assertEqual(ProposalStatus.PUBLISHED, self.app.proposal_repository.get(proposal["proposal_id"], 1).status)
 
+    def test_editor_approval_replays_after_publication_before_receipt_storage(self):
+        _, _, (_, proposal) = self._edit("idem_editor_receipt_crash")
+        with mock.patch.object(self.app, "_store", side_effect=SystemExit("receipt crash")):
+            with self.assertRaises(SystemExit):
+                self._approve_editor(proposal)
+
+        restarted = SliceApplication(
+            Path(self.tmp.name), provider=SyntheticProvider(), receipts=self.receipts,
+            workflow_repository=self.workflow, proposal_repository=self.app.proposal_repository,
+            atlas_repository=self.app.atlas_repository,
+        )
+        status, replay = restarted.editor_proposal_approve(
+            proposal["proposal_id"], proposal["proposal_version"],
+            self._editor_approval_payload(proposal),
+        )
+        self.assertEqual((200, "published"), (status, replay["outcome"]))
+        published = replay["published_revision"]["revision_id"]
+        projection = restarted.atlas_repository.get("campaign_alpha", published)
+        self.assertEqual((proposal["proposal_id"], proposal["proposal_version"]), (
+            projection.history_entry.proposal_id,
+            projection.history_entry.proposal_version,
+        ))
+        status, exact_replay = restarted.editor_proposal_approve(
+            proposal["proposal_id"], proposal["proposal_version"],
+            self._editor_approval_payload(proposal),
+        )
+        self.assertEqual((200, replay), (status, exact_replay))
+
+    def test_restart_does_not_quarantine_editor_publication_for_semantic_diff_digest(self):
+        _, _, (_, proposal) = self._edit("idem_editor_pending_recovery")
+        with mock.patch.object(self.app.workflow, "finalize_head", side_effect=SystemExit("publication crash")):
+            with self.assertRaises(SystemExit):
+                self._approve_editor(proposal)
+
+        restarted = SliceApplication(
+            Path(self.tmp.name), provider=SyntheticProvider(), receipts=self.receipts,
+            workflow_repository=self.workflow, proposal_repository=self.app.proposal_repository,
+            atlas_repository=self.app.atlas_repository,
+        )
+        head = restarted.workflow.head("campaign_alpha")
+        self.assertNotEqual(proposal["base_revision"]["revision_id"], head)
+        self.assertEqual(2, len(restarted.revisions.store.inventory()))
+        self.assertFalse(any(restarted.revisions.store.quarantine.rglob("snapshot-manifest-v1.json")))
+
     def test_removal_impact_derives_typed_incoming_references(self):
         revision = self.app.workflow.head("campaign_alpha")
         status, impact = self.app.editor_removal_impact("campaign_alpha", revision, "campaign-main")
@@ -218,6 +269,21 @@ Preserve this unrelated section.
         self.assertIn("<!-- Preserve this source comment. -->", result)
         self.assertIn("## Notes\nPreserve this unrelated section.", result)
         self.assertIn("warden_only: false", result)
+
+    def test_mutation_preserves_crlf_without_doubled_carriage_returns(self):
+        source = "---\r\nid: record-main\r\ntype: npc\r\nname: Keeper\r\nstatus: draft\r\nvisibility: warden\r\n---\r\n\r\n## Summary\r\nKeep this section.\r\n"
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["displayed_name"] = "Updated Keeper"
+        candidate["sections"][0]["body"] = "First line\r\nSecond line"
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+
+        self.assertNotIn("\r\r\n", result)
+        self.assertNotIn("\n\n", result.replace("\r\n", ""))
+        self.assertEqual(result.count("\r\n"), result.count("\n"))
+        self.assertIn("name: Updated Keeper\r\n", result)
+        self.assertIn("First line\r\nSecond line\r\n", result)
 
     def test_create_rejects_unknown_adapter_record_type_before_workflow_claim(self):
         revision = self.app.workflow.head("campaign_alpha")

@@ -386,7 +386,8 @@ class SliceApplication:
                         }
                         or proposal.campaign_id != manifest.campaign_id
                         or proposal.base_revision != manifest.parent_revision
-                        or proposal.diff_digest != manifest.change_digest
+                        or self._proposal_publication_digest(proposal)
+                        != manifest.change_digest
                         or manifest.publication_intent_token
                         != self._id("token", proposal_id, proposal_version)
                     ):
@@ -1738,6 +1739,128 @@ class SliceApplication:
         if operation.get("expected_revision") != expected_revision or operation.get("expected_editor_workflow_version") != payload["expected_editor_workflow_version"] or operation.get("intent_digest") != payload["diff_digest"]:
             raise HTTPFailure(422, "proposal_approval_conflict", "approval_binding_mismatch", "editor_approve" if approve else "editor_reject", self._request_id(payload))
 
+    def _editor_terminal_approval_replay(
+        self, proposal_id: str, version: int, payload: dict, stored: dict, item: ProposalVersion,
+    ) -> tuple[int, dict] | None:
+        """Recover an approval receipt after its durable publication committed.
+
+        The publication transaction and HTTP receipt are deliberately separate.
+        A retry must therefore be able to reconstruct the response from the
+        proposal, immutable snapshot, and Atlas projection without attempting a
+        second publication or relying on the old process's editor cache.
+        """
+        value = stored["value"]
+        if (
+            item.status is not ProposalStatus.PUBLISHED
+            or value.get("publication", {}).get("status") != "published"
+            or not isinstance(value.get("publication", {}).get("published_revision"), dict)
+        ):
+            return None
+        operation = payload.get("operation_request")
+        required = {
+            "proposal", "proposal_status", "mutation_kind", "source_revision",
+            "base_revision", "expected_campaign_head", "expected_editor_workflow_version",
+            "proposal_payload_digest", "diff_digest", "validation_status",
+            "validation_digest", "record_bindings", "impact_digest", "impact_binding",
+            "resolutions", "authority_outcome", "visibility_outcome", "warden_confirmed",
+            "diff", "affected_record_count", "confirmed_change_ids",
+            "confirmed_authority_change_ids", "confirmed_visibility_change_ids",
+        }
+        operation_fields = {
+            "contract_name", "contract_version", "request_id", "operation",
+            "idempotency_key", "payload_digest", "expected_revision",
+            "expected_editor_workflow_version", "subject_id", "intent_digest",
+        }
+        if (
+            set(payload) != required | {"contract_name", "contract_version", "operation_request"}
+            or payload.get("contract_name") != "editor_proposal_approval_request"
+            or payload.get("contract_version") != 1
+            or not isinstance(operation, dict)
+            or set(operation) != operation_fields
+            or operation.get("contract_name") != "editor_operation_request"
+            or operation.get("contract_version") != 1
+            or operation.get("operation") != "editor_proposal_approve"
+            or operation.get("subject_id") != proposal_id
+            or operation.get("payload_digest") != self._editor_payload_digest(payload)
+        ):
+            return None
+        terminal_workflow = value.get("editor_workflow_version")
+        if type(terminal_workflow) is not int:
+            return None
+        original_workflow = terminal_workflow - 1
+        bindings = deepcopy(value.get("record_bindings"))
+        if original_workflow < 1 or not isinstance(bindings, list):
+            return None
+        for binding in bindings:
+            if isinstance(binding, dict):
+                binding["expected_editor_workflow_version"] = original_workflow
+        expected = {
+            "proposal": {"proposal_id": proposal_id, "proposal_version": version},
+            "proposal_status": "needs_review",
+            "mutation_kind": value.get("mutation_kind"),
+            "source_revision": value.get("source_revision"),
+            "base_revision": value.get("base_revision"),
+            "expected_campaign_head": value.get("expected_campaign_head"),
+            "expected_editor_workflow_version": original_workflow,
+            "proposal_payload_digest": item.payload_digest,
+            "diff_digest": value.get("diff", {}).get("diff_digest"),
+            "validation_status": value.get("validation", {}).get("status"),
+            "validation_digest": value.get("validation", {}).get("validation_digest"),
+            "record_bindings": bindings,
+            "impact_digest": value.get("impact_digest"),
+            "impact_binding": value.get("impact_binding"),
+            "resolutions": value.get("resolutions"),
+            "authority_outcome": value.get("authority_outcome"),
+            "visibility_outcome": value.get("visibility_outcome"),
+            "warden_confirmed": True,
+            "diff": value.get("diff"),
+            "affected_record_count": value.get("diff", {}).get("affected_record_count"),
+            "confirmed_change_ids": [card["change_id"] for card in value.get("diff", {}).get("cards", [])],
+            "confirmed_authority_change_ids": [change["change_id"] for change in value.get("diff", {}).get("authority_changes", [])],
+            "confirmed_visibility_change_ids": [change["change_id"] for change in value.get("diff", {}).get("visibility_changes", [])],
+        }
+        if any(payload.get(key) != expected_value for key, expected_value in expected.items()):
+            return None
+        if (
+            operation.get("expected_revision") != expected["base_revision"]["revision_id"]
+            or operation.get("expected_editor_workflow_version") != original_workflow
+            or operation.get("intent_digest") != expected["diff_digest"]
+        ):
+            return None
+        manifest = self._matching_publication(item)
+        if manifest is None:
+            return None
+        try:
+            projection = self.atlas_repository.get(item.campaign_id, manifest.revision_id)
+        except (KeyError, ValueError):
+            return None
+        history = projection.history_entry
+        if (
+            projection.tree_digest != manifest.tree_digest
+            or history.revision_id != manifest.revision_id
+            or history.proposal_id != proposal_id
+            or history.proposal_version != version
+        ):
+            return None
+        response = {
+            "contract_name": "editor_proposal_approval_result", "contract_version": 1,
+            "proposal": {"proposal_id": proposal_id, "proposal_version": version},
+            "outcome": "published",
+            "published_revision": self._editor_immutable_revision_ref(manifest),
+            "editor_workflow_version": original_workflow + 1,
+        }
+        self._editor_semantic(response, stage="editor_approve")
+        return 200, response
+
+    @staticmethod
+    def _editor_approval_response(proposal_id: str, version: int, published_revision: dict, workflow_version: int) -> dict:
+        return {
+            "contract_name": "editor_proposal_approval_result", "contract_version": 1,
+            "proposal": {"proposal_id": proposal_id, "proposal_version": version},
+            "outcome": "published", "published_revision": published_revision,
+            "editor_workflow_version": workflow_version,
+        }
+
     def _editor_action(self, proposal_id: str, version: int, payload: dict, action: str):
         with self._editor_mutation_lock:
             operation = payload.get("operation_request")
@@ -1749,12 +1872,19 @@ class SliceApplication:
             stored = self._editor_proposals.get((proposal_id, version))
             if stored is None:
                 raise HTTPFailure(404, "not_found", "proposal_not_found", "editor_" + action)
-            expected = (payload.get("operation_request") or {}).get("expected_editor_workflow_version")
-            if expected != self._editor_version(stored["campaign_id"]) or expected != stored["workflow"]:
-                raise HTTPFailure(409, "unsafe_binding", "workflow_conflict", "editor_" + action, self._request_id(payload))
             item = self.proposal_repository.get(proposal_id, version)
             if item is None:
                 raise HTTPFailure(404, "not_found", "proposal_not_found", "editor_" + action)
+            if action == "approve":
+                recovered = self._editor_terminal_approval_replay(
+                    proposal_id, version, payload, stored, item,
+                )
+                if recovered is not None:
+                    self._store(receipt_operation, operation["idempotency_key"], operation["payload_digest"], recovered[0], recovered[1])
+                    return recovered
+            expected = (payload.get("operation_request") or {}).get("expected_editor_workflow_version")
+            if expected != self._editor_version(stored["campaign_id"]) or expected != stored["workflow"]:
+                raise HTTPFailure(409, "unsafe_binding", "workflow_conflict", "editor_" + action, self._request_id(payload))
             impact = None
             if stored["value"].get("mutation_kind") == "remove":
                 impact = self._editor_bound_removal_impact(
@@ -1866,7 +1996,9 @@ class SliceApplication:
                 save_editor(proposal_id, version, value, result.published_revision_id if action == "approve" else None)
             self._persist_editor_state()
             if action == "approve":
-                response = {"contract_name": "editor_proposal_approval_result", "contract_version": 1, "proposal": {"proposal_id": proposal_id, "proposal_version": version}, "outcome": "published", "published_revision": published_revision, "editor_workflow_version": expected + 1}
+                response = self._editor_approval_response(
+                    proposal_id, version, published_revision, expected + 1,
+                )
             else:
                 response = {"contract_name": "editor_proposal_rejection_result", "contract_version": 1, "proposal": {"proposal_id": proposal_id, "proposal_version": version}, "outcome": "rejected", "editor_workflow_version": expected + 1}
             self._editor_semantic(response, stage="editor_" + action)
@@ -2083,7 +2215,7 @@ class SliceApplication:
         campaign = self.campaigns.get(item.campaign_id)
         if campaign is None:
             return None
-        publication_digest = exact_diff_digest(item.changes) if item.editor_metadata else item.diff_digest
+        publication_digest = self._proposal_publication_digest(item)
         expected_revision = item.published_revision_id
         candidates = [manifest for manifest in campaign.revisions.values() if (
             manifest.parent_revision == item.base_revision
@@ -2093,6 +2225,16 @@ class SliceApplication:
             and self.workflow.publication_eligible(manifest)
         )]
         return candidates[0] if len(candidates) == 1 else None
+
+    @staticmethod
+    def _proposal_publication_digest(item: ProposalVersion) -> str:
+        """Return the digest bound into a revision publication intent.
+
+        Editor proposals expose a structured diff digest to the browser, while
+        publication remains bound to the exact text changes applied by the
+        deterministic engine.  Those are intentionally different identities.
+        """
+        return exact_diff_digest(item.changes) if item.editor_metadata else item.diff_digest
 
     def _proposal_view(self, item: ProposalVersion) -> dict:
         change = item.changes[0]

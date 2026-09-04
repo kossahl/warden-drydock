@@ -86,3 +86,46 @@ test("editor action errors focus the editor error without reducing accessibility
   await expect(errorHeading).toBeFocused();
   await expect(editor.getByLabel("Displayed name")).toBeEnabled();
 });
+
+test("create correction uses the candidate ID, reads campaign context, and opens the created record", async ({ page }) => {
+  await installAtlasApi(page);
+  const editorReads: string[] = [];
+  let correctionBody: Record<string, any> | null = null;
+  const createdProposal = {
+    ...proposal,
+    proposal_id: "proposal_created",
+    mutation_kind: "create" as const,
+    record_bindings: [{ ...proposal.record_bindings[0], record_id: "record-created", record_digest: null }],
+    diff: { ...proposal.diff, summary: "create", cards: [{ ...proposal.diff.cards[0], kind: "record_created", subject_record_id: "record-created" }] },
+  };
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/campaign-main/editor")) {
+      editorReads.push(path);
+      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: { ...editorRecord, record_id: "campaign-main" } }) });
+    }
+    if (request.method() === "POST" && path.endsWith("/editor/records/proposals")) {
+      return route.fulfill({ status: 201, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify(createdProposal) });
+    }
+    if (request.method() === "POST" && path.endsWith("/corrections")) {
+      correctionBody = JSON.parse(request.postData() ?? "{}");
+      return route.fulfill({ status: 201, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ ...createdProposal, proposal_version: 2 }) });
+    }
+    if (request.method() === "POST" && path.endsWith("/approval")) {
+      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_proposal_approval_result", contract_version: 1, proposal: { proposal_id: "proposal_created", proposal_version: 2 }, outcome: "published", published_revision: { revision_id: "revision_three", ordinal: 3, tree_digest: "1".repeat(64), immutable: true }, editor_workflow_version: 3 }) });
+    }
+    return route.fallback();
+  });
+  await page.goto("/campaigns/campaign_atlas/records/__new__?revision=revision_two");
+  const editor = page.locator(".editor").filter({ hasText: "Create record" });
+  await editor.getByLabel("Record ID").fill("record-created");
+  await editor.getByRole("button", { name: "Submit create proposal" }).click();
+  await editor.getByRole("button", { name: "Create correction/rebase" }).click();
+  await expect.poll(() => editorReads.length).toBe(2);
+  expect(editorReads.every((path) => !path.endsWith("/records/new-record/editor"))).toBe(true);
+  await expect.poll(() => correctionBody?.candidate?.record_id).toBe("record-created");
+  await editor.getByRole("button", { name: "Approve and publish exact proposal" }).click();
+  await page.getByRole("button", { name: "Approve and publish" }).click();
+  await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-created\?revision=revision_three$/);
+});
