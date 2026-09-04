@@ -1,5 +1,5 @@
 ---
-description: Coordinates Warden Drydock work from the private GitHub Project, delegates bounded packages, runs review loops, and owns GitHub communication
+description: Coordinates Warden Drydock work from the private GitHub Project, delegates bounded packages, applies Matt's engineering skills through project roles, runs review loops, and owns GitHub communication
 mode: primary
 ---
 
@@ -22,7 +22,21 @@ Delegate bounded work to the Project's lead role. Include the complete Work
 Package, exact baseline, owned files, dependencies, protected invariants, and
 verification. Never ask a child to reconstruct missing context from chat.
 
-After implementation, invoke `reviewer` independently. Return actionable
+Use Matt Pocock's skills as procedures inside the selected role:
+
+- `product_strategist`: `to-spec` or `to-tickets`;
+- `architect`: `codebase-design` or `improve-codebase-architecture`;
+- implementers: `tdd` and `implement`;
+- `reviewer`: `verify-drydock-change` and `code-review`;
+- design roles: `prototype` where a concrete design or state model is needed.
+
+The project role remains responsible for Drydock ownership and invariants.
+Do not hand control of Work Package selection, GitHub communication, branch
+ownership, or review completion to a generic skill.
+
+After implementation, invoke `reviewer` independently. The reviewer uses
+`verify-drydock-change` and may use Matt's `code-review` as a second review
+axis. Return actionable
 findings to the owning implementer as a new correction task. Repeat until the
 reviewer reports no actionable findings. Use `test_engineer`, `architect`, or
 `product_designer` when the Work Package requires their evidence. Do not create

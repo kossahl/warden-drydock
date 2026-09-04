@@ -76,6 +76,39 @@ A user should not need to understand Python packaging, submodules, templates, or
 - Generated campaign repositories never require this source repository at runtime.
 - Updates must be non-destructive and reviewable.
 
+## Skills and agents
+
+Matt Pocock's globally installed skills provide reusable engineering
+procedures. The repository's agents provide roles, ownership, permissions, and
+Drydock-specific invariants. Use both together.
+
+Use the existing project agent definitions for delegated work:
+
+- `product_strategist`: `to-spec` and `to-tickets`;
+- `product_designer`: `prototype`;
+- `architect`: `codebase-design` and `improve-codebase-architecture`;
+- `core_implementer`: `tdd` and `implement`;
+- `adapter_specialist`: `tdd` where applicable;
+- `hosted_backend_implementer`: `tdd` and `implement`;
+- `web_frontend_implementer`: `prototype`, `tdd`, and `implement` where applicable;
+- `test_engineer`: `tdd`;
+- `reviewer`: `verify-drydock-change` and `code-review`;
+- `docs_maintainer`: `writing-for-agents` where applicable.
+
+Matt's skills are procedures, not authority. This file, the active Work
+Package, accepted decisions, and the selected project agent take precedence
+over generic skill instructions.
+
+If a skill refers to Claude's `Skill` tool or a generic sub-agent, map the
+request to the project agent and skill mapping above. If the harness cannot
+perform that nested invocation, invoke the required skill directly and record
+the limitation in the handoff.
+
+The repository-local `plan-drydock-change` and `verify-drydock-change` skills
+remain authoritative for Drydock-specific planning and verification. Matt's
+skills may support them, but must not replace the GitHub Project and Work
+Package rules.
+
 ## Change protocol
 
 Every change — feature, bug fix, documentation update, or refactor — is

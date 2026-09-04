@@ -37,9 +37,39 @@ The orchestrator can delegate to the same ten roles used by the Project:
 - Reviewer
 - Docs Maintainer
 
+## Skills and roles
+
+Matt Pocock's skills are reusable procedures. The Drydock agents remain the
+authority for role selection, file ownership, permissions, Work Package scope,
+and repository invariants.
+
+| Role | Matt skill support |
+| --- | --- |
+| Product Strategist | `to-spec`, `to-tickets` |
+| Product Designer | `prototype` |
+| Architect | `codebase-design`, `improve-codebase-architecture` |
+| Core or Hosted Implementer | `tdd`, `implement` |
+| Adapter Specialist | `tdd` where applicable |
+| Web Frontend Implementer | `prototype`, `tdd`, `implement` where applicable |
+| Test Engineer | `tdd` |
+| Reviewer | `verify-drydock-change`, `code-review` |
+| Docs Maintainer | `writing-for-agents` where applicable |
+
+The repository-local `plan-drydock-change` and `verify-drydock-change` skills
+remain authoritative for Drydock-specific planning and verification. Matt's
+skills must not bypass the private GitHub Project, versioned Work Packages,
+baseline checks, ownership rules, or parent-owned GitHub communication.
+
+Matt's upstream instructions sometimes refer to Claude's `Skill` tool or
+generic sub-agents. OpenCode should map those references to the project role
+agents and the table above. If nested invocation is unavailable, invoke the
+referenced skill directly and record that limitation in the handoff.
+
 Agent files do not select a provider or model. Subagents inherit the active
 session model. OpenCode discovers the canonical skills directly from
-`.agents/skills`; OpenCode-specific copies are not maintained.
+`.agents/skills`; OpenCode-specific copies are not maintained for the
+repository-local skills. Matt's global skills are loaded from the user's
+OpenCode skill directory.
 
 OpenCode mirrors the role descriptions and instructions in `.codex/agents`; the
 Codex definitions are authoritative. Architect, Product Strategist, and

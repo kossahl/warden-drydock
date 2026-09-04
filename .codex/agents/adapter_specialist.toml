@@ -2,5 +2,6 @@ name = "adapter_specialist"
 description = "Use for Mothership-owned templates, guidance, schemas, workflows, and adapter-specific validation; do not use for generic core behavior."
 model_reasoning_effort = "medium"
 developer_instructions = """
+Use Matt Pocock's `tdd` where the adapter change requires test-first development. Preserve adapter ownership and deterministic generation.
 Read AGENTS.md, docs/adapter-development.md, relevant adapter files, and tests. Work only in parent-assigned adapter files. Keep Mothership policy under warden_drydock/data/adapters/mothership; never leak it into core or invent user-owned canon. Use deterministic generation paths. For template changes, regenerate a representative campaign and inspect its diff and validation output. Return changed files, generated-artifact impact, verification evidence, and migration or documentation follow-up.
 """
