@@ -418,12 +418,14 @@ class SliceApplication:
             self._editor_workflow[proposal.campaign_id] = expected_workflow + 1
 
     def _recover_pending_atlas_publications(self) -> None:
-        """Resolve the snapshot/projection-before-head crash window deterministically."""
+        """Resolve publication and unfinished editor-state crash windows."""
         for manifest in self.revisions.store.inventory():
             matches = self.workflow.matching_intents(
                 manifest.publication_intent_token
             )
-            if len(matches) != 1 or matches[0].status is not IntentStatus.PENDING:
+            if len(matches) != 1 or matches[0].status not in {
+                IntentStatus.PENDING, IntentStatus.FINALIZED,
+            }:
                 continue
             intent = matches[0]
             try:
@@ -431,6 +433,11 @@ class SliceApplication:
                     manifest.campaign_id, manifest.revision_id
                 )
             except KeyError:
+                # A finalized generic publication is already complete.  Only
+                # an editor proposal with unfinished state needs a projection
+                # to reconcile its second workflow boundary.
+                if intent.status is IntentStatus.FINALIZED:
+                    continue
                 self._discard_pending_publication(manifest)
                 continue
             proposal = None
@@ -450,11 +457,14 @@ class SliceApplication:
                     if (
                         intent.kind is not PublicationKind.APPROVAL
                         or proposal is None
-                        or proposal.status not in {
-                            ProposalStatus.APPROVING,
-                            ProposalStatus.APPROVED,
-                            ProposalStatus.QUARANTINED,
-                        }
+                        or proposal.status not in (
+                            {
+                                ProposalStatus.APPROVING,
+                                ProposalStatus.APPROVED,
+                                ProposalStatus.QUARANTINED,
+                            }
+                            | ({ProposalStatus.PUBLISHED} if intent.status is IntentStatus.FINALIZED else set())
+                        )
                         or proposal.campaign_id != manifest.campaign_id
                         or proposal.base_revision != manifest.parent_revision
                         or self._proposal_publication_digest(proposal)
@@ -463,6 +473,13 @@ class SliceApplication:
                         != self._id("token", proposal_id, proposal_version)
                     ):
                         raise ValueError("pending approval provenance is invalid")
+                    if (
+                        intent.status is IntentStatus.FINALIZED
+                        and proposal.status is not ProposalStatus.APPROVING
+                    ):
+                        # Atomic PostgreSQL editor publication and already
+                        # completed in-memory publications need no repair.
+                        continue
                     self._atlas_provenance_overrides[manifest.revision_id] = (
                         proposal_id, proposal_version
                     )
