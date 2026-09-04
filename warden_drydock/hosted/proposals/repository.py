@@ -45,11 +45,11 @@ class PostgresProposalRepository:
             return None
         return ProposalVersion(row[0], row[1], row[2], row[3],
             _decode_changes(row[4]), row[5], row[6], ProposalStatus(row[7]),
-            row[8], row[9], row[10], row[11], row[12])
+            row[8], row[9], row[10], row[11], row[12], row[13])
 
     @staticmethod
     def _select(cursor, proposal_id, version, *, lock=False):
-        cursor.execute("SELECT proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id FROM hosted_proposal_version WHERE proposal_id=%s AND version=%s" + (" FOR UPDATE" if lock else ""), (proposal_id, version))
+        cursor.execute("SELECT proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id,editor_metadata FROM hosted_proposal_version WHERE proposal_id=%s AND version=%s" + (" FOR UPDATE" if lock else ""), (proposal_id, version))
         return PostgresProposalRepository._item(cursor.fetchone())
 
     @staticmethod
@@ -63,27 +63,77 @@ class PostgresProposalRepository:
             cursor.execute("SELECT COALESCE(MAX(version),0)+1 FROM hosted_proposal_version WHERE proposal_id=%s", (proposal_id,))
             return cursor.fetchone()[0]
 
+    def editor_workflow_version(self, campaign_id):
+        with self._transaction() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT version FROM hosted_editor_workflow WHERE campaign_id=%s", (campaign_id,))
+            row = cursor.fetchone()
+            return row[0] if row else 1
+
+    def add_editor(self, item, campaign_id, expected_version):
+        """Insert an editor proposal and advance its campaign CAS atomically."""
+        with self._transaction() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 3))", (campaign_id,))
+            cursor.execute("INSERT INTO hosted_editor_workflow(campaign_id,version) VALUES(%s,1) ON CONFLICT DO NOTHING", (campaign_id,))
+            cursor.execute("SELECT version FROM hosted_editor_workflow WHERE campaign_id=%s FOR UPDATE", (campaign_id,))
+            current = cursor.fetchone()[0]
+            if current != expected_version:
+                return False
+            cursor.execute("SELECT COALESCE(MAX(version),0)+1 FROM hosted_proposal_version WHERE proposal_id=%s", (item.proposal_id,))
+            if cursor.fetchone()[0] != item.version:
+                raise ValueError("proposal_version_conflict")
+            cursor.execute("INSERT INTO hosted_proposal_version(proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,editor_metadata) VALUES(%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)",
+                (item.proposal_id, item.version, item.campaign_id, item.base_revision,
+                 json.dumps(_encode_changes(item.changes)), item.diff_digest, item.payload_digest,
+                 item.status.value, item.generation_id, item.source_revision,
+                 item.source_set_digest, item.terminal_draft_digest,
+                 json.dumps(item.editor_metadata or {})))
+            self._audit(cursor, item, "created")
+            cursor.execute("UPDATE hosted_editor_workflow SET version=%s WHERE campaign_id=%s AND version=%s", (expected_version + 1, campaign_id, expected_version))
+            if cursor.rowcount != 1:
+                raise ValueError("editor_workflow_conflict")
+            return True
+
+    def advance_editor(self, campaign_id, expected_version):
+        with self._transaction() as connection, connection.cursor() as cursor:
+            cursor.execute("INSERT INTO hosted_editor_workflow(campaign_id,version) VALUES(%s,1) ON CONFLICT DO NOTHING", (campaign_id,))
+            cursor.execute("UPDATE hosted_editor_workflow SET version=%s WHERE campaign_id=%s AND version=%s", (expected_version + 1, campaign_id, expected_version))
+            return cursor.rowcount == 1
+
+    def save_editor_metadata(self, proposal_id, version, metadata, published_revision_id=None):
+        with self._transaction() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE hosted_proposal_version SET editor_metadata=%s::jsonb, published_revision_id=COALESCE(%s,published_revision_id) WHERE proposal_id=%s AND version=%s",
+                (json.dumps(metadata), published_revision_id, proposal_id, version),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("proposal_not_found")
+
     def add(self, item):
         with self._transaction() as connection, connection.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 2))", (item.proposal_id,))
             cursor.execute("SELECT COALESCE(MAX(version),0)+1 FROM hosted_proposal_version WHERE proposal_id=%s", (item.proposal_id,))
             if cursor.fetchone()[0] != item.version:
                 raise ValueError("proposal_version_conflict")
-            cursor.execute("INSERT INTO hosted_proposal_version(proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest) VALUES(%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s)",
+            cursor.execute("INSERT INTO hosted_proposal_version(proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,editor_metadata) VALUES(%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)",
                 (item.proposal_id, item.version, item.campaign_id, item.base_revision,
                  json.dumps(_encode_changes(item.changes)), item.diff_digest,
                  item.payload_digest, item.status.value, item.generation_id,
                  item.source_revision, item.source_set_digest,
-                 item.terminal_draft_digest))
+                 item.terminal_draft_digest, json.dumps(item.editor_metadata or {})))
             self._audit(cursor, item, "created")
 
     def get(self, proposal_id, version):
         with self._transaction() as connection, connection.cursor() as cursor:
             return self._select(cursor, proposal_id, version)
 
+    def editor_proposals(self):
+        with self._transaction() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id,editor_metadata FROM hosted_proposal_version WHERE editor_metadata <> '{}'::jsonb ORDER BY proposal_id,version")
+            return tuple(self._item(row) for row in cursor.fetchall())
+
     def versions(self, proposal_id):
         with self._transaction() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id FROM hosted_proposal_version WHERE proposal_id=%s ORDER BY version", (proposal_id,))
+            cursor.execute("SELECT proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id,editor_metadata FROM hosted_proposal_version WHERE proposal_id=%s ORDER BY version", (proposal_id,))
             return tuple(self._item(row) for row in cursor.fetchall())
 
     def workflow_counts(self, campaign_id, revision_id):
@@ -104,19 +154,19 @@ class PostgresProposalRepository:
         with self._transaction() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "SELECT proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,"
-                "generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id,created_at "
+                "generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id,editor_metadata,created_at "
                 "FROM hosted_proposal_version WHERE campaign_id=%s AND base_revision=%s",
                 (campaign_id, revision_id),
             )
             return tuple(
-                {"item": self._item(row[:13]), "created_at": row[13]}
+                {"item": self._item(row[:14]), "created_at": row[14]}
                 for row in cursor.fetchall()
             )
 
     def find_by_published_revision(self, campaign_id, revision_id):
         with self._transaction() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "SELECT proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id "
+                "SELECT proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id,editor_metadata "
                 "FROM hosted_proposal_version WHERE campaign_id=%s AND published_revision_id=%s",
                 (campaign_id, revision_id),
             )
@@ -127,7 +177,7 @@ class PostgresProposalRepository:
 
     def _transition(self, item, expected, status, event):
         with self._transaction() as connection, connection.cursor() as cursor:
-            cursor.execute("UPDATE hosted_proposal_version SET status=%s WHERE proposal_id=%s AND version=%s AND status=%s RETURNING proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id",
+            cursor.execute("UPDATE hosted_proposal_version SET status=%s WHERE proposal_id=%s AND version=%s AND status=%s RETURNING proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id,editor_metadata",
                 (status.value, item.proposal_id, item.version, expected.value))
             updated = self._item(cursor.fetchone())
             if updated is not None:
@@ -177,7 +227,7 @@ class PostgresProposalRepository:
             cursor.execute("UPDATE hosted_proposal_version SET status='rejected' WHERE proposal_id=%s AND version=%s AND status=%s", (item.proposal_id, item.version, current.status.value))
             if cursor.rowcount != 1:
                 raise ValueError("proposal_status_conflict")
-            cursor.execute("INSERT INTO hosted_proposal_version(proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest) VALUES(%s,%s,%s,%s,%s::jsonb,%s,%s,'draft',%s,%s,%s,%s)", (corrected.proposal_id, corrected.version, corrected.campaign_id, corrected.base_revision, json.dumps(_encode_changes(changes)), corrected.diff_digest, corrected.payload_digest, corrected.generation_id, corrected.source_revision, corrected.source_set_digest, corrected.terminal_draft_digest))
+            cursor.execute("INSERT INTO hosted_proposal_version(proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,editor_metadata) VALUES(%s,%s,%s,%s,%s::jsonb,%s,%s,'draft',%s,%s,%s,%s,%s::jsonb)", (corrected.proposal_id, corrected.version, corrected.campaign_id, corrected.base_revision, json.dumps(_encode_changes(changes)), corrected.diff_digest, corrected.payload_digest, corrected.generation_id, corrected.source_revision, corrected.source_set_digest, corrected.terminal_draft_digest, json.dumps(corrected.editor_metadata or {})))
             self._audit(cursor, ProposalVersion(**{**current.__dict__, "status": ProposalStatus.REJECTED}), "corrected")
             self._audit(cursor, corrected, "created")
             return corrected
@@ -197,7 +247,7 @@ class PostgresProposalRepository:
         else:
             intent_id, revision_id, result_digest = self._link(result)
         with self._transaction() as connection, connection.cursor() as cursor:
-            cursor.execute("UPDATE hosted_proposal_version SET status=%s,publication_intent_token=COALESCE(publication_intent_token,%s),published_revision_id=COALESCE(published_revision_id,%s),result_digest=COALESCE(result_digest,%s) WHERE proposal_id=%s AND version=%s AND status IN ('approving','approved','quarantined') RETURNING proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id",
+            cursor.execute("UPDATE hosted_proposal_version SET status=%s,publication_intent_token=COALESCE(publication_intent_token,%s),published_revision_id=COALESCE(published_revision_id,%s),result_digest=COALESCE(result_digest,%s) WHERE proposal_id=%s AND version=%s AND status IN ('approving','approved','quarantined') RETURNING proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id,editor_metadata",
                 (status.value, intent_id, revision_id, result_digest, item.proposal_id, item.version))
             updated = self._item(cursor.fetchone())
             if updated is None:

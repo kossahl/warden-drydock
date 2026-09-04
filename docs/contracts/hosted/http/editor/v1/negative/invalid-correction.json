@@ -1,0 +1,50 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "invalid_correction",
+  "expected_path": "prior_proposal",
+  "description": "A correction changes the mutation kind and targets a different record, so it cannot extend the immutable prior proposal.",
+  "instance": {
+    "contract_name": "editor_proposal_correction_request",
+    "contract_version": 1,
+    "operation_request": {
+      "contract_name": "editor_operation_request",
+      "contract_version": 1,
+      "request_id": "request_bad_correction",
+      "operation": "editor_proposal_correct",
+      "idempotency_key": "idem_bad_correction",
+      "payload_digest": "3e46cadec1fe526133cf1855f046f6a505d4fa02444bf253b558f023c5aa7924",
+      "expected_revision": "revision_12",
+      "expected_editor_workflow_version": 8,
+      "subject_id": "proposal_editor"
+    },
+    "prior_proposal": {
+      "proposal_id": "proposal_editor",
+      "proposal_version": 1
+    },
+    "binding": {
+      "campaign_id": "campaign_alpha",
+      "base_revision": {
+        "revision_id": "revision_12",
+        "ordinal": 12,
+        "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "record_id": "record-other",
+      "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expected_editor_workflow_version": 8
+    },
+    "mutation_kind": "remove",
+    "candidate": null,
+    "resolutions": [],
+    "impact_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    ,"impact_binding": {
+      "binding": {
+        "campaign_id": "campaign_alpha",
+        "base_revision": {"revision_id": "revision_12", "ordinal": 12, "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "record_id": "record-other",
+        "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "expected_editor_workflow_version": 8
+      },
+      "impact_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  }
+}

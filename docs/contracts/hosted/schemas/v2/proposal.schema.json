@@ -1,0 +1,24 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://warden-drydock.invalid/contracts/hosted/v2/proposal.schema.json",
+  "title":"Generated Draft and immutable Canon Proposal contracts v2",
+  "x-invariants":["proposal_exact_binding","proposal_validation_gate","proposal_logical_ids"],
+  "description":"Additive proposal contract. Domain record identifiers retain the Atlas grammar, including hyphens.",
+  "type":"object",
+  "required":["contract_name","contract_version","draft","proposal","validation","approval_binding"],
+  "additionalProperties":false,
+  "$defs":{
+    "public_id":{"type":"string","minLength":3,"maxLength":80,"pattern":"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
+    "domain_id":{"type":"string","minLength":1,"maxLength":80,"pattern":"^[a-z0-9][a-z0-9-]*$"},
+    "digest":{"type":"string","pattern":"^[a-f0-9]{64}$"},
+    "change":{"type":"object","required":["change_id","subject_id","change_type","from_authority","to_authority","content_digest"],"additionalProperties":false,"properties":{"change_id":{"$ref":"#/$defs/public_id"},"subject_id":{"$ref":"#/$defs/domain_id"},"change_type":{"enum":["add","remove","update","authority_transition"]},"from_authority":{"enum":["absent","preparation","table_fact","canon","revealed"]},"to_authority":{"enum":["absent","preparation","canon","revealed"]},"content_digest":{"$ref":"#/$defs/digest"}}},
+    "approval":{"type":"object","required":["proposal_id","proposal_version","diff_digest","base_revision","source_revision","expected_campaign_head","expected_editor_workflow_version","validation_status","validation_digest","authority_change_ids","visibility_change_ids","warden_confirmed"],"additionalProperties":false,"properties":{"proposal_id":{"$ref":"#/$defs/public_id"},"proposal_version":{"type":"integer","minimum":1},"diff_digest":{"$ref":"#/$defs/digest"},"base_revision":{"$ref":"#/$defs/public_id"},"source_revision":{"$ref":"#/$defs/public_id"},"expected_campaign_head":{"$ref":"#/$defs/public_id"},"expected_editor_workflow_version":{"type":"integer","minimum":1},"validation_status":{"const":"passed"},"validation_digest":{"$ref":"#/$defs/digest"},"authority_change_ids":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/public_id"}},"visibility_change_ids":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/public_id"}},"warden_confirmed":{"const":true}}}
+  },
+  "properties":{
+    "contract_name":{"const":"canon_proposal"},"contract_version":{"const":2},
+    "draft":{"type":"object","required":["draft_id","authority","source_set_digest","content_digest"],"additionalProperties":false,"properties":{"draft_id":{"$ref":"#/$defs/public_id"},"authority":{"const":"draft"},"source_set_digest":{"$ref":"#/$defs/digest"},"content_digest":{"$ref":"#/$defs/digest"}}},
+    "proposal":{"type":"object","required":["proposal_id","proposal_version","status","campaign_id","base_revision","source_revision","expected_campaign_head","expected_editor_workflow_version","diff_digest","authority_change_ids","visibility_change_ids","changes"],"additionalProperties":false,"properties":{"proposal_id":{"$ref":"#/$defs/public_id"},"proposal_version":{"type":"integer","minimum":1},"status":{"enum":["draft","needs_review","rejected","conflict","approving","approved"]},"campaign_id":{"$ref":"#/$defs/public_id"},"base_revision":{"$ref":"#/$defs/public_id"},"source_revision":{"$ref":"#/$defs/public_id"},"expected_campaign_head":{"$ref":"#/$defs/public_id"},"expected_editor_workflow_version":{"type":"integer","minimum":1},"diff_digest":{"$ref":"#/$defs/digest"},"authority_change_ids":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/public_id"}},"visibility_change_ids":{"type":"array","uniqueItems":true,"items":{"$ref":"#/$defs/public_id"}},"changes":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"#/$defs/change"}},"correction_of_version":{"type":"integer","minimum":1},"rejection_code":{"type":"string","pattern":"^[a-z][a-z0-9_]+$"},"conflict_code":{"enum":["stale_head","validation_failed","diff_mismatch"]}}},
+    "validation":{"type":"object","required":["status","validation_digest","error_count"],"additionalProperties":false,"properties":{"status":{"enum":["pending","passed","failed"]},"validation_digest":{"$ref":"#/$defs/digest"},"error_count":{"type":"integer","minimum":0}}},
+    "approval_binding":{"oneOf":[{"type":"null"},{"$ref":"#/$defs/approval"}]}
+  }
+}

@@ -137,6 +137,14 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
 .relationship-metadata dd { margin: 0; }
 .relationship-list { padding-left: 1.5rem; }
 .wide-hidden { display: none; }
+.editor { min-width: 0; }
+.editor fieldset { min-width: 0; margin: 1rem 0; padding: 0; border: 0; }
+.editor legend { margin-bottom: .6rem; font-size: 1.15rem; font-weight: 800; }
+.editor details { margin: 1rem 0; padding: .8rem; border: 1px solid #365247; border-radius: .45rem; }
+.editor summary { cursor: pointer; font-weight: 800; }
+.editor-review { margin-top: 1.5rem; padding-top: 1rem; border-top: 2px solid #d497e8; }
+.editor-review .diff article { overflow: hidden; }
+.editor-connection { margin: .8rem 0; padding: .8rem; border-left: .2rem solid #5b7b6d; }
 
 @media (max-width: 42rem) {
   .banner { align-items: flex-start; flex-direction: column; }

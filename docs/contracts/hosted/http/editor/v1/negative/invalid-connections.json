@@ -1,0 +1,55 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "invalid_connections",
+  "expected_path": "candidate.connections.0.target_record_id",
+  "description": "A connection target is path-like and is not a selected public domain record.",
+  "instance": {
+    "contract_name": "editor_record_edit_request",
+    "contract_version": 1,
+    "operation_request": {
+      "contract_name": "editor_operation_request",
+      "contract_version": 1,
+      "request_id": "request_bad_connection",
+      "operation": "editor_record_edit",
+      "idempotency_key": "idem_bad_connection",
+      "payload_digest": "db7de305ff6680728d22b3f69f929f51bda57d8ed2681ff6051b5814eae89156",
+      "expected_revision": "revision_12",
+      "expected_editor_workflow_version": 7,
+      "subject_id": "record-station"
+    },
+    "binding": {
+      "campaign_id": "campaign_alpha",
+      "base_revision": {
+        "revision_id": "revision_12",
+        "ordinal": 12,
+        "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "record_id": "record-station",
+      "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expected_editor_workflow_version": 7
+    },
+    "candidate": {
+      "record_id": "record-station",
+      "record_type": "location",
+      "displayed_name": "Station",
+      "status": "review",
+      "authority": "preparation",
+      "visibility": {
+        "audience": "warden",
+        "warden_only": true
+      },
+      "fields": [],
+      "sections": [],
+      "connections": [
+        {
+          "connection_id": "connection_bad",
+          "target_record_id": "record-unknown",
+          "relationship": "signals",
+          "state": "current",
+          "context": "Unsafe target."
+        }
+      ],
+      "content_digest": "a01e172b9fd0c72a646590d795a3819aef999f62387dfc90531eb2051086e789"
+    }
+  }
+}

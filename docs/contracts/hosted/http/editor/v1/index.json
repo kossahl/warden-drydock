@@ -1,0 +1,24 @@
+{
+  "contract_name": "hosted_record_editor_http",
+  "contract_version": 1,
+  "schema": "editor.schema.json",
+  "routes": "routes.json",
+  "examples": "examples.json",
+  "semantic_invariants": "semantic-invariants.json",
+  "negative_fixtures": "negative/",
+  "scope": "local_single_warden_current_head_record_editor",
+  "baseline": "d486daa878ca9e6da3d32928e44f881d2284a80a",
+  "hosted_registry": "../../../index-v2.json",
+  "http_registry": "../../index-v5.json",
+  "ux_reference": "../../../../../hosted-record-editor-ux.md",
+  "extends": {
+    "proposal_contract": "../../../schemas/v2/proposal.schema.json",
+    "proposal_contract_version": 2,
+    "proposal_contract_authority": "../../../schemas/v2/proposal.schema.json",
+    "proposal_id_grammar": "atlas_domain_id_direct",
+    "http_transport": "../../v2/index.json",
+    "compatibility_mode": "versioned_additive_extension"
+  },
+  "mutates_campaign_content": false,
+  "publishes_revisions": false
+}

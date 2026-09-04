@@ -26,6 +26,7 @@ class RevisionService:
         adapter_version: str, validation_contract_digest: str,
         before_finalize: Callable[[SnapshotManifest], object] | None = None,
         rollback: Callable[[SnapshotManifest], object] | None = None,
+        finalizer: Callable[[PublicationIntent], object] | None = None,
     ) -> SnapshotManifest:
         files, tree_digest = canonicalize_tree(source)
         if tree_digest != intent.tree_digest:
@@ -42,7 +43,7 @@ class RevisionService:
         self.repository.add_intent(intent)
         self.store.put_if_absent(source, manifest)
         try:
-            self.reconcile_manifest(manifest, before_finalize=before_finalize)
+            self.reconcile_manifest(manifest, before_finalize=before_finalize, finalizer=finalizer)
         except Exception:
             if rollback is not None:
                 try:
@@ -55,6 +56,7 @@ class RevisionService:
     def reconcile_manifest(
         self, manifest: SnapshotManifest, *,
         before_finalize: Callable[[SnapshotManifest], object] | None = None,
+        finalizer: Callable[[PublicationIntent], object] | None = None,
     ) -> bool:
         stored_manifest = self.store.verify(
             manifest.tree_digest, manifest.campaign_id, manifest.revision_id
@@ -89,7 +91,7 @@ class RevisionService:
                 self.repository.quarantine_intent(exact[0].intent_id)
                 raise
         try:
-            return self.repository.finalize_head(exact[0])
+            return finalizer(exact[0]) if finalizer is not None else self.repository.finalize_head(exact[0])
         except (PublicationIntentError, StaleHeadError) as exc:
             reason = (
                 "stale campaign head"

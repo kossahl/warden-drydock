@@ -56,6 +56,7 @@ class ProposalVersion:
     source_set_digest: str | None = None
     terminal_draft_digest: str | None = None
     published_revision_id: str | None = None
+    editor_metadata: dict | None = None
 
     def __post_init__(self):
         for field, value in (("proposal_id", self.proposal_id),
@@ -112,8 +113,9 @@ class ProposalService:
     def _bind_manifest(version, result):
         if not isinstance(result, SnapshotManifest):
             raise ValueError("publication result is not a verified snapshot manifest")
+        expected_change_digest = exact_diff_digest(version.changes) if version.editor_metadata else version.diff_digest
         if (result.campaign_id, result.parent_revision, result.change_digest) != (
-            version.campaign_id, version.base_revision, version.diff_digest
+            version.campaign_id, version.base_revision, expected_change_digest
         ):
             raise ValueError("publication result binding mismatch")
         return result
@@ -145,7 +147,7 @@ class ProposalService:
             raise ValueError("only draft versions can be rejected")
         return version
 
-    def approve(self, version, *, diff_digest, base_revision, payload_digest):
+    def approve(self, version, *, diff_digest, base_revision, payload_digest, finalize=None):
         current = self.repository.get(version.proposal_id, version.version) if hasattr(self.repository, "get") else self.repository.items[(version.proposal_id, version.version)]
         if (diff_digest, base_revision, payload_digest) != (current.diff_digest, current.base_revision, current.payload_digest):
             raise ValueError("approval binding mismatch")
@@ -167,7 +169,7 @@ class ProposalService:
         if getattr(staged, "status", None) is not Status.STAGED:
             return self.repository.replace_status(version, ProposalStatus.DRAFT)
         try:
-            result = self._publish(version, staged)
+            result = self._publish(version, staged, finalize=finalize) if finalize is not None else self._publish(version, staged)
         except StaleHeadError:
             return self.repository.replace_status(version, ProposalStatus.CONFLICT)
         except Exception:
@@ -199,7 +201,41 @@ class ProposalService:
 
 
 class InMemoryProposalRepository:
-    def __init__(self): self.items = {}; self.audit = []; self._lock = threading.Lock(); self._created_at = {}
+    def __init__(self): self.items = {}; self.audit = []; self._lock = threading.RLock(); self._created_at = {}; self._editor_workflow = {}
+    def editor_workflow_version(self, campaign_id):
+        with self._lock:
+            if campaign_id not in self._editor_workflow:
+                values = [item.editor_metadata.get("editor_workflow_version", 1) - 1 for item in self.items.values() if item.campaign_id == campaign_id and item.editor_metadata]
+                self._editor_workflow[campaign_id] = max(values, default=0) + 1
+            return self._editor_workflow[campaign_id]
+    def editor_proposals(self):
+        with self._lock:
+            return tuple(item for item in self.items.values() if item.editor_metadata)
+    def add_editor(self, item, campaign_id, expected_version):
+        with self._lock:
+            if self.editor_workflow_version(campaign_id) != expected_version:
+                return False
+            if (item.proposal_id, item.version) in self.items:
+                raise ValueError("proposal_version_conflict")
+            self.items[(item.proposal_id, item.version)] = item
+            self._created_at[(item.proposal_id, item.version)] = datetime(2000, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=len(self._created_at))
+            self._editor_workflow[campaign_id] = expected_version + 1
+            self.audit.append((item.proposal_id, item.version, item.status.value))
+            return True
+    def advance_editor(self, campaign_id, expected_version):
+        with self._lock:
+            if self.editor_workflow_version(campaign_id) != expected_version:
+                return False
+            self._editor_workflow[campaign_id] = expected_version + 1
+            return True
+    def save_editor_metadata(self, proposal_id, version, metadata, published_revision_id=None):
+        with self._lock:
+            current = self.items[(proposal_id, version)]
+            self.items[(proposal_id, version)] = replace(
+                current, editor_metadata=metadata,
+                published_revision_id=published_revision_id or current.published_revision_id,
+            )
+            return self.items[(proposal_id, version)]
     def next_version(self, proposal_id): return 1 + max((v.version for v in self.items.values() if v.proposal_id == proposal_id), default=0)
     def get(self, proposal_id, version): return self.items[(proposal_id, version)]
     def versions(self, proposal_id):

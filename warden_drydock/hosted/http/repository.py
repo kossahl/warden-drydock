@@ -25,7 +25,7 @@ class InMemoryHTTPRepository:
                 raise ReceiptConflict("idempotency_digest_conflict")
             if stored[1] is None:
                 return None
-            if not isinstance(stored[2], dict) or stored[2].get("contract_version") != 2:
+            if not isinstance(stored[2], dict) or stored[2].get("contract_version") not in ({1, 2} if operation.startswith("editor_") else {2}):
                 raise ReceiptConflict("stale_contract_receipt")
             return stored[1], deepcopy(stored[2])
 
@@ -40,7 +40,7 @@ class InMemoryHTTPRepository:
             return True
 
     def store(self, operation: str, key: str, payload_digest: str, status: int, response: dict):
-        if response.get("contract_version") != 2:
+        if response.get("contract_version") not in ({1, 2} if operation.startswith("editor_") else {2}):
             raise ReceiptConflict("stale_contract_receipt")
         with self._lock:
             current = self._receipts.get((operation, key))
@@ -91,7 +91,8 @@ class PostgresHTTPRepository:
         if row[1] is None:
             return None
         body = json.loads(row[2]) if isinstance(row[2], str) else row[2]
-        if not isinstance(body, dict) or body.get("contract_version") != 2:
+        allowed_versions = {1, 2} if operation.startswith("editor_") else {2}
+        if not isinstance(body, dict) or body.get("contract_version") not in allowed_versions:
             raise ReceiptConflict("stale_contract_receipt")
         return row[1], body
 
@@ -113,7 +114,8 @@ class PostgresHTTPRepository:
         return False
 
     def store(self, operation: str, key: str, payload_digest: str, status: int, response: dict):
-        if response.get("contract_version") != 2:
+        allowed_versions = {1, 2} if operation.startswith("editor_") else {2}
+        if response.get("contract_version") not in allowed_versions:
             raise ReceiptConflict("stale_contract_receipt")
         encoded = json.dumps(response, separators=(",", ":"), sort_keys=True)
         with self._connect() as connection, connection.cursor() as cursor:
