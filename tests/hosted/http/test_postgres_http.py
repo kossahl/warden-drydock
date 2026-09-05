@@ -42,6 +42,24 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
             restarted.replay("proposal_create", self.key, "b" * 64)
         self.assertEqual((201, response), restarted.replay("proposal_create", self.key, "a" * 64))
 
+    def test_editor_approval_receipt_survives_repository_restart(self) -> None:
+        response = {
+            "contract_name": "editor_proposal_approval_result",
+            "contract_version": 1,
+            "proposal": {"proposal_id": "proposal_editor", "proposal_version": 1},
+            "outcome": "published",
+            "published_revision": {
+                "revision_id": "revision_editor", "ordinal": 2,
+                "tree_digest": "a" * 64, "immutable": True,
+            },
+            "editor_workflow_version": 3,
+        }
+        self.repository.store("editor_proposal_approve", self.key, "a" * 64, 200, response)
+        restarted = PostgresHTTPRepository(self.connect)
+        self.assertEqual((200, response), restarted.replay("editor_proposal_approve", self.key, "a" * 64))
+        with self.assertRaisesRegex(ReceiptConflict, "idempotency_digest_conflict"):
+            restarted.replay("editor_proposal_approve", self.key, "b" * 64)
+
     def test_missing_postgres_proposal_maps_to_contract_not_found(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             app = SliceApplication(

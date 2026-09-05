@@ -1,0 +1,2748 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://warden-drydock.invalid/contracts/hosted/http/editor/v1/editor.schema.json",
+  "title": "Hosted record editor HTTP contracts v1",
+  "x-invariants": [
+    "editor_contract_bindings",
+    "editor_canonical_digests",
+    "editor_record_member_ids",
+    "editor_logical_ids",
+    "editor_status_authority",
+    "editor_mutation_shapes",
+    "editor_publication_binding",
+    "editor_history_read_only",
+    "editor_action_bindings",
+    "editor_workflow_lifecycle",
+    "editor_transition_completeness",
+    "editor_connection_bindings",
+    "editor_mutation_consistency",
+    "editor_removal_binding",
+    "editor_removal_correction"
+  ],
+  "oneOf": [
+    {
+      "$ref": "#/$defs/editor_record_view"
+    },
+    {
+      "$ref": "#/$defs/editor_record_create_request"
+    },
+    {
+      "$ref": "#/$defs/editor_record_edit_request"
+    },
+    {
+      "$ref": "#/$defs/editor_removal_impact"
+    },
+    {
+      "$ref": "#/$defs/editor_record_remove_request"
+    },
+    {
+      "$ref": "#/$defs/editor_proposal_view"
+    },
+    {
+      "$ref": "#/$defs/editor_proposal_correction_request"
+    },
+    {
+      "$ref": "#/$defs/editor_proposal_rejection_request"
+    },
+    {
+      "$ref": "#/$defs/editor_proposal_approval_request"
+    },
+    {
+      "$ref": "#/$defs/editor_proposal_approval_result"
+    },
+    {
+      "$ref": "#/$defs/editor_proposal_rejection_result"
+    },
+    {
+      "$ref": "#/$defs/error_response"
+    }
+  ],
+  "$defs": {
+    "public_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 80,
+      "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+    },
+    "domain_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision_id",
+        "ordinal",
+        "tree_digest"
+      ],
+      "properties": {
+        "revision_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tree_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "authority": {
+      "enum": [
+        "preparation",
+        "canon",
+        "revealed"
+      ]
+    },
+    "status": {
+      "enum": [
+        "idea",
+        "draft",
+        "review",
+        "canon",
+        "revealed",
+        "archived",
+        "accepted"
+      ]
+    },
+    "visibility": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "audience",
+            "warden_only"
+          ],
+          "properties": {
+            "audience": {
+              "const": "warden"
+            },
+            "warden_only": {
+              "const": true
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "audience",
+            "warden_only"
+          ],
+          "properties": {
+            "audience": {
+              "enum": [
+                "players",
+                "shared"
+              ]
+            },
+            "warden_only": {
+              "const": false
+            }
+          }
+        }
+      ]
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "field_id",
+        "value"
+      ],
+      "properties": {
+        "field_id": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "value": {
+          "type": [
+            "string",
+            "boolean",
+            "integer",
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "section_id",
+        "body"
+      ],
+      "properties": {
+        "section_id": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 200000
+        }
+      }
+    },
+    "connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connection_id",
+        "target_record_id",
+        "relationship",
+        "state",
+        "context"
+      ],
+      "properties": {
+        "connection_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "target_record_id": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "relationship": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "state": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "context": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    "connection_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "before",
+        "after"
+      ],
+      "properties": {
+        "before": {
+          "$ref": "#/$defs/connection"
+        },
+        "after": {
+          "$ref": "#/$defs/connection"
+        }
+      }
+    },
+    "record_document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_id",
+        "record_type",
+        "displayed_name",
+        "status",
+        "authority",
+        "visibility",
+        "fields",
+        "sections",
+        "connections",
+        "content_digest"
+      ],
+      "properties": {
+        "record_id": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "record_type": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "displayed_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "authority": {
+          "$ref": "#/$defs/authority"
+        },
+        "visibility": {
+          "$ref": "#/$defs/visibility"
+        },
+        "fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/field"
+          }
+        },
+        "sections": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/section"
+          }
+        },
+        "connections": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/connection"
+          }
+        },
+        "content_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "campaign_id",
+        "base_revision",
+        "record_id",
+        "record_digest",
+        "expected_editor_workflow_version"
+      ],
+      "properties": {
+        "campaign_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "base_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "record_id": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "record_digest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected_editor_workflow_version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "impact_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding",
+        "impact_digest"
+      ],
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/binding"
+        },
+        "impact_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "operation_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "request_id",
+        "operation",
+        "idempotency_key",
+        "payload_digest",
+        "expected_revision",
+        "expected_editor_workflow_version"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "editor_operation_request"
+        },
+        "contract_version": {
+          "const": 1
+        },
+        "request_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "operation": {
+          "enum": [
+            "editor_record_create",
+            "editor_record_edit",
+            "editor_record_remove",
+            "editor_proposal_correct",
+            "editor_proposal_reject",
+            "editor_proposal_approve"
+          ]
+        },
+        "idempotency_key": {
+          "$ref": "#/$defs/public_id"
+        },
+        "payload_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "expected_revision": {
+          "$ref": "#/$defs/public_id"
+        },
+        "expected_editor_workflow_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "subject_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/public_id"
+            },
+            {
+              "$ref": "#/$defs/domain_id"
+            }
+          ]
+        },
+        "intent_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "finding_id",
+        "code",
+        "severity",
+        "location",
+        "retryable"
+      ],
+      "properties": {
+        "finding_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]+$"
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "warning"
+          ]
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240,
+          "pattern": "^(record|metadata|fields|sections|connections|references)(?:\\.[a-z0-9_-]+)*$"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "authority_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change_id",
+        "record_id",
+        "from",
+        "to",
+        "explicit_in_diff",
+        "warden_approval_required"
+      ],
+      "properties": {
+        "change_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "record_id": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "from": {
+          "$ref": "#/$defs/authority"
+        },
+        "to": {
+          "$ref": "#/$defs/authority"
+        },
+        "explicit_in_diff": {
+          "const": true
+        },
+        "warden_approval_required": {
+          "const": true
+        }
+      }
+    },
+    "visibility_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change_id",
+        "record_id",
+        "before",
+        "after",
+        "audience_broadens",
+        "explicit_in_diff",
+        "warden_approval_required"
+      ],
+      "properties": {
+        "change_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "record_id": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "before": {
+          "$ref": "#/$defs/visibility"
+        },
+        "after": {
+          "$ref": "#/$defs/visibility"
+        },
+        "audience_broadens": {
+          "type": "boolean"
+        },
+        "explicit_in_diff": {
+          "const": true
+        },
+        "warden_approval_required": {
+          "const": true
+        }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference_id",
+        "connection_id",
+        "source_record_id",
+        "target_record_id",
+        "relationship",
+        "state",
+        "context",
+        "resolution_required",
+        "permitted_unresolved"
+      ],
+      "properties": {
+        "reference_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "connection_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "source_record_id": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "target_record_id": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "relationship": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "state": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "context": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "resolution_required": {
+          "const": true
+        },
+        "permitted_unresolved": {
+          "type": "boolean"
+        }
+      }
+    },
+    "resolution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reference_id",
+            "action",
+            "replacement_target_record_id"
+          ],
+          "properties": {
+            "reference_id": {
+              "$ref": "#/$defs/public_id"
+            },
+            "action": {
+              "const": "redirect"
+            },
+            "replacement_target_record_id": {
+              "$ref": "#/$defs/domain_id"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reference_id",
+            "action",
+            "replacement_target_record_id"
+          ],
+          "properties": {
+            "reference_id": {
+              "$ref": "#/$defs/public_id"
+            },
+            "action": {
+              "enum": [
+                "remove_reference",
+                "accept_unresolved"
+              ]
+            },
+            "replacement_target_record_id": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "property_value": {
+      "oneOf": [
+        {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "$ref": "#/$defs/visibility"
+        },
+        {
+          "$ref": "#/$defs/field"
+        },
+        {
+          "$ref": "#/$defs/section"
+        }
+      ]
+    },
+    "property_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "property": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240,
+          "pattern": "^(displayed_name|status|authority|visibility|fields\\.[a-z0-9-]+|sections\\.[a-z0-9-]+)$"
+        },
+        "before": {
+          "$ref": "#/$defs/property_value"
+        },
+        "after": {
+          "$ref": "#/$defs/property_value"
+        }
+      }
+    },
+    "backlink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_record_id",
+        "target_record_id",
+        "connection_id",
+        "effect"
+      ],
+      "properties": {
+        "source_record_id": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "target_record_id": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "connection_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "effect": {
+          "enum": [
+            "added",
+            "updated",
+            "removed"
+          ]
+        }
+      }
+    },
+    "card_common": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change_id",
+        "kind",
+        "subject_record_id",
+        "before",
+        "after",
+        "property_changes",
+        "connection",
+        "resolution",
+        "derived_backlinks"
+      ],
+      "properties": {
+        "change_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "kind": {
+          "enum": [
+            "record_created",
+            "record_updated",
+            "record_removed",
+            "connection_added",
+            "connection_updated",
+            "connection_removed",
+            "reference_resolution"
+          ]
+        },
+        "subject_record_id": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "before": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/record_document"
+            },
+            {
+              "$ref": "#/$defs/reference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "after": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/record_document"
+            },
+            {
+              "$ref": "#/$defs/resolution"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "property_changes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/property_change"
+          }
+        },
+        "connection": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/connection"
+            },
+            {
+              "$ref": "#/$defs/connection_change"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resolution": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/resolution"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "derived_backlinks": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/backlink"
+          }
+        }
+      }
+    },
+    "record_created_card": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/card_common"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "record_created"
+            },
+            "before": {
+              "type": "null"
+            },
+            "after": {
+              "$ref": "#/$defs/record_document"
+            },
+            "connection": {
+              "type": "null"
+            },
+            "resolution": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "record_updated_card": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/card_common"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "record_updated"
+            },
+            "before": {
+              "$ref": "#/$defs/record_document"
+            },
+            "after": {
+              "$ref": "#/$defs/record_document"
+            },
+            "connection": {
+              "type": "null"
+            },
+            "resolution": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "record_removed_card": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/card_common"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "record_removed"
+            },
+            "before": {
+              "$ref": "#/$defs/record_document"
+            },
+            "after": {
+              "type": "null"
+            },
+            "property_changes": {
+              "const": []
+            },
+            "connection": {
+              "type": "null"
+            },
+            "resolution": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "connection_added_card": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/card_common"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "connection_added"
+            },
+            "before": {
+              "type": "null"
+            },
+            "after": {
+              "type": "null"
+            },
+            "property_changes": {
+              "const": []
+            },
+            "connection": {
+              "$ref": "#/$defs/connection"
+            },
+            "resolution": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "connection_updated_card": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/card_common"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "connection_updated"
+            },
+            "before": {
+              "type": "null"
+            },
+            "after": {
+              "type": "null"
+            },
+            "property_changes": {
+              "const": []
+            },
+            "connection": {
+              "$ref": "#/$defs/connection_change"
+            },
+            "resolution": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "connection_removed_card": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/card_common"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "connection_removed"
+            },
+            "before": {
+              "type": "null"
+            },
+            "after": {
+              "type": "null"
+            },
+            "property_changes": {
+              "const": []
+            },
+            "connection": {
+              "$ref": "#/$defs/connection"
+            },
+            "resolution": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "reference_resolution_card": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/card_common"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "reference_resolution"
+            },
+            "before": {
+              "$ref": "#/$defs/reference"
+            },
+            "after": {
+              "$ref": "#/$defs/resolution"
+            },
+            "property_changes": {
+              "const": []
+            },
+            "connection": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "change_card": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/record_created_card"
+        },
+        {
+          "$ref": "#/$defs/record_updated_card"
+        },
+        {
+          "$ref": "#/$defs/record_removed_card"
+        },
+        {
+          "$ref": "#/$defs/connection_added_card"
+        },
+        {
+          "$ref": "#/$defs/connection_updated_card"
+        },
+        {
+          "$ref": "#/$defs/connection_removed_card"
+        },
+        {
+          "$ref": "#/$defs/reference_resolution_card"
+        }
+      ]
+    },
+    "editor_diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "diff_digest",
+        "cards",
+        "affected_record_count",
+        "authority_changes",
+        "visibility_changes",
+        "unresolved_reference_count",
+        "impact_digest",
+        "summary"
+      ],
+      "properties": {
+        "diff_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "cards": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/change_card"
+          }
+        },
+        "affected_record_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "authority_changes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/authority_change"
+          }
+        },
+        "visibility_changes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/visibility_change"
+          }
+        },
+        "unresolved_reference_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "impact_digest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      }
+    },
+    "core_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change_id",
+        "subject_id",
+        "change_type",
+        "from_authority",
+        "to_authority",
+        "content_digest"
+      ],
+      "properties": {
+        "change_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "subject_id": {
+          "$ref": "#/$defs/domain_id"
+        },
+        "change_type": {
+          "enum": [
+            "add",
+            "remove",
+            "update",
+            "authority_transition"
+          ]
+        },
+        "from_authority": {
+          "enum": [
+            "absent",
+            "preparation",
+            "table_fact",
+            "canon",
+            "revealed"
+          ]
+        },
+        "to_authority": {
+          "enum": [
+            "absent",
+            "preparation",
+            "canon",
+            "revealed"
+          ]
+        },
+        "content_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "core_proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "draft",
+        "proposal",
+        "validation",
+        "approval_binding"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "canon_proposal"
+        },
+        "contract_version": {
+          "const": 2
+        },
+        "draft": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "draft_id",
+            "authority",
+            "source_set_digest",
+            "content_digest"
+          ],
+          "properties": {
+            "draft_id": {
+              "$ref": "#/$defs/public_id"
+            },
+            "authority": {
+              "const": "draft"
+            },
+            "source_set_digest": {
+              "$ref": "#/$defs/digest"
+            },
+            "content_digest": {
+              "$ref": "#/$defs/digest"
+            }
+          }
+        },
+        "proposal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "proposal_id",
+            "proposal_version",
+            "status",
+            "campaign_id",
+            "base_revision",
+            "source_revision",
+            "expected_campaign_head",
+            "expected_editor_workflow_version",
+            "diff_digest",
+            "authority_change_ids",
+            "visibility_change_ids",
+            "changes"
+          ],
+          "properties": {
+            "proposal_id": {
+              "$ref": "#/$defs/public_id"
+            },
+            "proposal_version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "status": {
+              "enum": [
+                "draft",
+                "needs_review",
+                "rejected",
+                "conflict",
+                "approving",
+                "approved"
+              ]
+            },
+            "campaign_id": {
+              "$ref": "#/$defs/public_id"
+            },
+            "base_revision": {
+              "$ref": "#/$defs/public_id"
+            },
+            "source_revision": {
+              "$ref": "#/$defs/public_id"
+            },
+            "expected_campaign_head": {
+              "$ref": "#/$defs/public_id"
+            },
+            "expected_editor_workflow_version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "diff_digest": {
+              "$ref": "#/$defs/digest"
+            },
+            "authority_change_ids": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/public_id"
+              }
+            },
+            "visibility_change_ids": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/public_id"
+              }
+            },
+            "changes": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/core_change"
+              }
+            },
+            "correction_of_version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "rejection_code": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]+$"
+            },
+            "conflict_code": {
+              "enum": [
+                "stale_head",
+                "validation_failed",
+                "diff_mismatch"
+              ]
+            }
+          }
+        },
+        "validation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "validation_digest",
+            "error_count"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "pending",
+                "passed",
+                "failed"
+              ]
+            },
+            "validation_digest": {
+              "$ref": "#/$defs/digest"
+            },
+            "error_count": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "approval_binding": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "proposal_id",
+                "proposal_version",
+                "diff_digest",
+                "base_revision",
+                "source_revision",
+                "expected_campaign_head",
+                "expected_editor_workflow_version",
+                "validation_status",
+                "validation_digest",
+                "authority_change_ids",
+                "visibility_change_ids",
+                "warden_confirmed"
+              ],
+              "properties": {
+                "proposal_id": {
+                  "$ref": "#/$defs/public_id"
+                },
+                "proposal_version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "diff_digest": {
+                  "$ref": "#/$defs/digest"
+                },
+                "base_revision": {
+                  "$ref": "#/$defs/public_id"
+                },
+                "source_revision": {
+                  "$ref": "#/$defs/public_id"
+                },
+                "expected_campaign_head": {
+                  "$ref": "#/$defs/public_id"
+                },
+                "expected_editor_workflow_version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "validation_status": {
+                  "const": "passed"
+                },
+                "validation_digest": {
+                  "$ref": "#/$defs/digest"
+                },
+                "authority_change_ids": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "$ref": "#/$defs/public_id"
+                  }
+                },
+                "visibility_change_ids": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "$ref": "#/$defs/public_id"
+                  }
+                },
+                "warden_confirmed": {
+                  "const": true
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "validation_digest",
+        "error_count",
+        "findings"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "pending",
+            "passed",
+            "failed"
+          ]
+        },
+        "validation_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "error_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        }
+      }
+    },
+    "proposal_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proposal_id",
+        "proposal_version"
+      ],
+      "properties": {
+        "proposal_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "proposal_version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "proposal_view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "proposal_id",
+        "proposal_version",
+        "campaign_id",
+        "source_revision",
+        "base_revision",
+        "expected_campaign_head",
+        "editor_workflow_version",
+        "proposal_payload_digest",
+        "mutation_kind",
+        "record_bindings",
+        "core_proposal",
+        "diff",
+        "impact_digest",
+        "impact_binding",
+        "resolutions",
+        "validation",
+        "authority_outcome",
+        "visibility_outcome",
+        "publication"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "editor_proposal_view"
+        },
+        "contract_version": {
+          "const": 1
+        },
+        "proposal_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "proposal_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "campaign_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "source_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "base_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "expected_campaign_head": {
+          "$ref": "#/$defs/revision"
+        },
+        "editor_workflow_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "proposal_payload_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "mutation_kind": {
+          "enum": [
+            "create",
+            "edit",
+            "remove"
+          ]
+        },
+        "record_bindings": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/binding"
+          }
+        },
+        "core_proposal": {
+          "$ref": "#/$defs/core_proposal"
+        },
+        "correction_of": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/proposal_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "diff": {
+          "$ref": "#/$defs/editor_diff"
+        },
+        "impact_digest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "impact_binding": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/impact_binding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resolutions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/resolution"
+          }
+        },
+        "validation": {
+          "$ref": "#/$defs/validation"
+        },
+        "authority_outcome": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/authority_change"
+          }
+        },
+        "visibility_outcome": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/visibility_change"
+          }
+        },
+        "publication": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "published_revision"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "not_published",
+                "published",
+                "quarantined"
+              ]
+            },
+            "published_revision": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/immutable_revision"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mutation_kind": {
+                "const": "create"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "impact_digest": {
+                "type": "null"
+              },
+              "impact_binding": {
+                "type": "null"
+              },
+              "resolutions": {
+                "const": []
+              },
+              "record_bindings": {
+                "items": {
+                  "properties": {
+                    "record_digest": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              "diff": {
+                "properties": {
+                  "impact_digest": {
+                    "type": "null"
+                  },
+                  "cards": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "record_updated",
+                              "record_removed",
+                              "connection_updated",
+                              "connection_removed",
+                              "reference_resolution"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mutation_kind": {
+                "const": "edit"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "impact_digest": {
+                "type": "null"
+              },
+              "impact_binding": {
+                "type": "null"
+              },
+              "resolutions": {
+                "const": []
+              },
+              "record_bindings": {
+                "items": {
+                  "properties": {
+                    "record_digest": {
+                      "$ref": "#/$defs/digest"
+                    }
+                  }
+                }
+              },
+              "diff": {
+                "properties": {
+                  "impact_digest": {
+                    "type": "null"
+                  },
+                  "cards": {
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "record_created",
+                              "record_removed",
+                              "reference_resolution"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mutation_kind": {
+                "const": "remove"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "impact_digest": {
+                "$ref": "#/$defs/digest"
+              },
+              "impact_binding": {
+                "$ref": "#/$defs/impact_binding"
+              },
+              "resolutions": {},
+              "record_bindings": {
+                "items": {
+                  "properties": {
+                    "record_digest": {
+                      "$ref": "#/$defs/digest"
+                    }
+                  }
+                }
+              },
+              "diff": {
+                "properties": {
+                  "impact_digest": {
+                    "$ref": "#/$defs/digest"
+                  },
+                  "cards": {
+                    "contains": {
+                      "properties": {
+                        "kind": {
+                          "const": "record_removed"
+                        }
+                      }
+                    },
+                    "not": {
+                      "contains": {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "record_created",
+                              "record_updated",
+                              "connection_added",
+                              "connection_updated"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "core_proposal": {
+                "properties": {
+                  "proposal": {
+                    "properties": {
+                      "status": {"const": "approved"}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "publication": {
+                "properties": {
+                  "status": {"const": "published"},
+                  "published_revision": {"$ref": "#/$defs/immutable_revision"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "core_proposal": {
+                "properties": {
+                  "proposal": {
+                    "properties": {
+                      "status": {"enum": ["draft", "needs_review", "rejected", "conflict"]}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "publication": {
+                "properties": {
+                  "status": {"const": "not_published"},
+                  "published_revision": {"type": "null"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "core_proposal": {
+                "properties": {
+                  "proposal": {
+                    "properties": {
+                      "status": {"const": "approving"}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "publication": {
+                "properties": {
+                  "status": {"enum": ["not_published", "quarantined"]},
+                  "published_revision": {"type": "null"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "publication": {
+                "properties": {"status": {"const": "quarantined"}}
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "core_proposal": {
+                "properties": {
+                  "proposal": {"properties": {"status": {"const": "approving"}}}
+                }
+              },
+              "publication": {"properties": {"published_revision": {"type": "null"}}}
+            }
+          }
+        }
+      ]
+    },
+    "record_view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "campaign_id",
+        "viewed_revision",
+        "head_revision",
+        "editor_workflow_version",
+        "historical",
+        "editable",
+        "record"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "editor_record_view"
+        },
+        "contract_version": {
+          "const": 1
+        },
+        "campaign_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "viewed_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "head_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "editor_workflow_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "historical": {
+          "type": "boolean"
+        },
+        "editable": {
+          "type": "boolean"
+        },
+        "record": {
+          "$ref": "#/$defs/record_document"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "historical": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "editable": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "historical": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "editable": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "create_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "operation_request",
+        "binding",
+        "candidate"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "editor_record_create_request"
+        },
+        "contract_version": {
+          "const": 1
+        },
+        "operation_request": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/operation_request"
+            },
+            {
+              "required": [
+                "subject_id"
+              ],
+              "properties": {
+                "operation": {
+                  "const": "editor_record_create"
+                },
+                "subject_id": {
+                  "$ref": "#/$defs/domain_id"
+                }
+              }
+            }
+          ]
+        },
+        "binding": {
+          "$ref": "#/$defs/binding"
+        },
+        "candidate": {
+          "$ref": "#/$defs/record_document"
+        }
+      },
+      "allOf": [
+        {
+          "properties": {
+            "binding": {
+              "properties": {
+                "record_digest": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "edit_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "operation_request",
+        "binding",
+        "candidate"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "editor_record_edit_request"
+        },
+        "contract_version": {
+          "const": 1
+        },
+        "operation_request": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/operation_request"
+            },
+            {
+              "required": [
+                "subject_id"
+              ],
+              "properties": {
+                "operation": {
+                  "const": "editor_record_edit"
+                },
+                "subject_id": {
+                  "$ref": "#/$defs/domain_id"
+                }
+              }
+            }
+          ]
+        },
+        "binding": {
+          "$ref": "#/$defs/binding"
+        },
+        "candidate": {
+          "$ref": "#/$defs/record_document"
+        }
+      },
+      "allOf": [
+        {
+          "properties": {
+            "binding": {
+              "properties": {
+                "record_digest": {
+                  "$ref": "#/$defs/digest"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "removal_impact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "binding",
+        "impact_digest",
+        "record",
+        "outgoing_connections",
+        "incoming_references",
+        "backlink_policy"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "editor_removal_impact"
+        },
+        "contract_version": {
+          "const": 1
+        },
+        "binding": {
+          "$ref": "#/$defs/binding"
+        },
+        "impact_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "record": {
+          "$ref": "#/$defs/record_document"
+        },
+        "outgoing_connections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/connection"
+          }
+        },
+        "incoming_references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        },
+        "backlink_policy": {
+          "const": "server_derived_from_typed_connections"
+        }
+      }
+    },
+    "remove_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "operation_request",
+        "binding",
+        "impact_digest",
+        "impact_binding",
+        "resolutions"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "editor_record_remove_request"
+        },
+        "contract_version": {
+          "const": 1
+        },
+        "operation_request": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/operation_request"
+            },
+            {
+              "required": [
+                "subject_id"
+              ],
+              "properties": {
+                "operation": {
+                  "const": "editor_record_remove"
+                },
+                "subject_id": {
+                  "$ref": "#/$defs/domain_id"
+                }
+              }
+            }
+          ]
+        },
+        "binding": {
+          "$ref": "#/$defs/binding"
+        },
+        "impact_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "impact_binding": {
+          "$ref": "#/$defs/impact_binding"
+        },
+        "resolutions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/resolution"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "properties": {
+            "binding": {
+              "properties": {
+                "record_digest": {
+                  "$ref": "#/$defs/digest"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "correction_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "operation_request",
+        "prior_proposal",
+        "binding",
+        "mutation_kind",
+        "candidate",
+        "resolutions",
+        "impact_digest",
+        "impact_binding"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "editor_proposal_correction_request"
+        },
+        "contract_version": {
+          "const": 1
+        },
+        "operation_request": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/operation_request"
+            },
+            {
+              "required": [
+                "subject_id"
+              ],
+              "properties": {
+                "operation": {
+                  "const": "editor_proposal_correct"
+                },
+                "subject_id": {
+                  "$ref": "#/$defs/public_id"
+                }
+              }
+            }
+          ]
+        },
+        "prior_proposal": {
+          "$ref": "#/$defs/proposal_ref"
+        },
+        "binding": {
+          "$ref": "#/$defs/binding"
+        },
+        "mutation_kind": {
+          "enum": [
+            "create",
+            "edit",
+            "remove"
+          ]
+        },
+        "candidate": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/record_document"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resolutions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/resolution"
+          }
+        },
+        "impact_digest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "impact_binding": {
+          "oneOf": [{"$ref": "#/$defs/impact_binding"}, {"type": "null"}]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mutation_kind": {
+                "const": "create"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "binding": {
+                "properties": {
+                  "record_digest": {
+                    "type": "null"
+                  }
+                }
+              },
+              "candidate": {
+                "type": "object"
+              },
+              "resolutions": {
+                "const": []
+              },
+              "impact_digest": {
+                "type": "null"
+              },
+              "impact_binding": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mutation_kind": {
+                "const": "edit"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "binding": {
+                "properties": {
+                  "record_digest": {
+                    "$ref": "#/$defs/digest"
+                  }
+                }
+              },
+              "candidate": {
+                "type": "object"
+              },
+              "resolutions": {
+                "const": []
+              },
+              "impact_digest": {
+                "type": "null"
+              },
+              "impact_binding": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mutation_kind": {
+                "const": "remove"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "binding": {
+                "properties": {
+                  "record_digest": {
+                    "$ref": "#/$defs/digest"
+                  }
+                }
+              },
+              "candidate": {
+                "type": "null"
+              },
+              "impact_digest": {
+                "$ref": "#/$defs/digest"
+              },
+              "impact_binding": {
+                "$ref": "#/$defs/impact_binding"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "rejection_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "operation_request",
+        "proposal",
+        "reason_code",
+        "proposal_status",
+        "mutation_kind",
+        "source_revision",
+        "base_revision",
+        "expected_campaign_head",
+        "expected_editor_workflow_version",
+        "proposal_payload_digest",
+        "diff_digest",
+        "validation_status",
+        "validation_digest",
+        "record_bindings",
+        "impact_digest",
+        "impact_binding",
+        "resolutions",
+        "authority_outcome",
+        "visibility_outcome",
+        "warden_confirmed"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "editor_proposal_rejection_request"
+        },
+        "contract_version": {
+          "const": 1
+        },
+        "operation_request": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/operation_request"
+            },
+            {
+              "required": [
+                "subject_id",
+                "intent_digest"
+              ],
+              "properties": {
+                "operation": {
+                  "const": "editor_proposal_reject"
+                },
+                "subject_id": {
+                  "$ref": "#/$defs/public_id"
+                },
+                "intent_digest": {
+                  "$ref": "#/$defs/digest"
+                }
+              }
+            }
+          ]
+        },
+        "proposal": {
+          "$ref": "#/$defs/proposal_ref"
+        },
+        "reason_code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]+$"
+        },
+        "proposal_status": {
+          "enum": [
+            "draft",
+            "needs_review"
+          ]
+        },
+        "mutation_kind": {
+          "enum": ["create", "edit", "remove"]
+        },
+        "source_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "base_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "expected_campaign_head": {
+          "$ref": "#/$defs/revision"
+        },
+        "expected_editor_workflow_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "proposal_payload_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "diff_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "validation_status": {
+          "enum": ["pending", "passed", "failed"]
+        },
+        "validation_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "record_bindings": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/binding"}
+        },
+        "impact_digest": {
+          "oneOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]
+        },
+        "impact_binding": {
+          "oneOf": [{"$ref": "#/$defs/impact_binding"}, {"type": "null"}]
+        },
+        "resolutions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/resolution"}
+        },
+        "authority_outcome": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/authority_change"}
+        },
+        "visibility_outcome": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/visibility_change"}
+        },
+        "warden_confirmed": {
+          "const": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"mutation_kind": {"const": "remove"}}},
+          "then": {
+            "properties": {
+              "impact_digest": {"$ref": "#/$defs/digest"},
+              "impact_binding": {"$ref": "#/$defs/impact_binding"},
+              "resolutions": {}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"mutation_kind": {"enum": ["create", "edit"]}}},
+          "then": {
+            "properties": {
+              "impact_digest": {"type": "null"},
+              "impact_binding": {"type": "null"},
+              "resolutions": {"const": []}
+            }
+          }
+        }
+      ]
+    },
+    "approval_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "operation_request",
+        "proposal",
+        "proposal_status",
+        "mutation_kind",
+        "source_revision",
+        "base_revision",
+        "expected_campaign_head",
+        "expected_editor_workflow_version",
+        "proposal_payload_digest",
+        "diff_digest",
+        "diff",
+        "record_bindings",
+        "impact_digest",
+        "impact_binding",
+        "resolutions",
+        "validation_status",
+        "validation_digest",
+        "affected_record_count",
+        "confirmed_change_ids",
+        "confirmed_authority_change_ids",
+        "confirmed_visibility_change_ids",
+        "authority_outcome",
+        "visibility_outcome",
+        "warden_confirmed"
+      ],
+      "properties": {
+        "contract_name": {"const": "editor_proposal_approval_request"},
+        "contract_version": {"const": 1},
+        "operation_request": {
+          "allOf": [
+            {"$ref": "#/$defs/operation_request"},
+            {
+              "required": ["subject_id", "intent_digest"],
+              "properties": {
+                "operation": {"const": "editor_proposal_approve"},
+                "subject_id": {"$ref": "#/$defs/public_id"},
+                "intent_digest": {"$ref": "#/$defs/digest"}
+              }
+            }
+          ]
+        },
+        "proposal": {"$ref": "#/$defs/proposal_ref"},
+        "proposal_status": {"const": "needs_review"},
+        "mutation_kind": {"enum": ["create", "edit", "remove"]},
+        "source_revision": {"$ref": "#/$defs/revision"},
+        "base_revision": {"$ref": "#/$defs/revision"},
+        "expected_campaign_head": {"$ref": "#/$defs/revision"},
+        "expected_editor_workflow_version": {"type": "integer", "minimum": 1},
+        "proposal_payload_digest": {"$ref": "#/$defs/digest"},
+        "diff_digest": {"$ref": "#/$defs/digest"},
+        "diff": {"$ref": "#/$defs/editor_diff"},
+        "record_bindings": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/binding"}},
+        "impact_digest": {"oneOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]},
+        "impact_binding": {"oneOf": [{"$ref": "#/$defs/impact_binding"}, {"type": "null"}]},
+        "resolutions": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/resolution"}},
+        "validation_status": {"const": "passed"},
+        "validation_digest": {"$ref": "#/$defs/digest"},
+        "affected_record_count": {"type": "integer", "minimum": 1},
+        "confirmed_change_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/public_id"}},
+        "confirmed_authority_change_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/public_id"}},
+        "confirmed_visibility_change_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/public_id"}},
+        "authority_outcome": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/authority_change"}},
+        "visibility_outcome": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/visibility_change"}},
+        "warden_confirmed": {"const": true}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"mutation_kind": {"const": "remove"}}},
+          "then": {
+            "properties": {
+              "impact_digest": {"$ref": "#/$defs/digest"},
+              "impact_binding": {"$ref": "#/$defs/impact_binding"},
+              "resolutions": {}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"mutation_kind": {"enum": ["create", "edit"]}}},
+          "then": {
+            "properties": {
+              "impact_digest": {"type": "null"},
+              "impact_binding": {"type": "null"},
+              "resolutions": {"const": []}
+            }
+          }
+        }
+      ]
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "category",
+        "code",
+        "stage",
+        "request_id",
+        "retryable"
+      ],
+      "properties": {
+        "category": {
+          "enum": [
+            "unsupported_contract_version",
+            "unsafe_binding",
+            "validation_finding",
+            "idempotency_digest_conflict",
+            "stale_revision",
+            "capability_rejected",
+            "provider_unavailable",
+            "provider_retryable_failure",
+            "provider_terminal_failure",
+            "stream_sequence_conflict",
+            "source_digest_conflict",
+            "snapshot_integrity_failure",
+            "snapshot_lineage_failure",
+            "publication_intent_failure",
+            "quarantine_failure",
+            "proposal_validation_failure",
+            "proposal_approval_conflict",
+            "service_unavailable",
+            "not_found"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]+$"
+        },
+        "stage": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]+$"
+        },
+        "request_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "error_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "error"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "error_response"
+        },
+        "contract_version": {
+          "const": 2
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        }
+      }
+    },
+    "editor_record_view": {
+      "$ref": "#/$defs/record_view"
+    },
+    "editor_record_create_request": {
+      "$ref": "#/$defs/create_request"
+    },
+    "editor_record_edit_request": {
+      "$ref": "#/$defs/edit_request"
+    },
+    "editor_removal_impact": {
+      "$ref": "#/$defs/removal_impact"
+    },
+    "editor_record_remove_request": {
+      "$ref": "#/$defs/remove_request"
+    },
+    "editor_proposal_view": {
+      "$ref": "#/$defs/proposal_view"
+    },
+    "editor_proposal_correction_request": {
+      "$ref": "#/$defs/correction_request"
+    },
+    "editor_proposal_rejection_request": {
+      "$ref": "#/$defs/rejection_request"
+    },
+    "editor_proposal_approval_request": {
+      "$ref": "#/$defs/approval_request"
+    },
+    "editor_proposal_approval_result": {
+      "$ref": "#/$defs/approval_result"
+    },
+    "editor_proposal_rejection_result": {
+      "$ref": "#/$defs/rejection_result"
+    },
+    "approval_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "proposal",
+        "outcome",
+        "published_revision",
+        "editor_workflow_version"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "editor_proposal_approval_result"
+        },
+        "contract_version": {
+          "const": 1
+        },
+        "proposal": {
+          "$ref": "#/$defs/proposal_ref"
+        },
+        "outcome": {
+          "const": "published"
+        },
+        "published_revision": {
+          "$ref": "#/$defs/immutable_revision"
+        },
+        "editor_workflow_version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "rejection_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "proposal",
+        "outcome",
+        "editor_workflow_version"
+      ],
+      "properties": {
+        "contract_name": {"const": "editor_proposal_rejection_result"},
+        "contract_version": {"const": 1},
+        "proposal": {"$ref": "#/$defs/proposal_ref"},
+        "outcome": {"const": "rejected"},
+        "editor_workflow_version": {"type": "integer", "minimum": 1}
+      }
+    },
+    "immutable_revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision_id",
+        "ordinal",
+        "tree_digest",
+        "immutable"
+      ],
+      "properties": {
+        "revision_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tree_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "immutable": {
+          "const": true
+        }
+      }
+    }
+  }
+}

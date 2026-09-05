@@ -1,0 +1,26 @@
+{
+  "contract_name": "hosted_canon_proposal_semantic_invariants",
+  "contract_version": 2,
+  "mandatory_with_json_schema": true,
+  "preserves": ["proposal_exact_binding", "proposal_validation_gate"],
+  "rules": [
+    {
+      "id": "proposal_exact_binding",
+      "category": "proposal_approval_conflict",
+      "schema": "schemas/v2/proposal.schema.json",
+      "rule": "When approval_binding is present, proposal_id, proposal_version, diff_digest, base_revision, source_revision, expected_campaign_head, expected_editor_workflow_version, authority_change_ids, visibility_change_ids, and warden_confirmed must equal the proposal values. approval_binding.validation_status and approval_binding.validation_digest must equal the sibling top-level validation.status and validation.validation_digest; only approving and approved states may carry a binding."
+    },
+    {
+      "id": "proposal_validation_gate",
+      "category": "proposal_validation_failure",
+      "schema": "schemas/v2/proposal.schema.json",
+      "rule": "needs_review, approving, and approved proposals require validation.status passed and error_count zero."
+    },
+    {
+      "id": "proposal_logical_ids",
+      "category": "proposal_validation_failure",
+      "schema": "schemas/v2/proposal.schema.json",
+      "rule": "Proposal changes are unique by change_id, even when duplicate change objects differ in another property."
+    }
+  ]
+}

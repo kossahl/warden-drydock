@@ -1,0 +1,44 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "workflow_conflict",
+  "expected_path": "expected_editor_workflow_version",
+  "description": "Another accepted editor operation advanced the campaign-wide CAS counter.",
+  "instance": {
+    "contract_name": "editor_record_remove_request",
+    "contract_version": 1,
+    "operation_request": {
+      "contract_name": "editor_operation_request",
+      "contract_version": 1,
+      "request_id": "request_workflow_conflict",
+      "operation": "editor_record_remove",
+      "idempotency_key": "idem_workflow_conflict",
+      "payload_digest": "b4e1552f8f2835d4b5039bf6027b874c3186eb83f292750164a64e896a4de418",
+      "expected_revision": "revision_12",
+      "expected_editor_workflow_version": 6,
+      "subject_id": "record-company"
+    },
+    "binding": {
+      "campaign_id": "campaign_alpha",
+      "base_revision": {
+        "revision_id": "revision_12",
+        "ordinal": 12,
+        "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "record_id": "record-company",
+      "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expected_editor_workflow_version": 6
+    },
+    "impact_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "impact_binding": {
+      "binding": {
+        "campaign_id": "campaign_alpha",
+        "base_revision": {"revision_id": "revision_12", "ordinal": 12, "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "record_id": "record-company",
+        "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "expected_editor_workflow_version": 6
+      },
+      "impact_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "resolutions": []
+  }
+}
