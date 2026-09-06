@@ -60,15 +60,15 @@ export function RecordEditor({ campaignId, revisionId, recordId, navigate }: { c
   const dialogHeading = useRef<HTMLHeadingElement>(null);
   const focusEditorError = useRef(false);
 
-  const load = () => {
+  const load = (sourceRevisionId = revisionId) => {
     setError(""); setMessage(""); setConflict(false); setProposal(null); setImpact(null); setCorrectionMode(false); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
     const sourceRecordId = isCreate ? "campaign-main" : recordId;
-    void httpEditorApi.read(campaignId, revisionId, sourceRecordId).then((value) => {
+    void httpEditorApi.read(campaignId, sourceRevisionId, sourceRecordId).then((value) => {
       setView(value);
       setDraft(isCreate ? newAdapterRecord() : clone(value.record));
     }).catch((reason: unknown) => { focusEditorError.current = !document.activeElement?.closest("#atlas-content"); setError(`Editor unavailable (${errorText(reason)}).`); });
   };
-  useEffect(load, [campaignId, revisionId, recordId]);
+  useEffect(() => load(), [campaignId, revisionId, recordId]);
   useEffect(() => {
     if (!error || !focusEditorError.current) return;
     focusEditorError.current = false;
@@ -117,7 +117,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, navigate }: { c
   const submitDecision = async () => {
     if (!proposal || !approvalDialog || correctionMode || (approvalDialog === "approve" && !wardenConfirmed)) return;
     const approving = approvalDialog === "approve"; setBusy(true); setError(""); setConflict(false);
-    try { const result = approving ? await httpEditorApi.approve(proposal, wardenConfirmed) : await httpEditorApi.reject(proposal, rejectionReason); setApprovalDialog(null); if (approving) { setMessage("Proposal approved and published."); const revision = result.published_revision as RevisionRef | undefined; const createdRecordId = proposal.mutation_kind === "create" ? proposal.record_bindings[0]?.record_id : undefined; if (revision && navigate) window.location.assign(createdRecordId ? `/campaigns/${encodeURIComponent(campaignId)}/records/${encodeURIComponent(createdRecordId)}?revision=${encodeURIComponent(revision.revision_id)}` : `/campaigns/${encodeURIComponent(campaignId)}?revision=${encodeURIComponent(revision.revision_id)}`); } else { setProposal(null); setCorrectionMode(false); setMessage("Proposal rejected. No campaign revision changed."); } }
+    try { const result = approving ? await httpEditorApi.approve(proposal, wardenConfirmed) : await httpEditorApi.reject(proposal, rejectionReason); setApprovalDialog(null); if (approving) { setMessage("Proposal approved and published."); window.dispatchEvent(new Event("drydock:campaign-mutated")); const revision = result.published_revision as RevisionRef | undefined; const createdRecordId = proposal.mutation_kind === "create" ? proposal.record_bindings[0]?.record_id : undefined; if (revision && navigate) navigate(createdRecordId ? `/campaigns/${encodeURIComponent(campaignId)}/records/${encodeURIComponent(createdRecordId)}?revision=${encodeURIComponent(revision.revision_id)}` : `/campaigns/${encodeURIComponent(campaignId)}?revision=${encodeURIComponent(revision.revision_id)}`); } else { setProposal(null); setCorrectionMode(false); setMessage("Proposal rejected. No campaign revision changed."); } }
     catch (reason) { setConflict(staleCategories.includes(errorCategory(reason))); focusEditorError.current = true; setError(`${approving ? "Approval" : "Rejection"} blocked (${errorText(reason)}). Refresh and review the current head.`); }
     finally { setBusy(false); }
   };
@@ -192,7 +192,8 @@ export function RecordEditor({ campaignId, revisionId, recordId, navigate }: { c
       const current = (await httpAtlasApi.campaigns()).campaigns.find((item) => item.campaign_id === campaignId);
       if (!current) throw new Error("campaign_unavailable");
       // Document navigation refreshes Atlas's campaign cache and same-revision editor state.
-      window.location.assign(`/campaigns/${encodeURIComponent(campaignId)}/records/${encodeURIComponent(recordId)}?revision=${encodeURIComponent(current.head_revision.revision_id)}`);
+      load(current.head_revision.revision_id);
+      navigate?.(`/campaigns/${encodeURIComponent(campaignId)}/records/${encodeURIComponent(recordId)}?revision=${encodeURIComponent(current.head_revision.revision_id)}`);
     } catch (reason) { focusEditorError.current = true; setError(`Current head unavailable (${errorText(reason)}).`); }
     finally { setBusy(false); }
   };
