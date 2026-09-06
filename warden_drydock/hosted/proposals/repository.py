@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import replace
 import json
 
 from warden_drydock.hosted.engine.models import ChangeKind, ExactTextChange
@@ -81,6 +82,13 @@ class PostgresProposalRepository:
             cursor.execute("SELECT COALESCE(MAX(version),0)+1 FROM hosted_proposal_version WHERE proposal_id=%s", (item.proposal_id,))
             if cursor.fetchone()[0] != item.version:
                 raise ValueError("proposal_version_conflict")
+            correction = (item.editor_metadata or {}).get("correction_of")
+            if correction:
+                prior = self._select(cursor, correction["proposal_id"], correction["proposal_version"], lock=True)
+                if prior is None or prior.status not in (ProposalStatus.DRAFT, ProposalStatus.CONFLICT) or item.version != prior.version + 1:
+                    return False
+                cursor.execute("UPDATE hosted_proposal_version SET status='rejected' WHERE proposal_id=%s AND version=%s", (prior.proposal_id, prior.version))
+                self._audit(cursor, replace(prior, status=ProposalStatus.REJECTED), "rejected")
             cursor.execute("INSERT INTO hosted_proposal_version(proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,editor_metadata) VALUES(%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)",
                 (item.proposal_id, item.version, item.campaign_id, item.base_revision,
                  json.dumps(_encode_changes(item.changes)), item.diff_digest, item.payload_digest,

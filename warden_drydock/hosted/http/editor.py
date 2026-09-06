@@ -8,6 +8,8 @@ It deliberately does not accept paths, Markdown patches, or database values.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+from warden_drydock.core.generator import DATA
 import hashlib
 import json
 import re
@@ -69,7 +71,9 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
     if any(not isinstance(item, Mapping) or set(item) != {"section_id", "body"} for item in sections): raise ValueError("invalid_sections")
     if any(not isinstance(item, Mapping) or set(item) != {"connection_id", "target_record_id", "relationship", "state", "context"} for item in connections): raise ValueError("invalid_connections")
     _unique(fields, "field_id"); _unique(sections, "section_id"); _unique(connections, "connection_id")
-    for item in fields: _id(item["field_id"])
+    for item in fields:
+        if not isinstance(item["field_id"], str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", item["field_id"]) is None:
+            raise ValueError("unsafe_identifier")
     for item in sections:
         _id(item["section_id"])
         if not isinstance(item["body"], str) or len(item["body"]) > 200000: raise ValueError("invalid_section_body")
@@ -329,3 +333,50 @@ def diff_digest(changes: tuple[ExactTextChange, ...]) -> str:
 class EditorDraft:
     changes: tuple[ExactTextChange, ...]
     diff_digest: str
+
+
+@lru_cache(maxsize=None)
+def adapter_editor_definition(adapter_id: str) -> dict:
+    """Use shipped adapter definitions, never a client-supplied schema."""
+    root = DATA / "adapters" / _id(adapter_id)
+    config = json.loads((root / "00-drydock/adapter.json").read_text())
+    definitions = {}
+    sources = [(kind, (root / spec["template"]).read_text()) for kind, spec in config["entity_types"].items()]
+    for path in (DATA / "project_template").rglob("*.md"):
+        source = path.read_text()
+        kind = frontmatter(source).get("type")
+        if kind and kind not in config["entity_types"]:
+            sources.append((kind, source))
+    for kind, source in sources:
+        definitions[kind] = {
+            "fields": set(frontmatter(source)) - {"id", "type", "name", "status", "visibility", "warden_only"},
+            "sections": {_heading_id(heading) for heading in re.findall(r"^## (.+)$", source, re.M) if heading.casefold() != "connections"},
+        }
+    return {"records": definitions, "creatable": set(config["entity_types"]),
+            "relationships": set(config["connections"]["relationships"]),
+            "states": set(config["connections"]["states"])}
+
+
+def validate_adapter_document(candidate: dict, definition: dict, before: dict | None) -> None:
+    spec = definition["records"].get(candidate["record_type"])
+    if spec is None or (before is None and candidate["record_type"] not in definition["creatable"]):
+        raise ValueError("record_type_unknown")
+    for collection, key in (("fields", "field_id"), ("sections", "section_id")):
+        old = {item[key]: item for item in before[collection]} if before else {}
+        new = {item[key]: item for item in candidate[collection]}
+        for identifier in old.keys() | new.keys():
+            if identifier not in spec[collection] and old.get(identifier) != new.get(identifier):
+                raise ValueError("unsupported_editor_" + collection)
+            if identifier in old and identifier not in new:
+                raise ValueError("editor_member_removal_not_allowed")
+        for identifier, item in new.items():
+            if old.get(identifier) == item:
+                continue
+            text = item.get("body", item.get("value"))
+            if isinstance(text, str) and (re.search(r"^##\s", text, re.M) if collection == "sections" else "\n" in text or "\r" in text):
+                raise ValueError("invalid_editor_member_content")
+    for connection in candidate["connections"]:
+        if connection["relationship"] not in definition["relationships"]:
+            raise ValueError("unsupported_connection_relationship")
+        if connection["state"] not in definition["states"]:
+            raise ValueError("unsupported_connection_state")

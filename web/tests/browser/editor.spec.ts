@@ -38,11 +38,15 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
   await expect(editor.getByRole("heading", { name: "Edit record" })).toBeVisible();
-  await editor.getByRole("button", { name: "Add field" }).click();
+  await editor.getByLabel("Displayed name").fill("Edited keeper");
+  await expect(editor.getByRole("button", { name: "Add field", exact: true })).toHaveCount(0);
+  await expect(editor.getByRole("button", { name: "Add content section", exact: true })).toHaveCount(0);
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   await expect(editor.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
   await editor.getByRole("button", { name: "Approve and publish exact proposal" }).click();
   await expect(page.getByRole("heading", { name: "Approve exact proposal" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Approve and publish", exact: true })).toBeDisabled();
+  await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
   await page.getByRole("button", { name: "Approve and publish" }).click();
   await expect.poll(() => csrfRequests).toEqual(["browser-csrf", "browser-csrf"]);
 });
@@ -137,6 +141,8 @@ test("create correction uses the candidate ID, reads campaign context, and opens
   await expect.poll(() => (correctionBody as any)?.candidate?.displayed_name).toBe("Corrected created record");
   expect((correctionBody as any)?.candidate?.connections?.[0]?.context).toBe("Corrected connection context.");
   await editor.getByRole("button", { name: "Approve and publish exact proposal" }).click();
+  await expect(page.getByRole("button", { name: "Approve and publish", exact: true })).toBeDisabled();
+  await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
   await page.getByRole("button", { name: "Approve and publish" }).click();
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-created\?revision=revision_three$/);
 });

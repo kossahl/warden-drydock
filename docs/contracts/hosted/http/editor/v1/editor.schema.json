@@ -161,7 +161,10 @@
       ],
       "properties": {
         "field_id": {
-          "$ref": "#/$defs/domain_id"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_-]*$"
         },
         "value": {
           "type": [

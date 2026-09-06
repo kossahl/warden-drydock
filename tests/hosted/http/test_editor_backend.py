@@ -459,11 +459,11 @@ Preserve this unrelated section.
     def test_removal_approval_stages_outgoing_and_incoming_connection_changes_atomically(self):
         target_revision = self._create_record("record-target", connections=[{
             "connection_id": "connection_target", "target_record_id": "campaign-main",
-            "relationship": "related-to", "state": "current", "context": "Target context.",
+            "relationship": "connected-to", "state": "current", "context": "Target context.",
         }])
         current_revision = self._create_record("record-source", connections=[{
             "connection_id": "connection_source", "target_record_id": "record-target",
-            "relationship": "related-to", "state": "current", "context": "Source context.",
+            "relationship": "connected-to", "state": "current", "context": "Source context.",
         }])
         _, impact = self.app.editor_removal_impact("campaign_alpha", current_revision, "record-target")
         reference = impact["incoming_references"][0]

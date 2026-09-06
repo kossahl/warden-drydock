@@ -34,6 +34,8 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   async function approve() {
     await editor.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
     const pending = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/approval"));
+    await expect(page.getByRole("button", { name: "Approve and publish", exact: true })).toBeDisabled();
+    await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
     await page.getByRole("button", { name: "Approve and publish", exact: true }).click();
     const response = await pending;
     expect(response.status(), await response.text()).toBe(200);
@@ -55,8 +57,7 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   await approve();
 
   await startCreate("npc-source");
-  await editor.getByRole("button", { name: "Add content section", exact: true }).click();
-  await editor.getByLabel("section-2", { exact: true }).fill("Original second section.\n");
+  await editor.getByLabel("wants", { exact: true }).fill("Original second section.\n");
   for (let index = 0; index < 2; index += 1) {
     await editor.getByRole("button", { name: "Add typed connection", exact: true }).click();
     const connection = editor.locator(".editor-connection").nth(index);
@@ -71,7 +72,7 @@ test("editor publishes reviewed section corrections and resolves multiple refere
 
   await page.goto(recordUrl("npc-source"));
   await editor.getByLabel("summary", { exact: true }).fill("First\nsecond\nthird\nfourth\nfifth\nsixth\n");
-  await editor.getByLabel("section-2", { exact: true }).fill("Replacement second section.\n");
+  await editor.getByLabel("wants", { exact: true }).fill("Replacement second section.\n");
   const priorProposal = await submit("Save as proposal");
   await editor.getByRole("button", { name: "Create correction/rebase", exact: true }).click();
   await editor.getByLabel("Displayed name", { exact: true }).fill("Corrected source");

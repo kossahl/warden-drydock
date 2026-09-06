@@ -14,6 +14,7 @@ on a focused branch and delivered through a pull request.
    - `python -m unittest discover -s tests -v`
    - `python -m warden_drydock --help`
    - `git diff --check`
+   - `./scripts/review-check.sh` for the pinned frontend and live PostgreSQL gates
 4. **PR review is required.** At least one maintainer approval is required
    before merge. Maintainers may request changes; respond with follow-up
    commits on the same branch rather than new PRs.

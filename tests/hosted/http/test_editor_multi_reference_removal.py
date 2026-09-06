@@ -51,14 +51,14 @@ class MultiReferenceRemovalTests(unittest.TestCase):
                 {
                     "connection_id": "connection_one",
                     "target_record_id": "record-target",
-                    "relationship": "related-to",
+                    "relationship": "connected-to",
                     "state": "current",
                     "context": "First context.",
                 },
                 {
                     "connection_id": "connection_two",
                     "target_record_id": "record-target",
-                    "relationship": "related-to",
+                    "relationship": "connected-to",
                     "state": "current",
                     "context": "Second context.",
                 },
@@ -113,14 +113,14 @@ class MultiReferenceRemovalTests(unittest.TestCase):
                 {
                     "connection_id": "connection_redirect",
                     "target_record_id": "record-target",
-                    "relationship": "related-to",
+                    "relationship": "connected-to",
                     "state": "current",
                     "context": "Redirect this context.",
                 },
                 {
                     "connection_id": "connection_remove",
                     "target_record_id": "record-target",
-                    "relationship": "related-to",
+                    "relationship": "connected-to",
                     "state": "current",
                     "context": "Remove this context.",
                 },
@@ -153,7 +153,7 @@ class MultiReferenceRemovalTests(unittest.TestCase):
             connections=[{
                 "connection_id": "connection_one",
                 "target_record_id": "record-target",
-                "relationship": "related-to",
+                "relationship": "connected-to",
                 "state": "current",
                 "context": "One context.",
             }],
@@ -163,7 +163,7 @@ class MultiReferenceRemovalTests(unittest.TestCase):
             connections=[{
                 "connection_id": "connection_two",
                 "target_record_id": "record-target",
-                "relationship": "related-to",
+                "relationship": "connected-to",
                 "state": "current",
                 "context": "Two context.",
             }],
@@ -185,8 +185,8 @@ class MultiReferenceRemovalTests(unittest.TestCase):
         revision = self.backend._create_record(
             "record-source",
             connections=[
-                {"connection_id": "connection_one", "target_record_id": "record-target", "relationship": "related-to", "state": "current", "context": "One."},
-                {"connection_id": "connection_two", "target_record_id": "record-target", "relationship": "related-to", "state": "current", "context": "Two."},
+                {"connection_id": "connection_one", "target_record_id": "record-target", "relationship": "connected-to", "state": "current", "context": "One."},
+                {"connection_id": "connection_two", "target_record_id": "record-target", "relationship": "connected-to", "state": "current", "context": "Two."},
             ],
         )
         _, impact = self.app.editor_removal_impact("campaign_alpha", revision, "record-target")
@@ -203,7 +203,7 @@ class MultiReferenceRemovalTests(unittest.TestCase):
         self.backend._create_record("record-target")
         revision = self.backend._create_record(
             "record-source",
-            connections=[{"connection_id": "connection_one", "target_record_id": "record-target", "relationship": "related-to", "state": "current", "context": "One."}],
+            connections=[{"connection_id": "connection_one", "target_record_id": "record-target", "relationship": "connected-to", "state": "current", "context": "One."}],
         )
         _, impact = self.app.editor_removal_impact("campaign_alpha", revision, "record-target")
         resolutions = [{"reference_id": impact["incoming_references"][0]["reference_id"], "action": "redirect", "replacement_target_record_id": "record-missing"}]

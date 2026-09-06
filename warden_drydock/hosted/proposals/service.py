@@ -217,6 +217,12 @@ class InMemoryProposalRepository:
                 return False
             if (item.proposal_id, item.version) in self.items:
                 raise ValueError("proposal_version_conflict")
+            correction = (item.editor_metadata or {}).get("correction_of")
+            if correction:
+                prior = self.items[(correction["proposal_id"], correction["proposal_version"])]
+                if prior.status not in (ProposalStatus.DRAFT, ProposalStatus.CONFLICT) or self.next_version(item.proposal_id) != prior.version + 1:
+                    return False
+                self.replace_status(prior, ProposalStatus.REJECTED)
             self.items[(item.proposal_id, item.version)] = item
             self._created_at[(item.proposal_id, item.version)] = datetime(2000, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=len(self._created_at))
             self._editor_workflow[campaign_id] = expected_version + 1

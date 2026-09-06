@@ -48,7 +48,7 @@ from .contracts import (
     text_digest, validate_http_semantics,
 )
 from .repository import InMemoryHTTPRepository, ReceiptConflict
-from .editor import change_for, diff_digest as editor_diff_digest, parse_document, serialize_document, document_digest, _document
+from .editor import change_for, diff_digest as editor_diff_digest, parse_document, serialize_document, document_digest, _document, adapter_editor_definition, validate_adapter_document
 from .editor_semantics import EditorSemanticError, validate_editor_semantics
 
 
@@ -1390,13 +1390,19 @@ class SliceApplication:
         return bound
 
     def _editor_validate_candidate(self, candidate: dict, *, campaign_id: str,
-                                   revision_id: str, expected_record_id: str | None) -> dict:
+                                   revision_id: str, expected_record_id: str | None, before: dict | None = None) -> dict:
         try:
             document = _document(candidate)
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPFailure(422, "proposal_validation_failure", str(exc), "editor_proposal") from exc
         if expected_record_id is not None and document["record_id"] != expected_record_id:
             raise HTTPFailure(422, "unsafe_binding", "record_id_mismatch", "editor_proposal")
+        if before is not None and document["record_type"] != before["record_type"]:
+            raise HTTPFailure(422, "unsafe_binding", "record_type_mismatch", "editor_proposal")
+        try:
+            validate_adapter_document(document, adapter_editor_definition(self.campaigns[campaign_id].adapter_id), before)
+        except ValueError as exc:
+            raise HTTPFailure(422, "proposal_validation_failure", str(exc), "editor_proposal") from exc
         record_ids = self._editor_record_ids(campaign_id, revision_id)
         if document["record_id"] in record_ids and expected_record_id is None:
             raise HTTPFailure(409, "proposal_approval_conflict", "record_already_exists", "editor_proposal")
@@ -1583,7 +1589,7 @@ class SliceApplication:
         candidate = before_doc if kind == "remove" else payload.get("candidate")
         if not isinstance(candidate, dict):
             raise HTTPFailure(422, "proposal_validation_failure", "invalid_candidate", "editor_proposal", self._request_id(payload))
-        candidate = self._editor_validate_candidate(candidate, campaign_id=campaign_id, revision_id=revision_id, expected_record_id=record_id)
+        candidate = self._editor_validate_candidate(candidate, campaign_id=campaign_id, revision_id=revision_id, expected_record_id=record_id, before=before_doc)
         if kind == "create" and record_id in self._editor_record_ids(campaign_id, revision_id):
             raise HTTPFailure(409, "proposal_approval_conflict", "record_already_exists", "editor_proposal", self._request_id(payload))
 
@@ -1707,6 +1713,18 @@ class SliceApplication:
             raise HTTPFailure(404, "not_found", "proposal_not_found", "editor_correct")
         if payload.get("prior_proposal") != {"proposal_id": proposal_id, "proposal_version": version}:
             raise HTTPFailure(422, "unsafe_binding", "invalid_editor_binding", "editor_correct", self._request_id(payload))
+        operation = payload.get("operation_request", {})
+        if not isinstance(operation, dict) or operation.get("payload_digest") != self._editor_payload_digest(payload):
+            raise HTTPFailure(422, "idempotency_digest_conflict", "payload_digest_mismatch", "editor_correct", self._request_id(payload))
+        replay = self._replay("editor_proposal_correct", operation.get("idempotency_key"), operation.get("payload_digest"))
+        if replay:
+            return 200, replay[1]
+        current = self.proposal_repository.get(proposal_id, version)
+        if (current.status not in {ProposalStatus.DRAFT, ProposalStatus.CONFLICT}
+                or self.proposal_repository.next_version(proposal_id) != version + 1):
+            raise HTTPFailure(409, "proposal_approval_conflict", "proposal_not_correctable", "editor_correct", self._request_id(payload))
+        if payload.get("mutation_kind") != prior["value"]["mutation_kind"]:
+            raise HTTPFailure(422, "unsafe_binding", "invalid_correction", "editor_correct", self._request_id(payload))
         binding = payload.get("binding")
         if not isinstance(binding, dict):
             raise HTTPFailure(422, "unsafe_binding", "invalid_editor_binding", "editor_correct", self._request_id(payload))
@@ -1726,6 +1744,8 @@ class SliceApplication:
             candidate = None
         if kind != "remove" and not isinstance(candidate, dict):
             raise HTTPFailure(422, "proposal_validation_failure", "invalid_correction", "editor_correct", self._request_id(payload))
+        if candidate is not None and candidate.get("record_type") != prior["change"].record_type:
+            raise HTTPFailure(422, "unsafe_binding", "record_type_mismatch", "editor_correct", self._request_id(payload))
         request = deepcopy(payload)
         status, value = self._editor_proposal(
             prior["campaign_id"], current_head_id, request, kind,
