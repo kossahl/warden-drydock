@@ -25,7 +25,9 @@ done
 docker run --rm --network host \
   -e "DRYDOCK_TEST_DATABASE_URL=postgresql://drydock:drydock@127.0.0.1:${db_port}/drydock" \
   -v "$root_dir:/repo" -w /repo python:3.12-bookworm bash -lc '
-    pip install --disable-pip-version-check -q "psycopg[binary]"
+    mkdir -p /tmp/drydock-python-wheels
+    pip download --disable-pip-version-check -q --timeout 15 --retries 5 --only-binary=:all: "psycopg[binary]" -d /tmp/drydock-python-wheels
+    pip install --disable-pip-version-check -q --no-deps /tmp/drydock-python-wheels/*
     python3 -m unittest discover -s tests
     python3 -m warden_drydock --help >/dev/null
     python3 -m unittest tests.hosted.proposals.test_postgres_proposals tests.hosted.http.test_postgres_http
