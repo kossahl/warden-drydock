@@ -5,7 +5,12 @@ import unittest
 
 from tests.hosted.http import test_editor_backend as _editor_backend
 from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input
-from warden_drydock.hosted.http.editor import document_digest, mutate_document, parse_document
+from warden_drydock.hosted.http.editor import (
+    document_digest,
+    mutate_document,
+    parse_document,
+    serialize_document,
+)
 
 
 class EditorSourcePreservationTests(unittest.TestCase):
@@ -200,6 +205,62 @@ Preserve this unrelated section.
         self.assertEqual(candidate["sections"], parse_document(result, "record-main", "npc")["sections"])
         self.assertNotIn("\r\r\n", result)
         self.assertEqual(result.count("\r\n"), result.count("\n"))
+
+    def test_serialized_name_and_connection_context_round_trip(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Summary
+Keep this record.
+
+## Connections
+
+- `connected-to` -> [[record-gate]] (`current`) — Watches the gate.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["displayed_name"] = "Keeper: Alpha"
+        candidate["connections"][0]["context"] = "Watches the gate: quietly."
+        candidate["content_digest"] = document_digest(candidate)
+
+        serialized = serialize_document(candidate)
+        round_tripped = parse_document(serialized, "record-main", "npc")
+
+        self.assertEqual(candidate["displayed_name"], round_tripped["displayed_name"])
+        self.assertEqual(candidate["connections"], round_tripped["connections"])
+
+    def test_serialized_name_and_connection_context_reject_line_breaks(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Summary
+Keep this record.
+
+## Connections
+
+- `connected-to` -> [[record-gate]] (`current`) — Watches the gate.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+
+        candidate["displayed_name"] = "Keeper\nInjected"
+        candidate["content_digest"] = document_digest(candidate)
+        with self.assertRaisesRegex(ValueError, "invalid_record_name"):
+            serialize_document(candidate)
+
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["connections"][0]["context"] = "Watches the gate\r\n- `forged` -> [[record-secret]] (`current`) — forged"
+        candidate["content_digest"] = document_digest(candidate)
+        with self.assertRaisesRegex(ValueError, "invalid_connection_context"):
+            serialize_document(candidate)
 
 
 if __name__ == "__main__":

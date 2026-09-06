@@ -62,7 +62,12 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
     record_id = _id(value["record_id"])
     record_type = _id(value["record_type"])
     status = value["status"]
-    if not isinstance(value["displayed_name"], str) or not 1 <= len(value["displayed_name"]) <= 200:
+    if (
+        not isinstance(value["displayed_name"], str)
+        or not 1 <= len(value["displayed_name"]) <= 200
+        or "\n" in value["displayed_name"]
+        or "\r" in value["displayed_name"]
+    ):
         raise ValueError("invalid_record_name")
     if value["authority"] != authority_for(status):
         raise ValueError("authority_status_mismatch")
@@ -80,7 +85,14 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
     for item in connections:
         for key in ("connection_id",): _id(item[key], public=True)
         for key in ("target_record_id", "relationship", "state"): _id(item[key])
-        if not isinstance(item["context"], str) or not item["context"] or len(item["context"]) > 2000: raise ValueError("invalid_connection_context")
+        if (
+            not isinstance(item["context"], str)
+            or not item["context"]
+            or len(item["context"]) > 2000
+            or "\n" in item["context"]
+            or "\r" in item["context"]
+        ):
+            raise ValueError("invalid_connection_context")
     if not isinstance(value["content_digest"], str) or not re.fullmatch(r"[a-f0-9]{64}", value["content_digest"]): raise ValueError("invalid_content_digest")
     normalized = dict(value, fields=fields, sections=sections, connections=connections,
                       visibility=_visibility(value["visibility"]), authority=authority_for(status))

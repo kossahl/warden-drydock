@@ -12,8 +12,8 @@ const proposal = {
   contract_name: "editor_proposal_view", contract_version: 1, proposal_id: "proposal_editor", proposal_version: 1, campaign_id: "campaign_atlas",
   source_revision: headRevision, base_revision: headRevision, expected_campaign_head: headRevision, editor_workflow_version: 2,
   proposal_payload_digest: "d".repeat(64), mutation_kind: "edit", record_bindings: [{ campaign_id: "campaign_atlas", base_revision: headRevision, record_id: "record-one", record_digest: editorRecord.content_digest, expected_editor_workflow_version: 2 }],
-  core_proposal: { proposal: { status: "needs_review" } }, diff: { diff_digest: "e".repeat(64), cards: [{ change_id: "change_editor", kind: "record_updated", subject_record_id: "record-one", before: editorRecord, after: editedRecord, property_changes: [{ property: "displayed_name", before: "Station Keeper", after: "Edited Station Keeper" }], connection: null, resolution: null, derived_backlinks: [] }], affected_record_count: 1, authority_changes: [], visibility_changes: [], unresolved_reference_count: 0, impact_digest: null, summary: "edit" },
-  impact_digest: null, impact_binding: null, resolutions: [], validation: { status: "passed", validation_digest: "f".repeat(64), error_count: 0, findings: [] }, authority_outcome: [], visibility_outcome: [], publication: { status: "not_published", published_revision: null },
+  core_proposal: { proposal: { status: "needs_review" } }, diff: { diff_digest: "e".repeat(64), cards: [{ change_id: "change_editor", kind: "record_updated", subject_record_id: "record-one", before: editorRecord, after: editedRecord, property_changes: [{ property: "displayed_name", before: "Station Keeper", after: "Edited Station Keeper" }], connection: null, resolution: null, derived_backlinks: [] }], affected_record_count: 1, authority_changes: [], visibility_changes: [{ change_id: "visibility_editor", record_id: "record-one", before: { audience: "warden", warden_only: true }, after: { audience: "players", warden_only: false }, audience_broadens: true }], unresolved_reference_count: 0, impact_digest: null, summary: "edit" },
+  impact_digest: null, impact_binding: null, resolutions: [], validation: { status: "passed", validation_digest: "f".repeat(64), error_count: 0, findings: [] }, authority_outcome: [], visibility_outcome: [{ change_id: "visibility_editor", record_id: "record-one", before: { audience: "warden", warden_only: true }, after: { audience: "players", warden_only: false }, audience_broadens: true }], publication: { status: "not_published", published_revision: null },
 };
 
 test("record editor submits an exact CSRF-bound proposal and approval dialog", async ({ page }) => {
@@ -45,9 +45,10 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
   await expect(editor.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
   await editor.getByRole("button", { name: "Approve and publish exact proposal" }).click();
   await expect(page.getByRole("heading", { name: "Approve exact proposal" })).toBeFocused();
-  await expect(page.getByRole("button", { name: "Approve and publish", exact: true })).toBeDisabled();
+  await expect(page.getByRole("alert")).toHaveText(/broadens audience visibility/);
+  await expect(page.getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
   await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
-  await page.getByRole("button", { name: "Approve and publish" }).click();
+  await page.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
   await expect.poll(() => csrfRequests).toEqual(["browser-csrf", "browser-csrf"]);
 });
 
@@ -127,13 +128,18 @@ test("create correction uses the candidate ID, reads campaign context, and opens
   const editor = page.locator(".editor").filter({ hasText: "Create record" });
   await editor.getByLabel("Record ID").fill("record-created");
   await editor.getByRole("button", { name: "Add typed connection" }).click();
-  await editor.getByLabel("Target for connection_1").fill("record-target");
+  const targetPicker = editor.getByRole("button", { name: "Target for connection_1: choose existing record" });
+  await targetPicker.click();
+  const targetDialog = page.getByRole("dialog");
+  await targetDialog.getByLabel("Search existing records").fill("record-one");
+  await targetDialog.getByRole("button", { name: "Search", exact: true }).click();
+  await targetDialog.getByRole("option", { name: /record-one/ }).click();
   await editor.getByRole("button", { name: "Submit create proposal" }).click();
   await editor.getByRole("button", { name: "Create correction/rebase" }).click();
   await expect.poll(() => editorReads.length).toBe(2);
   expect(editorReads.every((path) => !path.endsWith("/records/new-record/editor"))).toBe(true);
   expect((initialBody as any)?.candidate?.connections?.[0]?.connection_id).toMatch(/^connection_[0-9]+$/);
-  expect((initialBody as any)?.candidate?.connections?.[0]?.target_record_id).toBe("record-target");
+  expect((initialBody as any)?.candidate?.connections?.[0]?.target_record_id).toBe("record-one");
   await editor.getByLabel("Displayed name").fill("Corrected created record");
   await editor.getByLabel("Context").fill("Corrected connection context.");
   await editor.getByRole("button", { name: "Submit correction/rebase" }).click();
@@ -141,8 +147,8 @@ test("create correction uses the candidate ID, reads campaign context, and opens
   await expect.poll(() => (correctionBody as any)?.candidate?.displayed_name).toBe("Corrected created record");
   expect((correctionBody as any)?.candidate?.connections?.[0]?.context).toBe("Corrected connection context.");
   await editor.getByRole("button", { name: "Approve and publish exact proposal" }).click();
-  await expect(page.getByRole("button", { name: "Approve and publish", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
   await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
-  await page.getByRole("button", { name: "Approve and publish" }).click();
+  await page.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-created\?revision=revision_three$/);
 });

@@ -34,9 +34,9 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   async function approve() {
     await editor.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
     const pending = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/approval"));
-    await expect(page.getByRole("button", { name: "Approve and publish", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
     await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
-    await page.getByRole("button", { name: "Approve and publish", exact: true }).click();
+    await page.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
     const response = await pending;
     expect(response.status(), await response.text()).toBe(200);
     const result = await response.json() as { published_revision: { revision_id: string } };
@@ -61,7 +61,11 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   for (let index = 0; index < 2; index += 1) {
     await editor.getByRole("button", { name: "Add typed connection", exact: true }).click();
     const connection = editor.locator(".editor-connection").nth(index);
-    await connection.getByLabel(/^Target for/).fill("npc-target");
+    await connection.getByRole("button", { name: new RegExp(`Target for connection_${index + 1}: choose existing record`) }).click();
+    const targetDialog = page.getByRole("dialog");
+    await targetDialog.getByLabel("Search existing records").fill("npc-target");
+    await targetDialog.getByRole("button", { name: "Search", exact: true }).click();
+    await targetDialog.getByRole("option", { name: /npc-target/ }).click();
     await connection.getByLabel("Context", { exact: true }).fill(`Source reference ${index + 1}.`);
   }
   await submit("Submit create proposal");
@@ -99,6 +103,11 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   await editor.getByRole("button", { name: "Create correction/rebase", exact: true }).click();
   await expect(resolutions.first()).toBeEnabled();
   await resolutions.first().selectOption("redirect");
+  await editor.getByRole("button", { name: /^Replacement target for .*choose existing record$/ }).click();
+  const replacementDialog = page.getByRole("dialog");
+  await replacementDialog.getByLabel("Search existing records").fill("npc-source");
+  await replacementDialog.getByRole("button", { name: "Search", exact: true }).click();
+  await replacementDialog.getByRole("option", { name: /npc-source/ }).click();
   await editor.getByRole("button", { name: "Cancel correction", exact: true }).click();
   for (const resolution of await resolutions.all()) {
     await expect(resolution).toHaveValue("remove_reference");

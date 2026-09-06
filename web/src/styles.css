@@ -55,6 +55,7 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
 .diff h4 { margin: 0; }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .7rem; margin-top: 1rem; }
 .conflict, .error { margin: 1rem 0; padding: 1rem; border: 2px solid #e29b96; border-radius: .5rem; color: #ffd5d1; background: #351b19; }
+.warning { margin: 1rem 0; padding: 1rem; border: 3px solid #f4c95d; border-radius: .5rem; color: #fff1b8; background: #3b2b0b; }
 .conflict h3, .error p { margin: 0; }
 .stream-state { color: #bfd4ca; }
 .announcer { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -145,6 +146,11 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
 .editor-review { margin-top: 1.5rem; padding-top: 1rem; border-top: 2px solid #d497e8; }
 .editor-review .diff article { overflow: hidden; }
 .editor-connection { margin: .8rem 0; padding: .8rem; border-left: .2rem solid #5b7b6d; }
+.record-picker { margin: .5rem 0 1rem; }
+.record-picker p { margin: .25rem 0 .5rem; overflow-wrap: anywhere; }
+.record-picker-dialog { margin: .8rem 0; padding: 1rem; border: 1px solid #80aa96; border-radius: .45rem; background: #15221d; }
+.record-picker-dialog ul { display: grid; gap: .5rem; padding: 0; list-style: none; }
+.record-picker-dialog li button { width: 100%; text-align: left; }
 
 @media (max-width: 42rem) {
   .banner { align-items: flex-start; flex-direction: column; }
