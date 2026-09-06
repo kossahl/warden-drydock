@@ -196,6 +196,10 @@ class SliceApplication:
         self._recover_editor_state()
         self._recover_atlas()
         self._abandoned_claims = set(self.receipts.recover_pending())
+        # Keep editor claims durable until retry, including across another restart.
+        for operation, key, digest in self._abandoned_claims:
+            if operation.startswith("editor_"):
+                self.receipts.claim(operation, key, digest)
 
     @staticmethod
     def _id(prefix: str, *parts: object) -> str:
@@ -1144,6 +1148,9 @@ class SliceApplication:
 
     def _claim(self, operation: str, key: str, digest: str) -> bool:
         try:
+            if operation.startswith("editor_") and self._abandoned(operation, key, digest):
+                self.receipts.release(operation, key, digest)
+                self._abandoned_claims.discard((operation, key, digest))
             return self.receipts.claim(operation, key, digest)
         except ReceiptConflict as exc:
             raise HTTPFailure(409, "idempotency_digest_conflict", "idempotency_digest_conflict", operation) from exc
@@ -1541,6 +1548,72 @@ class SliceApplication:
         ignored = {"contract_name", "contract_version", "operation_request", "request_id", "idempotency_key", "payload_digest"}
         return canonical_digest({key: value for key, value in payload.items() if key not in ignored})
 
+    def _editor_original_value(self, item: ProposalVersion, workflow: int) -> dict | None:
+        """Recover the immutable response, even if the proposal later terminated."""
+        value = deepcopy(item.editor_metadata)
+        value["core_proposal"]["proposal"]["status"] = "needs_review"
+        value["core_proposal"]["approval_binding"] = None
+        value["publication"] = {"status": "not_published", "published_revision": None}
+        value["editor_workflow_version"] = workflow
+        value["core_proposal"]["proposal"]["expected_editor_workflow_version"] = workflow
+        for binding in value["record_bindings"]:
+            binding["expected_editor_workflow_version"] = workflow
+        value["proposal_payload_digest"] = canonical_digest({
+            key: part for key, part in value.items() if key != "proposal_payload_digest"
+        })
+        return value if value["proposal_payload_digest"] == item.payload_digest else None
+
+    def _editor_abandoned_proposal_replay(
+        self, campaign_id: str, revision_id: str, record_id: str, payload: dict,
+        operation_name: str, *, correction_of: dict | None = None,
+    ) -> tuple[int, dict] | None:
+        operation = payload.get("operation_request", {})
+        if not self._abandoned(operation_name, operation.get("idempotency_key"), operation.get("payload_digest")):
+            return None
+        operation_fields = {"contract_name", "contract_version", "request_id", "operation", "idempotency_key", "payload_digest", "expected_revision", "expected_editor_workflow_version", "subject_id"}
+        contract = "editor_proposal_correction_request" if correction_of else operation_name + "_request"
+        if (set(operation) != operation_fields or operation.get("contract_name") != "editor_operation_request"
+                or operation.get("contract_version") != 1 or payload.get("contract_name") != contract
+                or payload.get("contract_version") != 1):
+            return None
+        expected = operation.get("expected_editor_workflow_version")
+        if type(expected) is not int or operation.get("payload_digest") != self._editor_payload_digest(payload):
+            return None
+        kind = payload.get("mutation_kind") if correction_of else operation_name.removeprefix("editor_record_")
+        matches = []
+        # Recovery scans the cache once; index by campaign/base/record if it grows.
+        for (proposal_id, version), stored in self._editor_proposals.items():
+            if stored["campaign_id"] != campaign_id or stored["base"] != revision_id or stored["change"].subject_id != record_id:
+                continue
+            item = self.proposal_repository.get(proposal_id, version)
+            if item.campaign_id != campaign_id or item.base_revision != revision_id or item.changes[0].subject_id != record_id:
+                continue
+            value = self._editor_original_value(item, expected + 1)
+            if value is None or value["mutation_kind"] != kind or value.get("correction_of") != correction_of:
+                continue
+            binding = dict(value["record_bindings"][0], expected_editor_workflow_version=expected)
+            if payload.get("binding") != binding:
+                continue
+            if kind != "remove" and _document(payload.get("candidate")) != value["diff"]["cards"][0]["after"]:
+                continue
+            if kind == "remove" and any(payload.get(key) != value[key] for key in ("impact_digest", "impact_binding", "resolutions")):
+                continue
+            if (operation.get("operation") != operation_name
+                    or operation.get("expected_revision") != revision_id
+                    or operation.get("subject_id") != (correction_of["proposal_id"] if correction_of else record_id)):
+                continue
+            impact = self._editor_bound_removal_impact(campaign_id, revision_id, record_id, binding) if kind == "remove" else None
+            self._editor_semantic(
+                payload, stage="editor_proposal", current_head=value["base_revision"],
+                current_workflow_version=expected, impact=impact,
+                existing_record_ids=self._editor_record_ids(campaign_id, revision_id),
+            )
+            matches.append(value)
+        if len(matches) != 1:
+            return None
+        self._store(operation_name, operation["idempotency_key"], operation["payload_digest"], 201, matches[0])
+        return 200, matches[0]
+
     def _editor_proposal(self, campaign_id: str, revision_id: str, payload: dict, kind: str, record_id: str | None = None, *, operation_name: str | None = None, proposal_id_override: str | None = None, correction_of: dict | None = None) -> tuple[int, dict]:
         operation = payload.get("operation_request")
         if not isinstance(operation, dict):
@@ -1566,6 +1639,11 @@ class SliceApplication:
             return 200, replay[1]
         if operation.get("operation") != operation_name or operation.get("payload_digest") != self._editor_payload_digest(payload):
             raise HTTPFailure(422, "idempotency_digest_conflict", "payload_digest_mismatch", "editor_proposal", self._request_id(payload))
+        recovered = self._editor_abandoned_proposal_replay(
+            campaign_id, revision_id, record_id, payload, operation_name, correction_of=correction_of,
+        )
+        if recovered is not None:
+            return recovered
         binding = payload.get("binding")
         if not isinstance(binding, dict) or binding.get("campaign_id") != campaign_id or binding.get("record_id") != record_id:
             raise HTTPFailure(422, "unsafe_binding", "invalid_editor_binding", "editor_proposal", self._request_id(payload))
@@ -1719,6 +1797,13 @@ class SliceApplication:
         replay = self._replay("editor_proposal_correct", operation.get("idempotency_key"), operation.get("payload_digest"))
         if replay:
             return 200, replay[1]
+        recovered = self._editor_abandoned_proposal_replay(
+            prior["campaign_id"], operation.get("expected_revision"), prior["change"].subject_id,
+            payload, "editor_proposal_correct",
+            correction_of={"proposal_id": proposal_id, "proposal_version": version},
+        )
+        if recovered is not None:
+            return recovered
         current = self.proposal_repository.get(proposal_id, version)
         if (current.status not in {ProposalStatus.DRAFT, ProposalStatus.CONFLICT}
                 or self.proposal_repository.next_version(proposal_id) != version + 1):
@@ -1800,8 +1885,8 @@ class SliceApplication:
                               existing_record_ids=self._editor_record_ids(stored["campaign_id"], stored["base"]))
         return 200, value
 
-    def _validate_editor_action(self, proposal_id: str, version: int, payload: dict, stored: dict, *, approve: bool) -> None:
-        """Compare the complete wire binding before touching proposal state."""
+    def _validate_editor_action(self, proposal_id: str, version: int, payload: dict, stored: dict, *, approve: bool, recovery: bool = False) -> None:
+        """Compare the complete wire binding; committed replay need not match today's head."""
         required = {
             "proposal", "proposal_status", "mutation_kind", "source_revision",
             "base_revision", "expected_campaign_head", "expected_editor_workflow_version",
@@ -1858,7 +1943,7 @@ class SliceApplication:
         campaign = self.campaigns[stored["campaign_id"]]
         head_id = self.workflow.head(stored["campaign_id"])
         head = campaign.revisions[head_id] if head_id else None
-        if head is None or payload["expected_campaign_head"] != self._editor_revision_ref(head):
+        if not recovery and (head is None or payload["expected_campaign_head"] != self._editor_revision_ref(head)):
             raise HTTPFailure(409, "stale_revision", "stale_revision", "editor_approve" if approve else "editor_reject", self._request_id(payload))
         if operation.get("expected_revision") != expected_revision or operation.get("expected_editor_workflow_version") != payload["expected_editor_workflow_version"] or operation.get("intent_digest") != payload["diff_digest"]:
             raise HTTPFailure(422, "proposal_approval_conflict", "approval_binding_mismatch", "editor_approve" if approve else "editor_reject", self._request_id(payload))
@@ -2054,6 +2139,30 @@ class SliceApplication:
                 if recovered is not None:
                     self._store(receipt_operation, operation["idempotency_key"], operation["payload_digest"], recovered[0], recovered[1])
                     return recovered
+            elif isinstance(operation, dict) and self._abandoned(receipt_operation, operation.get("idempotency_key"), operation.get("payload_digest")) and item.status is ProposalStatus.REJECTED:
+                expected = operation.get("expected_editor_workflow_version")
+                original = self._editor_original_value(item, expected) if type(expected) is int else None
+                if original is not None:
+                    self._validate_editor_action(proposal_id, version, payload, dict(stored, value=original), approve=False, recovery=True)
+                    terminal = self._editor_terminal_value(original, proposal_id, version, action, expected, validate=False)
+                    if item.editor_metadata != terminal:
+                        # The in-memory fallback may stop between rejection, CAS,
+                        # and metadata storage. PostgreSQL commits these together.
+                        if item.editor_metadata != original or self.proposal_repository.next_version(proposal_id) != version + 1:
+                            raise HTTPFailure(409, "unsafe_binding", "workflow_conflict", "editor_reject")
+                        current = self._editor_version(stored["campaign_id"])
+                        if current == expected:
+                            if not self.proposal_repository.advance_editor(stored["campaign_id"], expected):
+                                raise HTTPFailure(409, "unsafe_binding", "workflow_conflict", "editor_reject")
+                        elif current != expected + 1:
+                            raise HTTPFailure(409, "unsafe_binding", "workflow_conflict", "editor_reject")
+                        self.proposal_repository.save_editor_metadata(proposal_id, version, terminal)
+                        stored["value"] = terminal
+                        stored["workflow"] = expected + 1
+                        self._persist_editor_state()
+                    response = {"contract_name": "editor_proposal_rejection_result", "contract_version": 1, "proposal": {"proposal_id": proposal_id, "proposal_version": version}, "outcome": "rejected", "editor_workflow_version": expected + 1}
+                    self._store(receipt_operation, operation["idempotency_key"], operation["payload_digest"], 200, response)
+                    return 200, response
             expected = (payload.get("operation_request") or {}).get("expected_editor_workflow_version")
             if expected != self._editor_version(stored["campaign_id"]) or expected != stored["workflow"]:
                 raise HTTPFailure(409, "unsafe_binding", "workflow_conflict", "editor_" + action, self._request_id(payload))

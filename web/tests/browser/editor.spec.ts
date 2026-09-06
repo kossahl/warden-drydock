@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { installAtlasApi } from "./atlas-api";
-import { headRevision } from "../fixtures/atlas";
+import { campaigns, headRevision, overview, workflow, newestFiveHistory } from "../fixtures/atlas";
 
 const editorRecord = {
   record_id: "record-one", record_type: "npc", displayed_name: "Station Keeper", status: "canon", authority: "canon",
@@ -19,9 +19,23 @@ const proposal = {
 test("record editor submits an exact CSRF-bound proposal and approval dialog", async ({ page }) => {
   await installAtlasApi(page);
   const csrfRequests: string[] = [];
+  let published = false;
+  let campaignReads = 0;
+  const publishedRevision = { revision_id: "revision_three", ordinal: 3, tree_digest: "1".repeat(64), immutable: true };
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/campaigns") {
+      campaignReads += 1;
+      return route.fulfill({ json: published ? { ...campaigns, campaigns: campaigns.campaigns.map((item) => ({ ...item, head_revision: publishedRevision, projected_revision: publishedRevision })) } : campaigns });
+    }
+    if (published) {
+      const binding = { campaign_id: "campaign_atlas", viewed_revision: publishedRevision, head_revision: publishedRevision };
+      if (path.endsWith("/revisions/revision_three")) return route.fulfill({ json: { contract_name: "campaign_revision_view", contract_version: 2, campaign_id: "campaign_atlas", campaign_name: "Synthetic Atlas", adapter_id: "mothership", viewed_revision: publishedRevision, head_revision: publishedRevision.revision_id, records: [] } });
+      if (path.endsWith("/atlas/overview")) return route.fulfill({ json: { ...overview, binding } });
+      if (path.endsWith("/atlas/workflow-summary")) return route.fulfill({ json: { ...workflow, binding } });
+      if (path.endsWith("/atlas/history")) return route.fulfill({ json: { ...newestFiveHistory, binding } });
+    }
     if (path.endsWith("/records/record-one/editor") && request.method() === "GET") {
       return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: editorRecord }) });
     }
@@ -30,6 +44,7 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
       return route.fulfill({ status: 201, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify(proposal) });
     }
     if (path.endsWith("/editor/proposals/proposal_editor/versions/1/approval") && request.method() === "POST") {
+      published = true;
       csrfRequests.push(request.headers()["x-csrf-token"] ?? "");
       return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_proposal_approval_result", contract_version: 1, proposal: { proposal_id: "proposal_editor", proposal_version: 1 }, outcome: "published", published_revision: { revision_id: "revision_three", ordinal: 3, tree_digest: "1".repeat(64), immutable: true }, editor_workflow_version: 3 }) });
     }
@@ -50,6 +65,42 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
   await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
   await page.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
   await expect.poll(() => csrfRequests).toEqual(["browser-csrf", "browser-csrf"]);
+  await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\?revision=revision_three$/);
+  await expect(page.getByRole("complementary", { name: "Viewed revision" })).toHaveText(/revision_three · Head/);
+  await expect(page.getByRole("link", { name: "Open head", exact: true })).toHaveCount(0);
+  expect(campaignReads).toBe(2);
+});
+
+test("same-head workflow conflict reloads the editor before retrying", async ({ page }) => {
+  await installAtlasApi(page);
+  let editorReads = 0;
+  const submittedVersions: number[] = [];
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      editorReads += 1;
+      return route.fulfill({ headers: { "X-CSRF-Token": "browser-csrf" }, json: { contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: editorReads, historical: false, editable: true, record: editorRecord } });
+    }
+    if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) {
+      const version = request.postDataJSON().binding.expected_editor_workflow_version;
+      submittedVersions.push(version);
+      return version === 1
+        ? route.fulfill({ status: 409, json: { error: { code: "workflow_conflict", category: "workflow_conflict" } } })
+        : route.fulfill({ status: 201, json: proposal });
+    }
+    return route.fallback();
+  });
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const editor = page.locator(".editor");
+  await editor.getByRole("button", { name: "Save as proposal" }).click();
+  await editor.getByRole("button", { name: "Reload current head" }).click();
+  await expect(editor.getByRole("status")).toHaveText("Head · workflow 2");
+  await expect(page).toHaveURL(/records\/record-one\?revision=revision_two$/);
+  await editor.getByRole("button", { name: "Save as proposal" }).click();
+  await expect(editor.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
+  expect(editorReads).toBe(2);
+  expect(submittedVersions).toEqual([1, 2]);
 });
 
 test("editor load errors do not steal Atlas record-heading focus", async ({ page }) => {
