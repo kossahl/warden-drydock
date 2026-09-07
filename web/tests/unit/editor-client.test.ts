@@ -76,7 +76,7 @@ describe("record editor client bindings", () => {
       .mockResolvedValueOnce({
         ok: true, headers: new Headers(), json: async () => { throw new SyntaxError("Unexpected end of JSON input"); },
         status: 201, statusText: "Created", redirected: false, type: "basic", url: "",
-      } as Response)
+      } as unknown as Response)
       .mockResolvedValueOnce({
         ok: true, headers: new Headers(), json: async () => response,
         status: 201, statusText: "Created", redirected: false, type: "basic", url: "",
