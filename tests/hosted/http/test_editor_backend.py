@@ -1,9 +1,9 @@
 from copy import deepcopy
+from unittest import mock
 import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest import mock
 
 from jsonschema import Draft202012Validator
 
@@ -217,6 +217,26 @@ class EditorBackendTests(unittest.TestCase):
             self._editor_approval_payload(proposal),
         )
         self.assertEqual((200, replay), (status, exact_replay))
+
+    def test_stale_editor_approval_persists_conflict_metadata(self):
+        _, _, (_, proposal) = self._edit("idem_editor_conflict")
+
+        def stale_approve(item, **kwargs):
+            return self.app.proposal_repository.replace_status(item, ProposalStatus.CONFLICT)
+
+        with mock.patch.object(self.app.proposals, "approve", side_effect=stale_approve):
+            with self.assertRaises(HTTPFailure) as error:
+                self._approve_editor(proposal)
+        self.assertEqual((409, "stale_revision"), (error.exception.status, error.exception.payload["error"]["code"]))
+        stored = self.app.proposal_repository.get(proposal["proposal_id"], proposal["proposal_version"])
+        self.assertEqual(ProposalStatus.CONFLICT, stored.status)
+        view = self.app.editor_proposal_read(proposal["proposal_id"], proposal["proposal_version"])[1]
+        self.assertEqual("conflict", view["core_proposal"]["proposal"]["status"])
+        self.assertEqual("not_published", view["publication"]["status"])
+
+        with self.assertRaises(HTTPFailure) as retry_error:
+            self._approve_editor(proposal)
+        self.assertEqual((409, "stale_revision"), (retry_error.exception.status, retry_error.exception.payload["error"]["code"]))
 
     def test_restart_recovers_editor_publication_and_exact_replay_once(self):
         _, _, (_, proposal) = self._edit("idem_editor_pending_recovery")

@@ -2148,6 +2148,17 @@ class SliceApplication:
             )
         return terminal
 
+    @staticmethod
+    def _editor_conflict_value(value: dict) -> dict:
+        conflict = deepcopy(value)
+        conflict["core_proposal"]["proposal"]["status"] = "conflict"
+        conflict["core_proposal"]["approval_binding"] = None
+        conflict["publication"] = {"status": "not_published", "published_revision": None}
+        conflict["proposal_payload_digest"] = canonical_digest({
+            key: item for key, item in conflict.items() if key != "proposal_payload_digest"
+        })
+        return conflict
+
     def _editor_action(self, proposal_id: str, version: int, payload: dict, action: str):
         with self._editor_mutation_lock:
             operation = payload.get("operation_request")
@@ -2162,6 +2173,8 @@ class SliceApplication:
             item = self.proposal_repository.get(proposal_id, version)
             if item is None:
                 raise HTTPFailure(404, "not_found", "proposal_not_found", "editor_" + action)
+            if action == "approve" and item.status is ProposalStatus.CONFLICT:
+                raise HTTPFailure(409, "stale_revision", "stale_revision", "editor_approve", self._request_id(payload))
             if action == "approve":
                 recovered = self._editor_terminal_approval_replay(
                     proposal_id, version, payload, stored, item,
@@ -2265,6 +2278,12 @@ class SliceApplication:
                         finalize=finalize_publication if atomic_publish is not None else None,
                     )
                     if result.status is ProposalStatus.CONFLICT:
+                        value = self._editor_conflict_value(value)
+                        save_editor = getattr(self.proposal_repository, "save_editor_metadata", None)
+                        if save_editor is not None:
+                            save_editor(proposal_id, version, value)
+                        stored["value"] = value
+                        self._persist_editor_state()
                         raise HTTPFailure(409, "stale_revision", "stale_revision", "editor_approve", self._request_id(payload))
                     if result.status is not ProposalStatus.PUBLISHED:
                         raise HTTPFailure(422, "proposal_validation_failure", "proposal_validation_failure", "editor_approve", self._request_id(payload))

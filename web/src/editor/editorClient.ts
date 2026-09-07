@@ -27,7 +27,7 @@ export interface EditorProposal { proposal_id: string; proposal_version: number;
 export interface EditorRemovalReference { reference_id: string; source_record_id: string; target_record_id: string; connection_id: string; relationship: string; state: string; context: string; resolution_required: true; permitted_unresolved: boolean; }
 export interface EditorRemovalImpact { contract_name: "editor_removal_impact"; contract_version: 1; binding: EditorBinding; impact_digest: string; record: EditorRecord; outgoing_connections: EditorConnection[]; incoming_references: EditorRemovalReference[]; backlink_policy: "server_derived_from_typed_connections"; }
 
-const escapeAscii = (value: string): string => value.replace(/[\u0080-\uFFFF]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
+const escapeAscii = (value: string): string => value.replace(/[\u007F-\uFFFF]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
 const compareKeys = (left: string, right: string): number => { const leftCodePoints = Array.from(left, (character) => character.codePointAt(0)!); const rightCodePoints = Array.from(right, (character) => character.codePointAt(0)!); for (let index = 0; index < Math.min(leftCodePoints.length, rightCodePoints.length); index += 1) { if (leftCodePoints[index] !== rightCodePoints[index]) return leftCodePoints[index] - rightCodePoints[index]; } return leftCodePoints.length - rightCodePoints.length; };
 const pythonNumber = (value: number): string => {
   const wire = JSON.stringify(value);

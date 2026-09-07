@@ -25,6 +25,10 @@ describe("record editor client bindings", () => {
     expect(await digest({ number: -0 })).toBe("37e0043fa06b9c3790cd32d713dfda30e7ce8217f30ef142d2732c18ea0024d2");
   });
 
+  it("matches Python ASCII escaping for DEL", async () => {
+    expect(await digest({ text: "\u007f" })).toBe("184974d3c8a62e7135d9a5e29522efd28a17e96dbe2668629f01d6291458e351");
+  });
+
   it("allocates unique public connection IDs after removal", () => {
     const connections = [
       { connection_id: "connection_1", target_record_id: "one", relationship: "related-to", state: "current", context: "One" },

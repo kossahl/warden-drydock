@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { installAtlasApi } from "./atlas-api";
 import type { EditorProposal, EditorRecord, EditorRecordView, RevisionRef } from "../../src/editor/editorClient";
-import { headRevision } from "../fixtures/atlas";
+import { headRevision, records } from "../fixtures/atlas";
 
 const oldRevision: RevisionRef = { revision_id: "revision_one", ordinal: 1, tree_digest: "b".repeat(64) };
 const currentRevision: RevisionRef = { revision_id: "revision_three", ordinal: 3, tree_digest: "c".repeat(64) };
@@ -329,6 +329,33 @@ test("historical proposal URLs keep review and correction available", async ({ p
   await panel.getByRole("link", { name: /proposal_historical/ }).click();
   await expect(page).toHaveURL(/revision=revision_one&proposal=proposal_historical&version=1$/);
   await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
+});
+
+test("historical create proposal URLs keep the create review visible", async ({ page }) => {
+  await installAtlasApi(page);
+  const createProposal = {
+    ...proposal(oldRevision, originalRecord, 1, 7, "proposal_historical_create"),
+    mutation_kind: "create" as const,
+    record_bindings: [{ campaign_id: "campaign_atlas", base_revision: oldRevision, record_id: "npc-new", record_digest: null, expected_editor_workflow_version: 7 }],
+    diff: {
+      ...proposal(oldRevision, originalRecord, 1, 7, "proposal_historical_create").diff,
+      cards: [{ ...proposal(oldRevision, originalRecord, 1, 7, "proposal_historical_create").diff.cards[0], kind: "record_created", subject_record_id: "npc-new" }],
+      summary: "create",
+    },
+  };
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/atlas/records")) return json(route, { ...records, binding: { campaign_id: "campaign_atlas", viewed_revision: oldRevision, head_revision: headRevision } });
+    if (request.method() === "GET" && path.endsWith("/records/campaign-main/editor")) return json(route, view(oldRevision, headRevision, originalRecord, 7, true));
+    if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_historical_create/versions/1")) return json(route, createProposal);
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records?revision=revision_one&proposal=proposal_historical_create&version=1");
+  const panel = page.locator(".editor");
+  await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Create correction/rebase" })).toBeVisible();
 });
 
 test("stale correction binds to the loaded head even if a later head appears before submit", async ({ page }) => {
