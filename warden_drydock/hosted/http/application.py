@@ -853,6 +853,11 @@ class SliceApplication:
         try:
             for stored in self.proposal_repository.proposal_rows(campaign_id, revision_id):
                 item = stored["item"]
+                # Editor proposals have their own workflow and summary contract.  They
+                # intentionally do not carry AI generation provenance, so they must
+                # not be interpreted as corrupt AI proposals by this collection.
+                if item.editor_metadata:
+                    continue
                 if item.generation_id is None or item.source_revision != revision_id or len(item.changes) != 1:
                     raise ValueError("source_digest_conflict")
                 generation = self.ai_repository.get_generation(item.generation_id)

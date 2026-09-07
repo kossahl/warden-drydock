@@ -44,4 +44,25 @@ describe("record editor client bindings", () => {
     expect(fetchMock.mock.calls[1][1]?.headers).toBeInstanceOf(Headers);
     expect(new Headers(fetchMock.mock.calls[1][1]?.headers).get("X-CSRF-Token")).toBe("csrf-token");
   });
+
+  it("reuses the exact operation identity after a response is lost", async () => {
+    const response = { contract_name: "editor_proposal_view", contract_version: 1 };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("network response lost"))
+      .mockResolvedValueOnce({
+        ok: true, headers: new Headers(), json: async () => response,
+        status: 201, statusText: "Created", redirected: false, type: "basic", url: "",
+      } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const revision = { revision_id: "revision_retry", ordinal: 1, tree_digest: "d".repeat(64) };
+
+    await expect(httpEditorApi.propose("edit", "campaign_retry", revision, record(), 7)).rejects.toThrow("network response lost");
+    await httpEditorApi.propose("edit", "campaign_retry", revision, record(), 7);
+
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const retryBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(retryBody).toEqual(firstBody);
+    expect(retryBody.operation_request.request_id).toBe(firstBody.operation_request.request_id);
+    expect(retryBody.operation_request.idempotency_key).toBe(firstBody.operation_request.idempotency_key);
+  });
 });
