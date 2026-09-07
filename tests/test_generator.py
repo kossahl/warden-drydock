@@ -157,6 +157,9 @@ class GeneratorTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 create_entity(root,'npc','npc-ripley','Duplicate')
 
+            escaped = create_entity(root, 'npc', 'npc-backslash', r'A\name')
+            self.assertEqual(r'A\name', standalone.frontmatter(escaped.read_text(encoding='utf-8'))['name'])
+
     def test_semantic_validation_rejects_missing_adapter_fields(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)/'campaign'

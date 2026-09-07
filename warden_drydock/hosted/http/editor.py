@@ -95,6 +95,7 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
             or len(item["context"]) > 2000
             or "\n" in item["context"]
             or "\r" in item["context"]
+            or item["context"] != item["context"].strip()
         ):
             raise ValueError("invalid_connection_context")
     if not isinstance(value["content_digest"], str) or not re.fullmatch(r"[a-f0-9]{64}", value["content_digest"]): raise ValueError("invalid_content_digest")
@@ -204,13 +205,13 @@ def serialize_document(value: Mapping[str, Any]) -> str:
         lines.append(f"{field['field_id']}: {_format_frontmatter_value(scalar)}")
     lines += ["---", ""]
     for section in value["sections"]:
-        lines += [f"## {section['section_id']}", section["body"], ""]
+        lines += [f"## {section['section_id']}", normalize_text(section["body"])]
     if value["connections"]:
         lines += ["## Connections", ""]
         for item in value["connections"]:
             lines.append(f"<!-- drydock:connection-id={item['connection_id']} -->")
             lines.append(f"- `{item['relationship']}` -> [[{item['target_record_id']}]] (`{item['state']}`) — {item['context']}")
-    return normalize_text("\n".join(lines)).rstrip("\n") + "\n"
+    return normalize_text("\n".join(lines)) + "\n"
 
 
 def _heading_id(value: str) -> str:

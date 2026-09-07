@@ -13,7 +13,7 @@ const proposal = {
   contract_name: "editor_proposal_view", contract_version: 1, proposal_id: "proposal_editor", proposal_version: 1, campaign_id: "campaign_atlas",
   source_revision: headRevision, base_revision: headRevision, expected_campaign_head: headRevision, editor_workflow_version: 2,
   proposal_payload_digest: "d".repeat(64), mutation_kind: "edit", record_bindings: [{ campaign_id: "campaign_atlas", base_revision: headRevision, record_id: "record-one", record_digest: editorRecord.content_digest, expected_editor_workflow_version: 2 }],
-  core_proposal: { proposal: { status: "needs_review" } }, diff: { diff_digest: "e".repeat(64), cards: [{ change_id: "change_editor", kind: "record_updated", subject_record_id: "record-one", before: editorRecord, after: editedRecord, property_changes: [{ property: "displayed_name", before: "Station Keeper", after: "Edited Station Keeper" }], connection: null, resolution: null, derived_backlinks: [] }], affected_record_count: 1, authority_changes: [], visibility_changes: [{ change_id: "visibility_editor", record_id: "record-one", before: { audience: "warden", warden_only: true }, after: { audience: "players", warden_only: false }, audience_broadens: true }], unresolved_reference_count: 0, impact_digest: null, summary: "edit" },
+  core_proposal: { proposal: { status: "needs_review" } }, diff: { diff_digest: "e".repeat(64), cards: [{ change_id: "change_editor", kind: "record_updated", subject_record_id: "record-one", before: editorRecord, after: editedRecord, property_changes: [{ property: "displayed_name", before: "Station Keeper", after: "Edited Station Keeper" }], connection: null, resolution: null, derived_backlinks: [] }], affected_record_count: 1, authority_changes: [], visibility_changes: [{ change_id: "visibility_editor", record_id: "record-one", before: { audience: "warden", warden_only: true }, after: { audience: "players", warden_only: false }, audience_broadens: true }], unresolved_reference_count: 0, impact_digest: null, source_changes: [{ change_id: "change_editor", subject_record_id: "record-one", change_type: "update", before_source: "# Station Keeper\n", after_source: "# Edited Station Keeper\n" }], summary: "edit" },
   impact_digest: null, impact_binding: null, resolutions: [], validation: { status: "passed", validation_digest: "f".repeat(64), error_count: 0, findings: [] }, authority_outcome: [], visibility_outcome: [{ change_id: "visibility_editor", record_id: "record-one", before: { audience: "warden", warden_only: true }, after: { audience: "players", warden_only: false }, audience_broadens: true }], publication: { status: "not_published", published_revision: null },
 };
 
@@ -62,6 +62,8 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
   await expect(editor.getByRole("button", { name: "Add content section", exact: true })).toHaveCount(0);
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   await expect(editor.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
+  await expect(editor.getByRole("heading", { name: "Complete source before/after" })).toBeVisible();
+  await expect(editor.getByRole("heading", { name: "Before source" })).toBeVisible();
   await expect(page).toHaveURL(/proposal=proposal_editor&version=1$/);
   await page.reload();
   await expect(editor.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();

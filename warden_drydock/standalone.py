@@ -609,9 +609,9 @@ def create_entity(root: Path, kind: str, entity_id: str, name: str | None) -> Pa
     text = re.sub(r"(?m)^ownership:\s*.*$", "ownership: campaign", text, count=1)
     if name is not None:
         if re.search(r"(?m)^name:", text):
-            escaped_name = name.replace('"', '\\"')
+            escaped_name = json.dumps(name, ensure_ascii=False)
             text = re.sub(
-                r"(?m)^name:\s*.*$", f'name: "{escaped_name}"', text, count=1
+                r"(?m)^name:\s*.*$", lambda _match: f"name: {escaped_name}", text, count=1
             )
         text = re.sub(r"(?m)^# (Name|Adventure|Session)$", f"# {name}", text, count=1)
     destination.parent.mkdir(parents=True, exist_ok=True)

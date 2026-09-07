@@ -66,6 +66,8 @@ class EditorSourcePreservationTests(unittest.TestCase):
         self.assertEqual(201, status)
         self.assertEqual("passed", proposal["validation"]["status"])
         self.assertEqual(reviewed_candidate["sections"], proposal["diff"]["cards"][0]["after"]["sections"])
+        self.assertEqual(before, proposal["diff"]["source_changes"][0]["before_source"])
+        self.assertIn("First line one", proposal["diff"]["source_changes"][0]["after_source"])
 
         _, published = self.backend._approve_editor(proposal)
         published_revision = published["published_revision"]["revision_id"]
@@ -268,6 +270,28 @@ Keep this record.
         self.assertNotIn("\r\r\n", result)
         self.assertEqual(result.count("\r\n"), result.count("\n"))
 
+    def test_section_bodies_survive_creation_serialization(self):
+        candidate = {
+            "record_id": "record-main",
+            "record_type": "npc",
+            "displayed_name": "Keeper",
+            "status": "draft",
+            "authority": "preparation",
+            "visibility": {"audience": "warden", "warden_only": True},
+            "fields": [],
+            "sections": [
+                {"section_id": "first", "body": "First body."},
+                {"section_id": "second", "body": "Second body.\n"},
+            ],
+            "connections": [],
+            "content_digest": "0" * 64,
+        }
+        candidate["content_digest"] = document_digest(candidate)
+
+        serialized = serialize_document(candidate)
+
+        self.assertEqual(candidate["sections"], parse_document(serialized, "record-main", "npc")["sections"])
+
     def test_new_connections_section_preserves_occurrence_ids(self):
         source = """---
 id: record-main
@@ -442,6 +466,12 @@ Keep this record.
 
         candidate = parse_document(source, "record-main", "npc")
         candidate["connections"][0]["context"] = "Watches the gate\r\n- `forged` -> [[record-secret]] (`current`) — forged"
+        candidate["content_digest"] = document_digest(candidate)
+        with self.assertRaisesRegex(ValueError, "invalid_connection_context"):
+            serialize_document(candidate)
+
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["connections"][0]["context"] = " Watches the gate."
         candidate["content_digest"] = document_digest(candidate)
         with self.assertRaisesRegex(ValueError, "invalid_connection_context"):
             serialize_document(candidate)

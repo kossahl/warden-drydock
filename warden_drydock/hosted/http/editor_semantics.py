@@ -157,7 +157,10 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
         _fail("unsafe_binding", "proposal revision binding")
     _equal(value["source_revision"], value["base_revision"], "unsafe_binding", "source_revision")
     _equal(value["base_revision"], value["expected_campaign_head"], "unsafe_binding", "expected_campaign_head")
-    _equal(value["diff"]["diff_digest"], canonical_digest({key: value["diff"][key] for key in ("cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest")}), "idempotency_digest_conflict", "diff.diff_digest")
+    diff_digest_input = {key: value["diff"][key] for key in ("cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest")}
+    if "source_changes" in value["diff"]:
+        diff_digest_input["source_changes"] = value["diff"]["source_changes"]
+    _equal(value["diff"]["diff_digest"], canonical_digest(diff_digest_input), "idempotency_digest_conflict", "diff.diff_digest")
     _equal(core["diff_digest"], value["diff"]["diff_digest"], "unsafe_binding", "core_proposal.diff_digest")
     validation = value["validation"]
     core_validation = value["core_proposal"]["validation"]
