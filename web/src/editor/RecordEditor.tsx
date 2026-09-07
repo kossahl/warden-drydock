@@ -67,13 +67,21 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   const correctionView = useRef<EditorRecordView | null>(null);
   const correctionImpact = useRef<EditorRemovalImpact | null>(null);
   const correctionBase = useRef<{ view: EditorRecordView; impact: EditorRemovalImpact | null } | null>(null);
+  const correctionRequest = useRef(0);
   const errorHeading = useRef<HTMLHeadingElement>(null);
   const dialogHeading = useRef<HTMLHeadingElement>(null);
   const focusEditorError = useRef(false);
   const loadRequest = useRef<{ sequence: number; campaignId: string; revisionId: string; recordId: string } | null>(null);
+  const editorIdentity = `${campaignId}\u0000${revisionId}\u0000${recordId}`;
+  const editorIdentityRef = useRef(editorIdentity);
+  editorIdentityRef.current = editorIdentity;
+  const proposalIdentity = proposal ? `${proposal.proposal_id}\u0000${proposal.proposal_version}` : null;
+  const proposalIdentityRef = useRef<string | null>(proposalIdentity);
+  proposalIdentityRef.current = proposalIdentity;
 
   const load = (sourceRevisionId = revisionId) => {
-    setError(""); setMessage(""); setConflict(false); setProposal(null); setImpact(null); setCorrectionMode(false); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
+    correctionRequest.current += 1;
+    setBusy(false); setError(""); setMessage(""); setConflict(false); setProposal(null); setImpact(null); setCorrectionMode(false); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
     const sourceRecordId = isCreate ? "campaign-main" : recordId;
     const request = { sequence: (loadRequest.current?.sequence ?? 0) + 1, campaignId, revisionId: sourceRevisionId, recordId: sourceRecordId };
     loadRequest.current = request;
@@ -174,6 +182,15 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   };
   const startCorrection = async () => {
     if (!proposal || busy) return;
+    const request = {
+      sequence: correctionRequest.current + 1,
+      editorIdentity,
+      proposalIdentity: `${proposal.proposal_id}\u0000${proposal.proposal_version}`,
+    };
+    correctionRequest.current = request.sequence;
+    const isCurrentRequest = () => correctionRequest.current === request.sequence
+      && editorIdentityRef.current === request.editorIdentity
+      && proposalIdentityRef.current === request.proposalIdentity;
     correctionDraft.current = draft ? clone(draft) : null;
     correctionResolutions.current = resolutions.map((resolution) => ({ ...resolution }));
     correctionView.current = view;
@@ -183,12 +200,15 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       const proposalRecordId = proposal.record_bindings[0]?.record_id;
       const sourceRecordId = proposal.mutation_kind === "create" ? "campaign-main" : proposalRecordId ?? draft?.record_id ?? recordId;
       const base = await httpEditorApi.read(campaignId, proposal.base_revision.revision_id, sourceRecordId);
+      if (!isCurrentRequest()) return;
       const currentHead = base.viewed_revision.revision_id === base.head_revision.revision_id
         ? base
         : await httpEditorApi.read(campaignId, base.head_revision.revision_id, sourceRecordId);
+      if (!isCurrentRequest()) return;
       const currentImpact = proposal.mutation_kind === "remove"
         ? await httpEditorApi.impact(campaignId, currentHead.head_revision.revision_id, sourceRecordId)
         : null;
+      if (!isCurrentRequest()) return;
       correctionBase.current = { view: currentHead, impact: currentImpact };
       const rebasingStaleProposal = currentHead.head_revision.revision_id !== proposal.base_revision.revision_id;
       if (proposal.mutation_kind === "create" || !rebasingStaleProposal) {
@@ -201,9 +221,10 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       }
       setView(currentHead); setImpact(currentImpact); setCorrectionMode(true); setMessage("Correction mode: edit the candidate from the current head, then submit a new proposal version.");
     } catch (reason) {
+      if (!isCurrentRequest()) return;
       correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null;
       setError(`Correction could not start (${errorText(reason)}). Reload the current head and try again.`); focusEditorError.current = true;
-    } finally { setBusy(false); }
+    } finally { if (isCurrentRequest()) setBusy(false); }
   };
   const cancelCorrection = () => {
     if (!correctionMode) return;

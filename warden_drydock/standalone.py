@@ -240,7 +240,14 @@ def frontmatter(text: str) -> dict[str, str]:
     for line in text[4:end].splitlines():
         if ":" in line and not line.startswith(" "):
             key, value = line.split(":", 1)
-            result[key.strip()] = value.strip().strip('"')
+            value = value.strip()
+            if value.startswith('"') and value.endswith('"'):
+                try:
+                    decoded = json.loads(value)
+                except json.JSONDecodeError:
+                    decoded = value[1:-1]
+                value = decoded if isinstance(decoded, str) else value[1:-1]
+            result[key.strip()] = value
     return result
 
 

@@ -116,6 +116,33 @@ class EditorReceiptRecoveryTests(unittest.TestCase):
             getattr(self.app, method)(*stale)
         self.assertEqual("workflow_conflict", failure.exception.payload["error"]["code"])
 
+    def test_editor_proposal_releases_claim_when_atomic_cas_does_not_commit(self):
+        for failure in (False, RuntimeError("before commit")):
+            with self.subTest(failure=type(failure).__name__):
+                self.setUp()
+                method, args = self._request("edit")
+                add = self.app.proposal_repository.add_editor
+                calls = 0
+
+                def fail_once(*positional, **keywords):
+                    nonlocal calls
+                    calls += 1
+                    if calls == 1:
+                        if isinstance(failure, BaseException):
+                            raise failure
+                        return failure
+                    return add(*positional, **keywords)
+
+                with mock.patch.object(self.app.proposal_repository, "add_editor", side_effect=fail_once):
+                    if failure is False:
+                        with self.assertRaises(HTTPFailure):
+                            getattr(self.app, method)(*deepcopy(args))
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            getattr(self.app, method)(*deepcopy(args))
+                    status, result = getattr(self.app, method)(*deepcopy(args))
+                self.assertEqual((201, "edit"), (status, result["diff"]["summary"]))
+
     def test_approval_retries_in_same_process_after_staging_failure(self):
         _, _, (_, proposal) = self._edit()
         payload = self._editor_approval_payload(proposal)

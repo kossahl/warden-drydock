@@ -1768,7 +1768,15 @@ class SliceApplication:
         item = ProposalVersion(proposal_id, version, campaign_id, revision_id, tuple(changes), digest, value["proposal_payload_digest"], editor_metadata=value)
         add_editor = getattr(self.proposal_repository, "add_editor", None)
         if add_editor is not None:
-            if not add_editor(item, campaign_id, current):
+            try:
+                committed = add_editor(item, campaign_id, current)
+            except Exception:
+                # A failed atomic CAS rolls back the proposal transaction; the
+                # receipt claim must not make an exact retry look in progress.
+                self._release(operation_name, operation["idempotency_key"], operation["payload_digest"])
+                raise
+            if not committed:
+                self._release(operation_name, operation["idempotency_key"], operation["payload_digest"])
                 raise HTTPFailure(409, "unsafe_binding", "workflow_conflict", "editor_workflow", self._request_id(payload))
         else:
             self.proposal_repository.add(item)

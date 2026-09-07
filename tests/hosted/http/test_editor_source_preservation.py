@@ -113,6 +113,27 @@ class EditorSourcePreservationTests(unittest.TestCase):
             )["sections"],
         )
 
+    def test_quoted_frontmatter_values_survive_real_publication_readback(self):
+        revision = self.app.workflow.head("campaign_alpha")
+        view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
+        candidate = deepcopy(view["record"])
+        candidate["displayed_name"] = 'Keeper "quoted" \\ path'
+        next(field for field in candidate["fields"] if field["field_id"] == "system")["value"] = 'mothership "quoted" \\ path'
+        candidate["content_digest"] = document_digest(candidate)
+
+        _, reviewed_candidate, (status, proposal) = self._edit_candidate(
+            candidate, key="idem_quoted_frontmatter_publication"
+        )
+        self.assertEqual(201, status)
+        _, published = self.backend._approve_editor(proposal)
+        published_revision = published["published_revision"]["revision_id"]
+        readback = self.app.editor_record_read(
+            "campaign_alpha", published_revision, "campaign-main"
+        )[1]["record"]
+
+        self.assertEqual(reviewed_candidate["displayed_name"], readback["displayed_name"])
+        self.assertEqual(reviewed_candidate["fields"], readback["fields"])
+
     def test_trailing_newlines_survive_multiple_crlf_sections_before_connections(self):
         source = (
             "---\r\n"

@@ -98,6 +98,41 @@ test("correction validation failure preserves entered content and blocks approva
   expect(failedRequest.candidate?.displayed_name).toBe("Entered correction survives validation");
 });
 
+test("stale correction reads cannot overwrite a record after SPA navigation", async ({ page }) => {
+  await installAtlasApi(page);
+  let editorReads = 0;
+  let releaseCorrectionRead!: () => void;
+  const correctionReadReleased = new Promise<void>((resolve) => { releaseCorrectionRead = resolve; });
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      editorReads += 1;
+      if (editorReads > 1) await correctionReadReleased;
+      return json(route, view(headRevision, headRevision, originalRecord));
+    }
+    if (request.method() === "GET" && path.endsWith("/records/record-two/editor")) {
+      return json(route, view(headRevision, headRevision, { ...originalRecord, record_id: "record-two", record_type: "ship", displayed_name: "Legacy Ship", content_digest: "b".repeat(64) }));
+    }
+    if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) return json(route, proposal(headRevision, { ...originalRecord, displayed_name: "Edited before proposal" }), 201);
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const panel = editor(page);
+  await panel.getByRole("button", { name: "Save as proposal" }).click();
+  const correctionReadStarted = page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname.endsWith("/records/record-one/editor"));
+  await panel.getByRole("button", { name: "Create correction/rebase" }).click();
+  await correctionReadStarted;
+  await page.getByRole("link", { name: "Legacy Ship" }).first().click();
+  await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-two\?revision=revision_two$/);
+  await expect(panel.getByLabel("Record ID")).toHaveValue("record-two");
+  await expect(panel.getByLabel("Displayed name")).toHaveValue("Legacy Ship");
+  releaseCorrectionRead();
+  await expect(panel.getByLabel("Record ID")).toHaveValue("record-two");
+  await expect(panel.getByLabel("Displayed name")).toHaveValue("Legacy Ship");
+});
+
 test("stale correction binds to the loaded head even if a later head appears before submit", async ({ page }) => {
   await installAtlasApi(page);
   let latestHead = currentRevision;
