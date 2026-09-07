@@ -144,12 +144,13 @@ def _connection_markers(content: str) -> dict[int, str]:
 
 
 def parse_document(content: str, record_id: str, record_type: str | None = None) -> dict[str, Any]:
-    metadata = frontmatter(content)
+    normalized_content = content.replace("\r\n", "\n").replace("\r", "\n")
+    metadata = frontmatter(normalized_content)
     status = metadata.get("status", "draft")
-    body = content
-    if content.startswith("---\n"):
-        end = content.find("\n---", 4)
-        if end >= 0: body = content[end + 4:].lstrip("\n")
+    body = normalized_content
+    if normalized_content.startswith("---\n"):
+        end = normalized_content.find("\n---", 4)
+        if end >= 0: body = normalized_content[end + 4:].lstrip("\n")
     sections: list[dict[str, str]] = []
     current = None
     in_connections = False
@@ -166,8 +167,8 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
         elif current is not None and not in_connections:
             current["body"] += ("\n" if current["body"] else "") + line
     if not sections: sections = [{"section_id": "summary", "body": body.strip()}]
-    connection_markers = _connection_markers(content)
-    connections, _ = parse_connections(content, source_id=record_id, path=None)  # type: ignore[arg-type]
+    connection_markers = _connection_markers(normalized_content)
+    connections, _ = parse_connections(normalized_content, source_id=record_id, path=None)  # type: ignore[arg-type]
     conn = []
     for index, item in enumerate(connections, 1):
         connection_id = connection_markers.get(item.line, f"connection_{index}")
@@ -383,7 +384,11 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         if lines and lines[-1].strip():
             lines.append(newline)
         lines.extend([f"## Connections{newline}", newline])
-        lines.extend(f"{_connection_line(item)}{newline}" for item in new["connections"])
+        for item in new["connections"]:
+            lines.extend([
+                f"<!-- drydock:connection-id={item['connection_id']} -->{newline}",
+                f"{_connection_line(item)}{newline}",
+            ])
     # Candidate text may arrive from a browser with CRLF already embedded in a
     # section body.  Normalize the assembled result before restoring the source
     # convention so CRLF never becomes CRCRLF.

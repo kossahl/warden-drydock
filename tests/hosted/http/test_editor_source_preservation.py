@@ -243,6 +243,59 @@ Keep this record.
         self.assertNotIn("\r\r\n", result)
         self.assertEqual(result.count("\r\n"), result.count("\n"))
 
+    def test_crlf_frontmatter_fields_survive_editor_mutation(self):
+        source = (
+            "---\r\n"
+            "id: record-main\r\n"
+            "type: npc\r\n"
+            "name: Keeper\r\n"
+            "status: draft\r\n"
+            "visibility: warden\r\n"
+            "system: mothership\r\n"
+            "ownership: campaign\r\n"
+            "---\r\n\r\n"
+            "## Summary\r\nKeep this record.\r\n"
+        )
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["displayed_name"] = "Updated Keeper"
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+        round_tripped = parse_document(result, "record-main", "npc")
+
+        self.assertEqual(candidate["fields"], round_tripped["fields"])
+        self.assertEqual("Updated Keeper", round_tripped["displayed_name"])
+        self.assertNotIn("\r\r\n", result)
+        self.assertEqual(result.count("\r\n"), result.count("\n"))
+
+    def test_new_connections_section_preserves_occurrence_ids(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Summary
+Keep this record.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["connections"] = [{
+            "connection_id": "custom_occurrence",
+            "target_record_id": "record-gate",
+            "relationship": "guards",
+            "state": "current",
+            "context": "Watches the gate.",
+        }]
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+        round_tripped = parse_document(result, "record-main", "npc")
+
+        self.assertIn("<!-- drydock:connection-id=custom_occurrence -->", result)
+        self.assertEqual(candidate["connections"], round_tripped["connections"])
+
     def test_replacing_different_length_sections_preserves_unrelated_bytes_and_connections(self):
         source = """---
 id: record-main

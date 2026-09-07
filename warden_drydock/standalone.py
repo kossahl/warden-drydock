@@ -254,6 +254,7 @@ def _frontmatter_scalar(value: str, key: str) -> object:
 
 
 def frontmatter(text: str) -> dict[str, object]:
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     if not text.startswith("---\n"):
         return {}
     end = text.find("\n---", 4)

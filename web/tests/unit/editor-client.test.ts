@@ -21,6 +21,8 @@ describe("record editor client bindings", () => {
   it("matches Python exponent formatting for floating-point request values", async () => {
     expect(await digest({ number: 1e-7 })).toBe("ebdf2f1d26e9cdfbd84490d407c41600abee1cfe8792a692d830accba5158fdc");
     expect(await digest({ number: 1.23e-6 })).toBe("6c52039bf8c1802b0613c78e6b56d1568c8133fd61f24fadfebab0f6f123f87e");
+    expect(await digest({ number: 1e16 })).toBe("dfb80c069e7dfe29608ae611c5574d1d197e619a2b03005e43d675ef644ce2ac");
+    expect(await digest({ number: -0 })).toBe("37e0043fa06b9c3790cd32d713dfda30e7ce8217f30ef142d2732c18ea0024d2");
   });
 
   it("allocates unique public connection IDs after removal", () => {
