@@ -23,6 +23,9 @@ from .contracts import canonical_digest, normalize_text, text_digest
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _PUBLIC = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+_CONNECTION_MARKER = re.compile(
+    r"^\s*<!--\s*drydock:connection-id=(?P<id>[a-z][a-z0-9]*(?:_[a-z0-9]+)*)\s*-->\s*$"
+)
 _STATUSES = {"idea", "draft", "review", "canon", "revealed", "archived", "accepted"}
 
 
@@ -112,6 +115,34 @@ def document_digest(value: Mapping[str, Any]) -> str:
     ).encode("utf-8")).hexdigest()
 
 
+def _connection_markers(content: str) -> dict[int, str]:
+    """Read editor-only occurrence IDs from the first typed Connections block."""
+    markers: dict[int, str] = {}
+    in_connections = False
+    pending: str | None = None
+    for line_number, line in enumerate(content.splitlines(), 1):
+        heading = re.match(r"^##\s+(.+?)\s*$", line)
+        if heading:
+            if in_connections:
+                break
+            in_connections = heading.group(1).strip().casefold() == "connections"
+            pending = None
+            continue
+        if not in_connections:
+            continue
+        marker = _CONNECTION_MARKER.fullmatch(line)
+        if marker:
+            pending = marker.group("id")
+            continue
+        if line.lstrip().startswith("-"):
+            if pending is not None:
+                markers[line_number] = pending
+            pending = None
+        elif line.strip() and not line.lstrip().startswith("<!--"):
+            pending = None
+    return markers
+
+
 def parse_document(content: str, record_id: str, record_type: str | None = None) -> dict[str, Any]:
     metadata = frontmatter(content)
     status = metadata.get("status", "draft")
@@ -135,8 +166,15 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
         elif current is not None and not in_connections:
             current["body"] += ("\n" if current["body"] else "") + line
     if not sections: sections = [{"section_id": "summary", "body": body.strip()}]
+    connection_markers = _connection_markers(content)
     connections, _ = parse_connections(content, source_id=record_id, path=None)  # type: ignore[arg-type]
-    conn = [{"connection_id": f"connection_{index}", "target_record_id": item.target_id, "relationship": item.relationship, "state": item.state, "context": item.context} for index, item in enumerate(connections, 1)]
+    conn = []
+    for index, item in enumerate(connections, 1):
+        connection_id = connection_markers.get(item.line, f"connection_{index}")
+        _id(connection_id, public=True)
+        conn.append({"connection_id": connection_id, "target_record_id": item.target_id,
+                     "relationship": item.relationship, "state": item.state,
+                     "context": item.context})
     fields = [{"field_id": key, "value": value} for key, value in metadata.items() if key not in {"id", "type", "name", "status", "visibility", "warden_only"}]
     audience = metadata.get("visibility", "warden")
     raw_warden_only = metadata.get("warden_only")
@@ -169,6 +207,7 @@ def serialize_document(value: Mapping[str, Any]) -> str:
     if value["connections"]:
         lines += ["## Connections", ""]
         for item in value["connections"]:
+            lines.append(f"<!-- drydock:connection-id={item['connection_id']} -->")
             lines.append(f"- `{item['relationship']}` -> [[{item['target_record_id']}]] (`{item['state']}`) — {item['context']}")
     return normalize_text("\n".join(lines)).rstrip("\n") + "\n"
 
@@ -331,8 +370,14 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
     if connection_index is not None:
         if old["connections"] != new["connections"]:
             next_heading = next((i for i in range(connection_index + 1, len(lines)) if re.match(r"^##\s+", lines[i])), len(lines))
-            kept = [line for line in lines[connection_index + 1:next_heading] if not line.lstrip().startswith("-")]
-            connection_lines = [f"{_connection_line(item)}{newline}" for item in new["connections"]]
+            kept = [line for line in lines[connection_index + 1:next_heading]
+                    if not line.lstrip().startswith("-") and not _CONNECTION_MARKER.fullmatch(line.rstrip("\r\n"))]
+            connection_lines = []
+            for item in new["connections"]:
+                connection_lines.extend([
+                    f"<!-- drydock:connection-id={item['connection_id']} -->{newline}",
+                    f"{_connection_line(item)}{newline}",
+                ])
             lines[connection_index + 1:next_heading] = kept[:1] + connection_lines + kept[1:]
     elif new["connections"]:
         if lines and lines[-1].strip():

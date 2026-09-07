@@ -9,6 +9,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 from warden_drydock.hosted.engine.models import ExactTextChange, Status, exact_diff_digest
+from warden_drydock.hosted.http.contracts import canonical_digest
 from warden_drydock.hosted.revisions.models import SnapshotManifest, StaleHeadError
 
 
@@ -29,6 +30,19 @@ class ProposalStatus(str, Enum):
 _PUBLIC_ID = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 _DOMAIN_ID = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
+
+
+def _retire_editor_metadata(metadata):
+    if not isinstance(metadata, dict) or metadata.get("contract_name") != "editor_proposal_view":
+        return metadata
+    retired = json.loads(json.dumps(metadata))
+    retired["core_proposal"]["proposal"]["status"] = "rejected"
+    retired["core_proposal"]["approval_binding"] = None
+    retired["publication"] = {"status": "not_published", "published_revision": None}
+    retired["proposal_payload_digest"] = canonical_digest({
+        key: value for key, value in retired.items() if key != "proposal_payload_digest"
+    })
+    return retired
 
 
 def _require_public_id(value, field):
@@ -222,7 +236,13 @@ class InMemoryProposalRepository:
                 prior = self.items[(correction["proposal_id"], correction["proposal_version"])]
                 if prior.status not in (ProposalStatus.DRAFT, ProposalStatus.CONFLICT) or self.next_version(item.proposal_id) != prior.version + 1:
                     return False
-                self.replace_status(prior, ProposalStatus.REJECTED)
+                retired = replace(
+                    prior,
+                    status=ProposalStatus.REJECTED,
+                    editor_metadata=_retire_editor_metadata(prior.editor_metadata),
+                )
+                self.items[(prior.proposal_id, prior.version)] = retired
+                self.audit.append((prior.proposal_id, prior.version, ProposalStatus.REJECTED.value))
             self.items[(item.proposal_id, item.version)] = item
             self._created_at[(item.proposal_id, item.version)] = datetime(2000, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=len(self._created_at))
             self._editor_workflow[campaign_id] = expected_version + 1

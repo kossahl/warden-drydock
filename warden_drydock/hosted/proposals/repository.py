@@ -7,7 +7,7 @@ import json
 from warden_drydock.hosted.engine.models import ChangeKind, ExactTextChange
 from warden_drydock.hosted.revisions.models import SnapshotManifest
 
-from .service import ProposalStatus, ProposalVersion
+from .service import ProposalStatus, ProposalVersion, _retire_editor_metadata
 
 
 def _encode_changes(changes):
@@ -87,8 +87,9 @@ class PostgresProposalRepository:
                 prior = self._select(cursor, correction["proposal_id"], correction["proposal_version"], lock=True)
                 if prior is None or prior.status not in (ProposalStatus.DRAFT, ProposalStatus.CONFLICT) or item.version != prior.version + 1:
                     return False
-                cursor.execute("UPDATE hosted_proposal_version SET status='rejected' WHERE proposal_id=%s AND version=%s", (prior.proposal_id, prior.version))
-                self._audit(cursor, replace(prior, status=ProposalStatus.REJECTED), "rejected")
+                retired_metadata = _retire_editor_metadata(prior.editor_metadata)
+                cursor.execute("UPDATE hosted_proposal_version SET status='rejected', editor_metadata=%s::jsonb WHERE proposal_id=%s AND version=%s", (json.dumps(retired_metadata), prior.proposal_id, prior.version))
+                self._audit(cursor, replace(prior, status=ProposalStatus.REJECTED, editor_metadata=retired_metadata), "rejected")
             cursor.execute("INSERT INTO hosted_proposal_version(proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,editor_metadata) VALUES(%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)",
                 (item.proposal_id, item.version, item.campaign_id, item.base_revision,
                  json.dumps(_encode_changes(item.changes)), item.diff_digest, item.payload_digest,

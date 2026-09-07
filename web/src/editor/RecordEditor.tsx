@@ -84,6 +84,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   const correctionBase = useRef<{ view: EditorRecordView; impact: EditorRemovalImpact | null } | null>(null);
   const correctionRequest = useRef(0);
   const proposalRequest = useRef(0);
+  const impactRequest = useRef(0);
   const errorHeading = useRef<HTMLHeadingElement>(null);
   const dialogHeading = useRef<HTMLHeadingElement>(null);
   const approvalDialogRef = useRef<HTMLDialogElement>(null);
@@ -100,6 +101,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   const load = (sourceRevisionId = revisionId) => {
     correctionRequest.current += 1;
     proposalRequest.current += 1;
+    impactRequest.current += 1;
     setBusy(false); setError(""); setMessage(""); setConflict(false); setProposal(null); setImpact(null); setCorrectionMode(false); setCorrectionParentRevision(null); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
     const sourceRecordId = isCreate ? "campaign-main" : recordId;
     const request = { sequence: (loadRequest.current?.sequence ?? 0) + 1, campaignId, revisionId: sourceRevisionId, recordId: sourceRecordId };
@@ -157,6 +159,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   useEffect(() => () => {
     correctionRequest.current += 1;
     proposalRequest.current += 1;
+    impactRequest.current += 1;
     loadRequest.current = null;
   }, []);
   useEffect(() => {
@@ -219,10 +222,24 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   });
   const startRemove = async () => {
     if (!view || !draft || !view.editable || !validate()) return;
+    const request = {
+      sequence: impactRequest.current + 1,
+      editorIdentity,
+      loadSequence: loadRequest.current?.sequence ?? null,
+    };
+    impactRequest.current = request.sequence;
+    const isCurrentRequest = () => impactRequest.current === request.sequence
+      && editorIdentityRef.current === request.editorIdentity
+      && loadRequest.current?.sequence === request.loadSequence;
     setBusy(true); setError(""); setMessage(""); setConflict(false);
-    try { const value = await httpEditorApi.impact(campaignId, view.head_revision.revision_id, draft.record_id); setImpact(value); setMode("remove"); setResolutions(value.incoming_references.map((reference) => ({ reference_id: reference.reference_id, action: "", replacement_target_record_id: null }))); setMessage("Resolve every incoming typed connection before submitting removal."); }
-    catch (reason) { setConflict(staleCategories.includes(errorCategory(reason))); focusEditorError.current = true; setError(`Removal impact unavailable (${errorText(reason)}).`); }
-    finally { setBusy(false); }
+    try {
+      const value = await httpEditorApi.impact(campaignId, view.head_revision.revision_id, draft.record_id);
+      if (!isCurrentRequest()) return;
+      setImpact(value); setMode("remove"); setResolutions(value.incoming_references.map((reference) => ({ reference_id: reference.reference_id, action: "", replacement_target_record_id: null }))); setMessage("Resolve every incoming typed connection before submitting removal.");
+    } catch (reason) {
+      if (!isCurrentRequest()) return;
+      setConflict(staleCategories.includes(errorCategory(reason))); focusEditorError.current = true; setError(`Removal impact unavailable (${errorText(reason)}).`);
+    } finally { if (isCurrentRequest()) setBusy(false); }
   };
   const save = async () => {
     if (mode === "remove" && !removalReady) return;
@@ -379,5 +396,7 @@ function ConnectionEditor({ campaignId, revision, connection, error, onChange, o
 function RemovalResolution({ campaignId, revision, impact, resolutions, setResolutions, disabled }: { campaignId: string; revision: RevisionRef; impact: EditorRemovalImpact; resolutions: Array<Record<string, unknown>>; setResolutions: (value: Array<Record<string, unknown>>) => void; disabled: boolean }) { return <section aria-labelledby="removal-impact-heading" className="editor-impact"><h3 id="removal-impact-heading">Removal impact and resolutions</h3><p>{impact.incoming_references.length} incoming typed connection(s) require a decision.</p>{impact.incoming_references.map((reference) => { const current = resolutions.find((item) => item.reference_id === reference.reference_id); const action = current?.action === "accept_unresolved" && !reference.permitted_unresolved ? "" : String(current?.action ?? ""); return <fieldset key={reference.reference_id} disabled={disabled}><legend>{reference.source_record_id} · {reference.relationship}</legend><label htmlFor={`resolution-${reference.reference_id}`}>Resolution for {reference.reference_id}</label><select id={`resolution-${reference.reference_id}`} required value={action} onChange={(event) => setResolutions(resolutions.map((item) => item.reference_id === reference.reference_id ? { reference_id: reference.reference_id, action: event.target.value, replacement_target_record_id: event.target.value === "redirect" ? "" : null } : item))}><option value="" disabled>Choose a resolution</option><option value="remove_reference">Remove reference</option><option value="redirect">Redirect reference</option>{reference.permitted_unresolved && <option value="accept_unresolved">Accept unresolved</option>}</select>{action === "redirect" && <RecordPicker campaignId={campaignId} revision={revision} label={`Replacement target for ${reference.reference_id}`} value={String(current?.replacement_target_record_id ?? "")} onChange={(target) => setResolutions(resolutions.map((item) => item.reference_id === reference.reference_id ? { ...item, replacement_target_record_id: target } : item))} />}</fieldset>; })}</section>; }
 function ProposalReview({ proposal, priorRevision, approve, reject, startCorrection, correctionMode, busy }: { proposal: EditorProposal; priorRevision: RevisionRef | null; approve: () => void; reject: () => void; startCorrection: () => void; correctionMode: boolean; busy: boolean }) {
   const correctionOf = correctionReference(proposal);
-  return <section className="editor-review" aria-labelledby="editor-review-heading"><h3 id="editor-review-heading">Exact proposal review</h3><p><strong>{proposal.diff.summary}</strong> · proposal <code>{proposal.proposal_id}</code>, version {proposal.proposal_version}</p>{correctionOf && <p>Correction of {priorRevision ? <a href={editorProposalVersionLocation(correctionOf.proposal_id, correctionOf.proposal_version, priorRevision.revision_id)}>proposal <code>{correctionOf.proposal_id}</code>, version {correctionOf.proposal_version}</a> : <>proposal <code>{correctionOf.proposal_id}</code>, version {correctionOf.proposal_version}</>}.</p>}<p>Base revision <code>{proposal.base_revision.revision_id}</code> · diff <code>{proposal.diff.diff_digest}</code></p><p>Validation: <strong>{proposal.validation.status}</strong> ({proposal.validation.error_count} errors)</p>{correctionMode && <p role="status">Editing a correction. The original proposal remains unchanged until the correction is submitted.</p>}{proposal.validation.findings.length > 0 && <ul>{proposal.validation.findings.map((finding) => <li key={finding.finding_id}>{finding.severity}: {finding.code} at {finding.location}</li>)}</ul>}<section className="diff" role="region" aria-labelledby="editor-diff-heading"><h4 id="editor-diff-heading">Exact field, section, and connection change cards</h4>{proposal.diff.cards.map((card, index) => <article key={String(card.change_id ?? index)} aria-labelledby={`editor-card-${index}`}><h5 id={`editor-card-${index}`}>{String(card.kind ?? "Change")} · {String(card.subject_record_id)}</h5><pre>{JSON.stringify(card, null, 2)}</pre></article>)}</section><div className="actions"><button type="button" disabled={busy || correctionMode} onClick={reject}>Reject exact proposal</button><button type="button" disabled={busy || correctionMode} onClick={startCorrection}>Create correction/rebase</button><button type="button" className="primary" disabled={busy || correctionMode || proposal.validation.status !== "passed" || proposal.validation.error_count !== 0} onClick={approve}>Approve and publish exact proposal</button></div></section>;
+  const status = (proposal.core_proposal as { proposal?: { status?: string } } | undefined)?.proposal?.status ?? "needs_review";
+  const actionable = status === "needs_review";
+  return <section className="editor-review" aria-labelledby="editor-review-heading"><h3 id="editor-review-heading">Exact proposal review</h3><p><strong>{proposal.diff.summary}</strong> · proposal <code>{proposal.proposal_id}</code>, version {proposal.proposal_version}</p>{correctionOf && <p>Correction of {priorRevision ? <a href={editorProposalVersionLocation(correctionOf.proposal_id, correctionOf.proposal_version, priorRevision.revision_id)}>proposal <code>{correctionOf.proposal_id}</code>, version {correctionOf.proposal_version}</a> : <>proposal <code>{correctionOf.proposal_id}</code>, version {correctionOf.proposal_version}</>}.</p>}<p>Base revision <code>{proposal.base_revision.revision_id}</code> · diff <code>{proposal.diff.diff_digest}</code></p><p>Status: <strong>{status}</strong>{!actionable && " · This proposal is no longer actionable."}</p><p>Validation: <strong>{proposal.validation.status}</strong> ({proposal.validation.error_count} errors)</p>{correctionMode && <p role="status">Editing a correction. The original proposal remains unchanged until the correction is submitted.</p>}{proposal.validation.findings.length > 0 && <ul>{proposal.validation.findings.map((finding) => <li key={finding.finding_id}>{finding.severity}: {finding.code} at {finding.location}</li>)}</ul>}<section className="diff" role="region" aria-labelledby="editor-diff-heading"><h4 id="editor-diff-heading">Exact field, section, and connection change cards</h4>{proposal.diff.cards.map((card, index) => <article key={String(card.change_id ?? index)} aria-labelledby={`editor-card-${index}`}><h5 id={`editor-card-${index}`}>{String(card.kind ?? "Change")} · {String(card.subject_record_id)}</h5><pre>{JSON.stringify(card, null, 2)}</pre></article>)}</section><div className="actions"><button type="button" disabled={busy || correctionMode || !actionable} onClick={reject}>Reject exact proposal</button><button type="button" disabled={busy || correctionMode || !actionable} onClick={startCorrection}>Create correction/rebase</button><button type="button" className="primary" disabled={busy || correctionMode || !actionable || proposal.validation.status !== "passed" || proposal.validation.error_count !== 0} onClick={approve}>Approve and publish exact proposal</button></div></section>;
 }

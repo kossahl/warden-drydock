@@ -316,6 +316,33 @@ Keep this record.
         self.assertEqual(candidate["displayed_name"], round_tripped["displayed_name"])
         self.assertEqual(candidate["connections"], round_tripped["connections"])
 
+    def test_removed_connection_keeps_surviving_occurrence_id(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Summary
+Keep this record.
+
+## Connections
+
+- `guards` -> [[record-gate]] (`current`) — Watches the gate.
+- `visits` -> [[record-hall]] (`current`) — Visits the hall.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["connections"] = candidate["connections"][1:]
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+        round_tripped = parse_document(result, "record-main", "npc")
+
+        self.assertEqual("connection_2", candidate["connections"][0]["connection_id"])
+        self.assertEqual(candidate["connections"], round_tripped["connections"])
+
     def test_serialized_name_and_connection_context_reject_line_breaks(self):
         source = """---
 id: record-main

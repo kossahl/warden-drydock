@@ -1781,6 +1781,12 @@ class SliceApplication:
         else:
             self.proposal_repository.add(item)
             self._editor_workflow[campaign_id] = current + 1
+        if correction_of is not None:
+            prior_key = (correction_of["proposal_id"], correction_of["proposal_version"])
+            prior_stored = self._editor_proposals.get(prior_key)
+            prior_item = self.proposal_repository.get(*prior_key)
+            if prior_stored is not None and isinstance(prior_item.editor_metadata, dict):
+                prior_stored["value"] = prior_item.editor_metadata
         self._editor_proposals[(proposal_id, version)] = {"value": value, "change": change, "campaign_id": campaign_id, "base": revision_id, "workflow": current + 1}
         self._persist_editor_state()
         self._store(operation_name, operation["idempotency_key"], operation["payload_digest"], 201, value)

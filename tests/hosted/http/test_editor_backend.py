@@ -547,6 +547,10 @@ Preserve this unrelated section.
         self.assertEqual(current_revision, corrected["base_revision"]["revision_id"])
         self.assertEqual("Edited Campaign", corrected["diff"]["cards"][0]["after"]["displayed_name"])
         self.assertEqual(old_revision, self.app.proposal_repository.get(proposal["proposal_id"], 1).base_revision)
+        retired = self.app.proposal_repository.get(proposal["proposal_id"], 1)
+        self.assertEqual(ProposalStatus.REJECTED, retired.status)
+        self.assertEqual("rejected", retired.editor_metadata["core_proposal"]["proposal"]["status"])
+        self.assertEqual("rejected", self.app.editor_proposal_read(proposal["proposal_id"], 1)[1]["core_proposal"]["proposal"]["status"])
 
     def test_published_proposal_read_is_schema_and_semantically_valid(self):
         _, _, (_, proposal) = self._edit("idem_published_read")

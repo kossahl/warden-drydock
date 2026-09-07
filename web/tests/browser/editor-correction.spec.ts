@@ -167,6 +167,61 @@ test("stale proposal responses cannot install a proposal after SPA navigation", 
   await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toHaveCount(0);
 });
 
+test("stale removal-impact responses cannot switch the editor after SPA navigation", async ({ page }) => {
+  await installAtlasApi(page);
+  let releaseImpact!: () => void;
+  let impactStarted!: () => void;
+  const impactReleased = new Promise<void>((resolve) => { releaseImpact = resolve; });
+  const impactRequestStarted = new Promise<void>((resolve) => { impactStarted = resolve; });
+  const impact = {
+    contract_name: "editor_removal_impact", contract_version: 1,
+    binding: { campaign_id: "campaign_atlas", base_revision: headRevision, record_id: "record-one", record_digest: originalRecord.content_digest, expected_editor_workflow_version: 1 },
+    impact_digest: "i".repeat(64), record: originalRecord, outgoing_connections: [], incoming_references: [],
+    backlink_policy: "server_derived_from_typed_connections",
+  };
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) return json(route, view(headRevision, headRevision, originalRecord));
+    if (request.method() === "GET" && path.endsWith("/records/record-two/editor")) return json(route, view(headRevision, headRevision, { ...originalRecord, record_id: "record-two", record_type: "ship", displayed_name: "Legacy Ship", content_digest: "b".repeat(64) }));
+    if (request.method() === "GET" && path.endsWith("/records/record-one/removal-impact")) {
+      impactStarted();
+      await impactReleased;
+      return json(route, impact);
+    }
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const panel = editor(page);
+  await panel.getByRole("button", { name: "Load removal impact" }).click();
+  await impactRequestStarted;
+  await page.getByRole("link", { name: "Legacy Ship" }).first().click();
+  await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-two\?revision=revision_two$/);
+  await expect(panel.getByLabel("Record ID")).toHaveValue("record-two");
+  releaseImpact();
+  await expect(panel.getByRole("heading", { name: "Removal impact and resolutions" })).toHaveCount(0);
+});
+
+test("superseded proposal review is read-only", async ({ page }) => {
+  await installAtlasApi(page);
+  const superseded = { ...proposal(headRevision, originalRecord), core_proposal: { proposal: { status: "rejected" } } };
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) return json(route, view(headRevision, headRevision, originalRecord));
+    if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_correction/versions/1")) return json(route, superseded);
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two&proposal=proposal_correction&version=1");
+  const panel = editor(page);
+  await expect(panel.getByText(/Status: rejected/)).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Reject exact proposal" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Create correction\/rebase" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Approve and publish exact proposal" })).toBeDisabled();
+});
+
 test("stale correction responses cannot install a proposal after SPA navigation", async ({ page }) => {
   await installAtlasApi(page);
   let releaseCorrection!: () => void;
