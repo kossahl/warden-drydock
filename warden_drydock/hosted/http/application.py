@@ -2221,15 +2221,20 @@ class SliceApplication:
                         intent, proposal_id, version, expected, atomic_metadata
                     )
 
-                result = self.proposals.approve(
-                    item, diff_digest=value["diff"]["diff_digest"], base_revision=stored["base"],
-                    payload_digest=value["proposal_payload_digest"],
-                    finalize=finalize_publication if atomic_publish is not None else None,
-                )
-                if result.status is ProposalStatus.CONFLICT:
-                    raise HTTPFailure(409, "stale_revision", "stale_revision", "editor_approve", self._request_id(payload))
-                if result.status is not ProposalStatus.PUBLISHED:
-                    raise HTTPFailure(422, "proposal_validation_failure", "proposal_validation_failure", "editor_approve", self._request_id(payload))
+                try:
+                    result = self.proposals.approve(
+                        item, diff_digest=value["diff"]["diff_digest"], base_revision=stored["base"],
+                        payload_digest=value["proposal_payload_digest"],
+                        finalize=finalize_publication if atomic_publish is not None else None,
+                    )
+                    if result.status is ProposalStatus.CONFLICT:
+                        raise HTTPFailure(409, "stale_revision", "stale_revision", "editor_approve", self._request_id(payload))
+                    if result.status is not ProposalStatus.PUBLISHED:
+                        raise HTTPFailure(422, "proposal_validation_failure", "proposal_validation_failure", "editor_approve", self._request_id(payload))
+                except HTTPFailure:
+                    # Process termination must retain the claim for crash recovery.
+                    self._release(receipt_operation, operation["idempotency_key"], operation["payload_digest"])
+                    raise
                 manifest = self._matching_publication(result)
                 published_revision = self._editor_immutable_revision_ref(manifest)
             if atomic_metadata is None:

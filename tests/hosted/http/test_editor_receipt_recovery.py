@@ -116,6 +116,18 @@ class EditorReceiptRecoveryTests(unittest.TestCase):
             getattr(self.app, method)(*stale)
         self.assertEqual("workflow_conflict", failure.exception.payload["error"]["code"])
 
+    def test_approval_retries_in_same_process_after_staging_failure(self):
+        _, _, (_, proposal) = self._edit()
+        payload = self._editor_approval_payload(proposal)
+        args = (proposal["proposal_id"], proposal["proposal_version"], payload)
+        with mock.patch.object(self.app.proposals, "_stage", side_effect=RuntimeError("staging failed")):
+            with self.assertRaises(HTTPFailure) as failure:
+                self.app.editor_proposal_approve(*args)
+        self.assertEqual("proposal_validation_failure", failure.exception.payload["error"]["code"])
+        status, result = self.app.editor_proposal_approve(*args)
+        self.assertEqual((200, "published"), (status, result["outcome"]))
+        self.assertEqual((status, result), self.app.editor_proposal_approve(*args))
+
     def test_changed_abandoned_payload_is_rejected(self):
         method, args = self._request("edit")
         with mock.patch.object(self.app, "_store", side_effect=SystemExit("receipt crash")):

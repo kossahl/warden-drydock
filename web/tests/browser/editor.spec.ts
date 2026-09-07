@@ -71,6 +71,48 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
   expect(campaignReads).toBe(2);
 });
 
+test("rejection applies the returned workflow version to a fresh save", async ({ page }) => {
+  await installAtlasApi(page);
+  let editorReads = 0;
+  let rejected = false;
+  const submittedVersions: number[][] = [];
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      editorReads += 1;
+      return route.fulfill({ headers: { "X-CSRF-Token": "browser-csrf" }, json: { contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: editorRecord } });
+    }
+    if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) {
+      const body = request.postDataJSON();
+      const versions = [body.binding.expected_editor_workflow_version, body.operation_request.expected_editor_workflow_version];
+      submittedVersions.push(versions);
+      return versions.every((version) => version === (rejected ? 3 : 1))
+        ? route.fulfill({ status: 201, json: { ...proposal, editor_workflow_version: rejected ? 4 : 2 } })
+        : route.fulfill({ status: 409, json: { error: { code: "workflow_conflict", category: "workflow_conflict" } } });
+    }
+    if (request.method() === "POST" && path.endsWith("/editor/proposals/proposal_editor/versions/1/rejection")) {
+      rejected = true;
+      return route.fulfill({ json: { contract_name: "editor_proposal_rejection_result", contract_version: 1, proposal: { proposal_id: "proposal_editor", proposal_version: 1 }, outcome: "rejected", editor_workflow_version: 3 } });
+    }
+    return route.fallback();
+  });
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const editor = page.locator(".editor");
+  await editor.getByLabel("Displayed name").fill("Edited keeper");
+  await editor.getByRole("button", { name: "Save as proposal" }).click();
+  await editor.getByRole("button", { name: "Reject exact proposal" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Reject exact proposal" }).click();
+  await expect(editor.getByText("Proposal rejected. No campaign revision changed.")).toBeVisible();
+  await expect(editor.getByLabel("Displayed name")).toHaveValue("Edited keeper");
+  await editor.getByLabel("Displayed name").fill("Fresh keeper");
+  await editor.getByRole("button", { name: "Save as proposal" }).click();
+  await expect(editor.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
+  expect(submittedVersions).toEqual([[1, 1], [3, 3]]);
+  expect(editorReads).toBe(1);
+  await expect(page).toHaveURL(/records\/record-one\?revision=revision_two$/);
+});
+
 test("same-head workflow conflict reloads the editor before retrying", async ({ page }) => {
   await installAtlasApi(page);
   let editorReads = 0;
