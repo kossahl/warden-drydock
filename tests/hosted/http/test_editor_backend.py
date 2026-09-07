@@ -300,7 +300,10 @@ class EditorBackendTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self._approve_editor(proposal)
 
-        published_manifest = self.app.revisions.store.inventory()[-1]
+        published_manifest = max(
+            self.app.revisions.store.campaign_inventory("campaign_alpha"),
+            key=lambda item: item.ordinal,
+        )
         self.assertEqual(published_manifest.revision_id, self.workflow.head("campaign_alpha"))
         self.assertEqual(2, self.app._editor_version("campaign_alpha"))
         self.assertEqual(
