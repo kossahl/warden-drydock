@@ -252,9 +252,10 @@ test("create correction uses the candidate ID, reads campaign context, and opens
       initialBody = submittedBody;
       return route.fulfill({ status: 201, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ ...createdProposal, diff: { ...createdProposal.diff, cards: [{ ...createdProposal.diff.cards[0], after: submittedBody.candidate }] } }) });
     }
+    if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_created/versions/1")) return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ ...createdProposal, diff: { ...createdProposal.diff, cards: [{ ...createdProposal.diff.cards[0], after: initialBody?.candidate ?? createdProposal.diff.cards[0].after }] } }) });
     if (request.method() === "POST" && path.endsWith("/corrections")) {
       correctionBody = JSON.parse(request.postData() ?? "{}");
-      return route.fulfill({ status: 201, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ ...createdProposal, proposal_version: 2 }) });
+      return route.fulfill({ status: 201, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ ...createdProposal, proposal_version: 2, correction_of: { proposal_id: "proposal_created", proposal_version: 1 } }) });
     }
     if (request.method() === "POST" && path.endsWith("/approval")) {
       return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_proposal_approval_result", contract_version: 1, proposal: { proposal_id: "proposal_created", proposal_version: 2 }, outcome: "published", published_revision: { revision_id: "revision_three", ordinal: 3, tree_digest: "1".repeat(64), immutable: true }, editor_workflow_version: 3 }) });
@@ -283,6 +284,7 @@ test("create correction uses the candidate ID, reads campaign context, and opens
   await expect.poll(() => (correctionBody as any)?.candidate?.record_id).toBe("record-created");
   await expect.poll(() => (correctionBody as any)?.candidate?.displayed_name).toBe("Corrected created record");
   expect((correctionBody as any)?.candidate?.connections?.[0]?.context).toBe("Corrected connection context.");
+  await expect(editor.getByRole("link", { name: /proposal_created/ })).toHaveAttribute("href", /proposal=proposal_created&version=1$/);
   await editor.getByRole("button", { name: "Approve and publish exact proposal" }).click();
   await expect(page.getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
   await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();

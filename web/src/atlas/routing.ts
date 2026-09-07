@@ -67,6 +67,8 @@ export interface AtlasUrlState {
   relationshipCursor?: string | null;
   generationCursor?: string | null;
   proposalCursor?: string | null;
+  proposalId?: string | null;
+  proposalVersion?: number | null;
 }
 
 export function atlasHref(campaignId: string, destination: "overview" | "records" | "history", state: AtlasUrlState) {
@@ -91,5 +93,9 @@ function addState(path: string, state: AtlasUrlState, includeLibrary: boolean) {
   if (state.relationshipCursor) params.set("relationship_cursor", state.relationshipCursor);
   if (state.generationCursor) params.set("generation_cursor", state.generationCursor);
   if (state.proposalCursor) params.set("proposal_cursor", state.proposalCursor);
+  if (state.proposalId && state.proposalVersion) {
+    params.set("proposal", state.proposalId);
+    params.set("version", String(state.proposalVersion));
+  }
   return `${path}?${params.toString()}`;
 }

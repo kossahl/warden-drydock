@@ -77,10 +77,10 @@ test("Overview requests and displays only the newest five approved events", asyn
 
 test("historical view stays selected until Open head", async ({ page }) => {
   await installAtlasApi(page);
-  await page.goto("/campaigns/campaign_atlas?revision=revision_one");
+  await page.goto("/campaigns/campaign_atlas?revision=revision_one&proposal=proposal_editor&version=1");
   await expect(page.getByText(/Viewed revision 1/)).toBeVisible();
   await page.getByRole("link", { name: "Open head" }).click();
-  await expect(page).toHaveURL("/campaigns/campaign_atlas?revision=revision_two");
+  await expect(page).toHaveURL("/campaigns/campaign_atlas?revision=revision_two&proposal=proposal_editor&version=1");
   await expect(page.getByText(/Viewed revision 2/)).toBeVisible();
 });
 

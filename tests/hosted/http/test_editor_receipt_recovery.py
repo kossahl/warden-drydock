@@ -116,6 +116,34 @@ class EditorReceiptRecoveryTests(unittest.TestCase):
             getattr(self.app, method)(*stale)
         self.assertEqual("workflow_conflict", failure.exception.payload["error"]["code"])
 
+    def test_noop_editor_proposal_rejects_before_claim_and_exact_retry_repeats_validation(self):
+        revision = self.app.workflow.head("campaign_alpha")
+        view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
+        operation = {
+            "contract_name": "editor_operation_request", "contract_version": 1,
+            "request_id": "request_noop", "operation": "editor_record_edit",
+            "idempotency_key": "idem_noop", "payload_digest": "0" * 64,
+            "expected_revision": revision, "expected_editor_workflow_version": 1,
+            "subject_id": "campaign-main",
+        }
+        payload = {
+            "contract_name": "editor_record_edit_request", "contract_version": 1,
+            "operation_request": operation,
+            "binding": {
+                "campaign_id": "campaign_alpha", "base_revision": view["viewed_revision"],
+                "record_id": "campaign-main", "record_digest": view["record"]["content_digest"],
+                "expected_editor_workflow_version": 1,
+            },
+            "candidate": deepcopy(view["record"]),
+        }
+        operation["payload_digest"] = self.app._editor_payload_digest(payload)
+
+        for _ in range(2):
+            with self.assertRaises(HTTPFailure) as failure:
+                self.app.editor_record_edit("campaign_alpha", revision, "campaign-main", deepcopy(payload))
+            self.assertEqual("proposal_validation_failure", failure.exception.payload["error"]["category"])
+        self.assertEqual(1, self.app._editor_version("campaign_alpha"))
+
     def test_editor_proposal_releases_claim_when_atomic_cas_does_not_commit(self):
         for failure in (False, RuntimeError("before commit")):
             with self.subTest(failure=type(failure).__name__):

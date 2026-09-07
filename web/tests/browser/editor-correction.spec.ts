@@ -17,9 +17,9 @@ const currentRecord: EditorRecord = { ...originalRecord, displayed_name: "Curren
 const json = (route: Route, body: unknown, status = 200) =>
   route.fulfill({ status, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify(body) });
 
-const view = (viewedRevision: RevisionRef, head: RevisionRef, record: EditorRecord, workflow = 1): EditorRecordView => ({
+const view = (viewedRevision: RevisionRef, head: RevisionRef, record: EditorRecord, workflow = 1, historical = false): EditorRecordView => ({
   contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: viewedRevision,
-  head_revision: head, editor_workflow_version: workflow, historical: false, editable: true, record,
+  head_revision: head, editor_workflow_version: workflow, historical, editable: !historical, record,
 });
 
 const proposal = (base: RevisionRef, record: EditorRecord, version = 1, workflow = 1, id = "proposal_correction"): EditorProposal => ({
@@ -165,6 +165,77 @@ test("stale proposal responses cannot install a proposal after SPA navigation", 
   await oldProposalResponse;
   await expect(panel.getByLabel("Displayed name")).toHaveValue("Legacy Ship");
   await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toHaveCount(0);
+});
+
+test("stale correction responses cannot install a proposal after SPA navigation", async ({ page }) => {
+  await installAtlasApi(page);
+  let releaseCorrection!: () => void;
+  let correctionStarted!: () => void;
+  const correctionReleased = new Promise<void>((resolve) => { releaseCorrection = resolve; });
+  const correctionRequestStarted = new Promise<void>((resolve) => { correctionStarted = resolve; });
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) return json(route, view(headRevision, headRevision, originalRecord));
+    if (request.method() === "GET" && path.endsWith("/records/record-two/editor")) return json(route, view(headRevision, headRevision, { ...originalRecord, record_id: "record-two", record_type: "ship", displayed_name: "Legacy Ship", content_digest: "b".repeat(64) }));
+    if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) return json(route, proposal(headRevision, { ...originalRecord, displayed_name: "Edited before correction" }), 201);
+    if (request.method() === "POST" && path.endsWith("/corrections")) {
+      correctionStarted();
+      await correctionReleased;
+      return json(route, proposal(headRevision, { ...originalRecord, displayed_name: "Corrected proposal" }, 2), 201);
+    }
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const panel = editor(page);
+  await panel.getByRole("button", { name: "Save as proposal" }).click();
+  await panel.getByRole("button", { name: "Create correction/rebase" }).click();
+  await panel.getByLabel("Displayed name").fill("Pending correction");
+  const oldCorrectionResponse = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/corrections"));
+  await panel.getByRole("button", { name: "Submit correction/rebase" }).click();
+  await correctionRequestStarted;
+  await page.getByRole("link", { name: "Legacy Ship" }).first().click();
+  await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-two\?revision=revision_two$/);
+  await expect(panel.getByLabel("Record ID")).toHaveValue("record-two");
+  await expect(panel.getByLabel("Displayed name")).toHaveValue("Legacy Ship");
+  releaseCorrection();
+  await oldCorrectionResponse;
+  await expect(panel.getByLabel("Record ID")).toHaveValue("record-two");
+  await expect(panel.getByLabel("Displayed name")).toHaveValue("Legacy Ship");
+  await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toHaveCount(0);
+  await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-two\?revision=revision_two$/);
+});
+
+test("historical proposal URLs keep review and correction available", async ({ page }) => {
+  await installAtlasApi(page);
+  const correctedProposal = { ...proposal(headRevision, { ...currentRecord, displayed_name: "Corrected historical" }, 2, 8, "proposal_historical"), correction_of: { proposal_id: "proposal_historical", proposal_version: 1 } };
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      if (path.includes(`/revisions/${currentRevision.revision_id}/`)) return json(route, view(currentRevision, currentRevision, currentRecord, 8));
+      return json(route, view(oldRevision, currentRevision, originalRecord, 7, true));
+    }
+    if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_historical/versions/1")) return json(route, proposal(oldRevision, { ...originalRecord, displayed_name: "Historical proposal" }, 1, 7, "proposal_historical"));
+    if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_historical/versions/2")) return json(route, correctedProposal);
+    if (request.method() === "POST" && path.endsWith("/corrections")) return json(route, correctedProposal, 201);
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_one&proposal=proposal_historical&version=1");
+  const panel = editor(page);
+  await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
+  await expect(panel.getByLabel("Displayed name")).toBeDisabled();
+  await panel.getByRole("button", { name: "Create correction/rebase" }).click();
+  await expect(panel.getByLabel("Displayed name")).toHaveValue("Current Head Keeper");
+  await expect(panel.getByLabel("Displayed name")).toBeEnabled();
+  await panel.getByLabel("Displayed name").fill("Corrected historical");
+  await panel.getByRole("button", { name: "Submit correction/rebase" }).click();
+  await expect(panel.getByRole("link", { name: /proposal_historical/ })).toHaveAttribute("href", /revision=revision_one&proposal=proposal_historical&version=1$/);
+  await panel.getByRole("link", { name: /proposal_historical/ }).click();
+  await expect(page).toHaveURL(/revision=revision_one&proposal=proposal_historical&version=1$/);
+  await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
 });
 
 test("stale correction binds to the loaded head even if a later head appears before submit", async ({ page }) => {

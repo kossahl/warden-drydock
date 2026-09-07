@@ -1725,11 +1725,6 @@ class SliceApplication:
         )
 
         proposal_id = proposal_id_override or self._id("proposal", campaign_id, revision_id, editor_diff_digest(tuple(changes)))
-        if not self._claim(operation_name, operation["idempotency_key"], operation["payload_digest"]):
-            replay = self._replay(operation_name, operation["idempotency_key"], operation["payload_digest"])
-            if replay:
-                return 200, replay[1]
-            raise HTTPFailure(503, "service_unavailable", "operation_in_progress", "editor_proposal", self._request_id(payload), True)
         version = self.proposal_repository.next_version(proposal_id)
         after_doc = None if kind == "remove" else candidate
         cards = [{"change_id": change.change_id, "kind": "record_removed" if kind == "remove" else ("record_created" if kind == "create" else "record_updated"), "subject_record_id": change.subject_id, "before": before_doc, "after": after_doc, "property_changes": self._editor_property_changes(before_doc, after_doc), "connection": None, "resolution": None, "derived_backlinks": []}]
@@ -1765,6 +1760,11 @@ class SliceApplication:
             value, stage="editor_proposal", impact=removal_impact,
             existing_record_ids=self._editor_record_ids(campaign_id, revision_id),
         )
+        if not self._claim(operation_name, operation["idempotency_key"], operation["payload_digest"]):
+            replay = self._replay(operation_name, operation["idempotency_key"], operation["payload_digest"])
+            if replay:
+                return 200, replay[1]
+            raise HTTPFailure(503, "service_unavailable", "operation_in_progress", "editor_proposal", self._request_id(payload), True)
         item = ProposalVersion(proposal_id, version, campaign_id, revision_id, tuple(changes), digest, value["proposal_payload_digest"], editor_metadata=value)
         add_editor = getattr(self.proposal_repository, "add_editor", None)
         if add_editor is not None:
