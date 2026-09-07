@@ -1856,7 +1856,7 @@ class SliceApplication:
             document = parse_document(record.content, record.record_id, record.record_type)
             for connection in document["connections"]:
                 if connection["target_record_id"] == record_id:
-                    incoming.append({"reference_id": f"reference_{record.record_id}_{connection['connection_id']}",
+                    incoming.append({"reference_id": self._id("reference", campaign_id, revision_id, record.record_id, connection["connection_id"]),
                                      "connection_id": connection["connection_id"], "source_record_id": record.record_id,
                                      "target_record_id": record_id, "relationship": connection["relationship"],
                                      "state": connection["state"], "context": connection["context"],

@@ -1,4 +1,4 @@
-import { httpEditorApi, nextConnectionId, recomputeRecordDigest, type EditorRecord } from "../../src/editor/editorClient";
+import { digest, httpEditorApi, nextConnectionId, recomputeRecordDigest, type EditorRecord } from "../../src/editor/editorClient";
 
 const record = (): EditorRecord => ({
   record_id: "record-one", record_type: "npc", displayed_name: "One", status: "draft", authority: "preparation",
@@ -12,6 +12,10 @@ describe("record editor client bindings", () => {
     const changed = record(); changed.content_digest = "f".repeat(64); changed.displayed_name = "Changed";
     expect(await recomputeRecordDigest(changed)).not.toBe(first);
     expect(first).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("matches Python ensure_ascii canonical digests for non-ASCII and astral Unicode", async () => {
+    expect(await digest({ text: "café 😀", "\uE000": "bmp", "\u{10000}": "astral" })).toBe("a32d1782b2ae0836150433ce5190c088fa8197ccca2f4748adc8834f057168c4");
   });
 
   it("allocates unique public connection IDs after removal", () => {
@@ -58,6 +62,30 @@ describe("record editor client bindings", () => {
 
     await expect(httpEditorApi.propose("edit", "campaign_retry", revision, record(), 7)).rejects.toThrow("network response lost");
     await httpEditorApi.propose("edit", "campaign_retry", revision, record(), 7);
+
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const retryBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(retryBody).toEqual(firstBody);
+    expect(retryBody.operation_request.request_id).toBe(firstBody.operation_request.request_id);
+    expect(retryBody.operation_request.idempotency_key).toBe(firstBody.operation_request.idempotency_key);
+  });
+
+  it("reuses the exact operation identity after a malformed response body", async () => {
+    const response = { contract_name: "editor_proposal_view", contract_version: 1 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true, headers: new Headers(), json: async () => { throw new SyntaxError("Unexpected end of JSON input"); },
+        status: 201, statusText: "Created", redirected: false, type: "basic", url: "",
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true, headers: new Headers(), json: async () => response,
+        status: 201, statusText: "Created", redirected: false, type: "basic", url: "",
+      } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const revision = { revision_id: "revision_malformed", ordinal: 1, tree_digest: "e".repeat(64) };
+
+    await expect(httpEditorApi.propose("edit", "campaign_malformed", revision, record(), 7)).rejects.toThrow("Unexpected end of JSON input");
+    await httpEditorApi.propose("edit", "campaign_malformed", revision, record(), 7);
 
     const firstBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     const retryBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));

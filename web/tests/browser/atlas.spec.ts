@@ -84,6 +84,13 @@ test("historical view stays selected until Open head", async ({ page }) => {
   await expect(page.getByText(/Viewed revision 2/)).toBeVisible();
 });
 
+test("historical record lists do not offer create", async ({ page }) => {
+  await installAtlasApi(page);
+  await page.goto("/campaigns/campaign_atlas/records?revision=revision_one");
+  await expect(page.getByRole("heading", { level: 1, name: "Records" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create typed record", exact: true })).toHaveCount(0);
+});
+
 test("Record content replaces Connections syntax with readable revision-pinned links", async ({ page }) => {
   await installAtlasApi(page);
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");

@@ -97,6 +97,10 @@ class ComposePolicyTests(unittest.TestCase):
         self.assertNotIn("OPENAI_API_KEY", browser_sources)
         self.assertIn("database_secrets", self.compose["volumes"])
 
+    def test_web_builder_receives_authoritative_data(self) -> None:
+        dockerfile = (ROOT / "docker" / "app.Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("COPY warden_drydock/data/ /build/warden_drydock/data/", dockerfile)
+
 
 class RuntimeTests(unittest.TestCase):
     def test_versions(self) -> None:

@@ -59,14 +59,29 @@ export function RecordEditor({ campaignId, revisionId, recordId, navigate }: { c
   const errorHeading = useRef<HTMLHeadingElement>(null);
   const dialogHeading = useRef<HTMLHeadingElement>(null);
   const focusEditorError = useRef(false);
+  const loadRequest = useRef<{ sequence: number; campaignId: string; revisionId: string; recordId: string } | null>(null);
 
   const load = (sourceRevisionId = revisionId) => {
     setError(""); setMessage(""); setConflict(false); setProposal(null); setImpact(null); setCorrectionMode(false); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
     const sourceRecordId = isCreate ? "campaign-main" : recordId;
+    const request = { sequence: (loadRequest.current?.sequence ?? 0) + 1, campaignId, revisionId: sourceRevisionId, recordId: sourceRecordId };
+    loadRequest.current = request;
+    const isCurrentRequest = () => {
+      const current = loadRequest.current;
+      return current !== null
+        && current.sequence === request.sequence
+        && current.campaignId === request.campaignId
+        && current.revisionId === request.revisionId
+        && current.recordId === request.recordId;
+    };
     void httpEditorApi.read(campaignId, sourceRevisionId, sourceRecordId).then((value) => {
+      if (!isCurrentRequest()) return;
       setView(value);
       setDraft(isCreate ? newAdapterRecord() : clone(value.record));
-    }).catch((reason: unknown) => { focusEditorError.current = !document.activeElement?.closest("#atlas-content"); setError(`Editor unavailable (${errorText(reason)}).`); });
+    }).catch((reason: unknown) => {
+      if (!isCurrentRequest()) return;
+      focusEditorError.current = !document.activeElement?.closest("#atlas-content"); setError(`Editor unavailable (${errorText(reason)}).`);
+    });
   };
   useEffect(() => load(), [campaignId, revisionId, recordId]);
   useEffect(() => {

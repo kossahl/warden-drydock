@@ -7,6 +7,7 @@ const editorRecord = {
   visibility: { audience: "warden" as const, warden_only: true as const }, fields: [{ field_id: "ownership", value: "campaign" }],
   sections: [{ section_id: "summary", body: "Keeps the synthetic station." }], connections: [], content_digest: "c".repeat(64),
 };
+const secondEditorRecord = { ...editorRecord, record_id: "record-two", record_type: "ship", displayed_name: "Legacy Ship", content_digest: "d".repeat(64) };
 const editedRecord = { ...editorRecord, displayed_name: "Edited Station Keeper" };
 const proposal = {
   contract_name: "editor_proposal_view", contract_version: 1, proposal_id: "proposal_editor", proposal_version: 1, campaign_id: "campaign_atlas",
@@ -69,6 +70,39 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
   await expect(page.getByRole("complementary", { name: "Viewed revision" })).toHaveText(/revision_three · Head/);
   await expect(page.getByRole("link", { name: "Open head", exact: true })).toHaveCount(0);
   expect(campaignReads).toBe(2);
+});
+
+test("delayed editor reads cannot overwrite a different SPA record", async ({ page }) => {
+  await installAtlasApi(page);
+  let releaseOldRead!: () => void;
+  const oldReadReleased = new Promise<void>((resolve) => { releaseOldRead = resolve; });
+  const oldReadStarted = page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname.endsWith("/records/record-one/editor"));
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      await oldReadReleased;
+      return route.fulfill({ headers: { "X-CSRF-Token": "browser-csrf" }, json: { contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: editorRecord } });
+    }
+    if (request.method() === "GET" && path.endsWith("/records/record-two/editor")) {
+      return route.fulfill({ headers: { "X-CSRF-Token": "browser-csrf" }, json: { contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: secondEditorRecord } });
+    }
+    return route.fallback();
+  });
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await oldReadStarted;
+  const relatedRecord = page.getByRole("link", { name: "Legacy Ship" }).first();
+  await expect(relatedRecord).toBeVisible();
+  const oldReadResponse = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname.endsWith("/records/record-one/editor"));
+  await relatedRecord.click();
+  await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-two\?revision=revision_two$/);
+  const editor = page.locator(".editor").filter({ hasText: "Edit record" });
+  await expect(editor.getByLabel("Record ID")).toHaveValue("record-two");
+  await expect(editor.getByLabel("Displayed name")).toHaveValue("Legacy Ship");
+  releaseOldRead();
+  await oldReadResponse;
+  await expect(editor.getByLabel("Record ID")).toHaveValue("record-two");
+  await expect(editor.getByLabel("Displayed name")).toHaveValue("Legacy Ship");
 });
 
 test("rejection applies the returned workflow version to a fresh save", async ({ page }) => {

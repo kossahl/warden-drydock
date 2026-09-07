@@ -413,6 +413,7 @@ Preserve this unrelated section.
         self.assertIn("<!-- Preserve this source comment. -->", result)
         self.assertIn("## Notes\nPreserve this unrelated section.", result)
         self.assertIn("warden_only: false", result)
+        self.assertNotIn("visits", result)
 
     def test_mutation_preserves_crlf_without_doubled_carriage_returns(self):
         source = "---\r\nid: record-main\r\ntype: npc\r\nname: Keeper\r\nstatus: draft\r\nvisibility: warden\r\n---\r\n\r\n## Summary\r\nKeep this section.\r\n"
@@ -467,6 +468,8 @@ Preserve this unrelated section.
         }])
         _, impact = self.app.editor_removal_impact("campaign_alpha", current_revision, "record-target")
         reference = impact["incoming_references"][0]
+        self.assertRegex(reference["reference_id"], r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+        self.assertLessEqual(len(reference["reference_id"]), 80)
         resolution = {"reference_id": reference["reference_id"], "action": "redirect", "replacement_target_record_id": "campaign-main"}
         workflow = self.app._editor_version("campaign_alpha")
         operation = {

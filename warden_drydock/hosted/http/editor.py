@@ -309,7 +309,8 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
     # outside the editor.  Keep the first section and its comments, while
     # folding all typed lines into the one canonical section below.
     for duplicate_index in reversed(connection_headers[1:]):
-        del lines[duplicate_index]
+        next_heading = next((i for i in range(duplicate_index + 1, len(lines)) if re.match(r"^##\s+", lines[i])), len(lines))
+        del lines[duplicate_index:next_heading]
     connection_index = next((i for i, line in enumerate(lines) if line.strip().casefold() == "## connections"), None)
     if connection_index is not None:
         if old["connections"] != new["connections"]:
