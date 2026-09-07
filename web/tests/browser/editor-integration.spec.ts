@@ -95,7 +95,17 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   await editor.getByRole("button", { name: "Load removal impact", exact: true }).click();
   const resolutions = editor.getByLabel(/^Resolution for/);
   await expect(resolutions).toHaveCount(2);
-  for (const resolution of await resolutions.all()) await resolution.selectOption("remove_reference");
+  const removalSubmit = editor.getByRole("button", { name: "Submit removal proposal", exact: true });
+  for (const resolution of await resolutions.all()) await expect(resolution).toHaveValue("");
+  await expect(removalSubmit).toBeDisabled();
+  await resolutions.nth(0).selectOption("remove_reference");
+  await resolutions.nth(0).selectOption("redirect");
+  await expect(removalSubmit).toBeDisabled();
+  await resolutions.nth(0).selectOption("remove_reference");
+  await expect(resolutions.nth(1)).toHaveValue("");
+  await expect(removalSubmit).toBeDisabled();
+  await resolutions.nth(1).selectOption("remove_reference");
+  await expect(removalSubmit).toBeEnabled();
   const removal = await submit("Submit removal proposal", "/removal-proposals");
   expect(removal.diff.cards.filter((card) => card.kind === "reference_resolution")).toHaveLength(2);
   expect(removal.record_bindings.map((binding) => binding.record_id).sort()).toEqual(["npc-source", "npc-target"]);
