@@ -167,6 +167,44 @@ test("stale proposal responses cannot install a proposal after SPA navigation", 
   await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toHaveCount(0);
 });
 
+test("stale decision responses cannot change a different SPA record", async ({ page }) => {
+  await installAtlasApi(page);
+  let releaseApproval!: () => void;
+  let approvalStarted!: () => void;
+  const approvalReleased = new Promise<void>((resolve) => { releaseApproval = resolve; });
+  const approvalRequestStarted = new Promise<void>((resolve) => { approvalStarted = resolve; });
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) return json(route, view(headRevision, headRevision, originalRecord));
+    if (request.method() === "GET" && path.endsWith("/records/record-two/editor")) return json(route, view(headRevision, headRevision, { ...originalRecord, record_id: "record-two", record_type: "ship", displayed_name: "Legacy Ship", content_digest: "b".repeat(64) }));
+    if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) return json(route, proposal(headRevision, { ...originalRecord, displayed_name: "Edited before approval" }), 201);
+    if (request.method() === "POST" && path.endsWith("/approval")) {
+      approvalStarted();
+      await approvalReleased;
+      return json(route, { contract_name: "editor_proposal_approval_result", contract_version: 1, proposal: { proposal_id: "proposal_correction", proposal_version: 1 }, outcome: "published", published_revision: { revision_id: "revision_three", ordinal: 3, tree_digest: "3".repeat(64), immutable: true }, editor_workflow_version: 2 });
+    }
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const panel = editor(page);
+  await panel.getByRole("button", { name: "Save as proposal" }).click();
+  await panel.getByRole("button", { name: "Approve and publish exact proposal" }).click();
+  await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
+  await page.getByRole("dialog").getByRole("button", { name: "Approve and publish exact proposal" }).click();
+  await approvalRequestStarted;
+  await page.evaluate(() => {
+    history.pushState(null, "", "/campaigns/campaign_atlas/records/record-two?revision=revision_two");
+    window.dispatchEvent(new Event("drydock:navigate"));
+  });
+  await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-two\?revision=revision_two$/);
+  await expect(panel.getByLabel("Record ID")).toHaveValue("record-two");
+  releaseApproval();
+  await expect(panel.getByLabel("Record ID")).toHaveValue("record-two");
+  await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toHaveCount(0);
+});
+
 test("stale removal-impact responses cannot switch the editor after SPA navigation", async ({ page }) => {
   await installAtlasApi(page);
   let releaseImpact!: () => void;

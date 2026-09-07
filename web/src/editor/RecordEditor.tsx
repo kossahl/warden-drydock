@@ -259,10 +259,24 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   };
   const submitDecision = async () => {
     if (!proposal || !approvalDialog || correctionMode || (approvalDialog === "approve" && !wardenConfirmed)) return;
+    const request = {
+      sequence: proposalRequest.current + 1,
+      editorIdentity,
+      proposalIdentity: `${proposal.proposal_id}\u0000${proposal.proposal_version}`,
+    };
+    proposalRequest.current = request.sequence;
+    const isCurrentRequest = () => proposalRequest.current === request.sequence
+      && editorIdentityRef.current === request.editorIdentity
+      && proposalIdentityRef.current === request.proposalIdentity;
     const approving = approvalDialog === "approve"; setBusy(true); setError(""); setConflict(false);
-    try { const result = approving ? await httpEditorApi.approve(proposal, wardenConfirmed) : await httpEditorApi.reject(proposal, rejectionReason); setApprovalDialog(null); if (approving) { setMessage("Proposal approved and published."); window.dispatchEvent(new Event("drydock:campaign-mutated")); const revision = result.published_revision as RevisionRef | undefined; const createdRecordId = proposal.mutation_kind === "create" ? proposal.record_bindings[0]?.record_id : undefined; if (revision && navigate) navigate(createdRecordId ? `/campaigns/${encodeURIComponent(campaignId)}/records/${encodeURIComponent(createdRecordId)}?revision=${encodeURIComponent(revision.revision_id)}` : `/campaigns/${encodeURIComponent(campaignId)}?revision=${encodeURIComponent(revision.revision_id)}`); } else { setView((current) => current ? { ...current, editor_workflow_version: result.editor_workflow_version as number } : current); setProposal(null); navigate?.(editorProposalLocation(null)); setCorrectionMode(false); setMessage("Proposal rejected. No campaign revision changed."); } }
-    catch (reason) { setConflict(staleCategories.includes(errorCategory(reason))); focusEditorError.current = true; setError(`${approving ? "Approval" : "Rejection"} blocked (${errorText(reason)}). Refresh and review the current head.`); }
-    finally { setBusy(false); }
+    try {
+      const result = approving ? await httpEditorApi.approve(proposal, wardenConfirmed) : await httpEditorApi.reject(proposal, rejectionReason);
+      if (!isCurrentRequest()) return;
+      setApprovalDialog(null); if (approving) { setMessage("Proposal approved and published."); window.dispatchEvent(new Event("drydock:campaign-mutated")); const revision = result.published_revision as RevisionRef | undefined; const createdRecordId = proposal.mutation_kind === "create" ? proposal.record_bindings[0]?.record_id : undefined; if (revision && navigate) navigate(createdRecordId ? `/campaigns/${encodeURIComponent(campaignId)}/records/${encodeURIComponent(createdRecordId)}?revision=${encodeURIComponent(revision.revision_id)}` : `/campaigns/${encodeURIComponent(campaignId)}?revision=${encodeURIComponent(revision.revision_id)}`); } else { setView((current) => current ? { ...current, editor_workflow_version: result.editor_workflow_version as number } : current); setProposal(null); navigate?.(editorProposalLocation(null)); setCorrectionMode(false); setMessage("Proposal rejected. No campaign revision changed."); }
+    } catch (reason) {
+      if (!isCurrentRequest()) return;
+      setConflict(staleCategories.includes(errorCategory(reason))); focusEditorError.current = true; setError(`${approving ? "Approval" : "Rejection"} blocked (${errorText(reason)}). Refresh and review the current head.`);
+    } finally { if (isCurrentRequest()) setBusy(false); }
   };
   const startCorrection = async () => {
     if (!proposal || busy) return;

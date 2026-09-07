@@ -93,4 +93,26 @@ describe("record editor client bindings", () => {
     expect(retryBody.operation_request.request_id).toBe(firstBody.operation_request.request_id);
     expect(retryBody.operation_request.idempotency_key).toBe(firstBody.operation_request.idempotency_key);
   });
+
+  it("retains the exact operation identity after an in-progress response", async () => {
+    const response = { contract_name: "editor_proposal_view", contract_version: 1 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false, headers: new Headers(), json: async () => ({ error: { code: "operation_in_progress", category: "operation_in_progress" } }),
+        status: 503, statusText: "Service Unavailable", redirected: false, type: "basic", url: "",
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true, headers: new Headers(), json: async () => response,
+        status: 201, statusText: "Created", redirected: false, type: "basic", url: "",
+      } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const revision = { revision_id: "revision_in_progress", ordinal: 1, tree_digest: "f".repeat(64) };
+
+    await expect(httpEditorApi.propose("edit", "campaign_in_progress", revision, record(), 7)).rejects.toThrow("operation_in_progress");
+    await httpEditorApi.propose("edit", "campaign_in_progress", revision, record(), 7);
+
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const retryBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(retryBody).toEqual(firstBody);
+  });
 });
