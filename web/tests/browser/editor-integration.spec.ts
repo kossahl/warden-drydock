@@ -93,6 +93,10 @@ test("editor publishes reviewed section corrections and resolves multiple refere
 
   await page.goto(recordUrl("npc-target"));
   await editor.getByRole("button", { name: "Load removal impact", exact: true }).click();
+  await expect(editor.getByRole("button", { name: "Cancel removal", exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "Cancel removal", exact: true }).click();
+  await expect(editor.getByRole("button", { name: "Load removal impact", exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "Load removal impact", exact: true }).click();
   const resolutions = editor.getByLabel(/^Resolution for/);
   await expect(resolutions).toHaveCount(2);
   const removalSubmit = editor.getByRole("button", { name: "Submit removal proposal", exact: true });

@@ -37,7 +37,7 @@ def _require_public_id(value, field):
 
 
 def _require_domain_id(value, field):
-    if not isinstance(value, str) or not 3 <= len(value) <= 200 or _DOMAIN_ID.fullmatch(value) is None:
+    if not isinstance(value, str) or not 1 <= len(value) <= 200 or _DOMAIN_ID.fullmatch(value) is None:
         raise ValueError(f"{field} is not a safe domain identifier")
 
 

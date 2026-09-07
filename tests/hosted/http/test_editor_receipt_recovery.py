@@ -128,6 +128,32 @@ class EditorReceiptRecoveryTests(unittest.TestCase):
         self.assertEqual((200, "published"), (status, result["outcome"]))
         self.assertEqual((status, result), self.app.editor_proposal_approve(*args))
 
+    def test_rejection_releases_claim_when_atomic_finalization_does_not_commit(self):
+        for failure in (False, RuntimeError("finalization failed")):
+            with self.subTest(failure=type(failure).__name__):
+                self.setUp()
+                method, args = self._request("reject")
+                calls = 0
+
+                def fail_once(*positional, **keywords):
+                    nonlocal calls
+                    calls += 1
+                    if calls == 1:
+                        if isinstance(failure, BaseException):
+                            raise failure
+                        return failure
+                    return True
+
+                with mock.patch.object(self.app.workflow, "finalize_editor_rejection", create=True, side_effect=fail_once):
+                    if failure is False:
+                        with self.assertRaises(HTTPFailure):
+                            getattr(self.app, method)(*deepcopy(args))
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            getattr(self.app, method)(*deepcopy(args))
+                    status, result = getattr(self.app, method)(*deepcopy(args))
+                self.assertEqual((200, "rejected"), (status, result["outcome"]))
+
     def test_changed_abandoned_payload_is_rejected(self):
         method, args = self._request("edit")
         with mock.patch.object(self.app, "_store", side_effect=SystemExit("receipt crash")):

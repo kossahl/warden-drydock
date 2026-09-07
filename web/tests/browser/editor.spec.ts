@@ -44,6 +44,9 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
       csrfRequests.push(request.headers()["x-csrf-token"] ?? "");
       return route.fulfill({ status: 201, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify(proposal) });
     }
+    if (path.endsWith("/editor/proposals/proposal_editor/versions/1") && request.method() === "GET") {
+      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify(proposal) });
+    }
     if (path.endsWith("/editor/proposals/proposal_editor/versions/1/approval") && request.method() === "POST") {
       published = true;
       csrfRequests.push(request.headers()["x-csrf-token"] ?? "");
@@ -58,6 +61,9 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
   await expect(editor.getByRole("button", { name: "Add field", exact: true })).toHaveCount(0);
   await expect(editor.getByRole("button", { name: "Add content section", exact: true })).toHaveCount(0);
   await editor.getByRole("button", { name: "Save as proposal" }).click();
+  await expect(editor.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
+  await expect(page).toHaveURL(/proposal=proposal_editor&version=1$/);
+  await page.reload();
   await expect(editor.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
   await editor.getByRole("button", { name: "Approve and publish exact proposal" }).click();
   await expect(page.getByRole("heading", { name: "Approve exact proposal" })).toBeFocused();

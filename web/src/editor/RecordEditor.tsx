@@ -12,6 +12,17 @@ const errorText = (reason: unknown) => reason instanceof Error ? reason.message 
 const errorCategory = (reason: unknown) => reason && typeof reason === "object" && "category" in reason ? String((reason as { category?: unknown }).category ?? "") : "";
 const staleCategories = ["stale_revision", "workflow_conflict", "stale_record_digest"];
 const atlasRevision = (revision: RevisionRef) => ({ revision_id: revision.revision_id, revision_ordinal: revision.ordinal, tree_digest: revision.tree_digest });
+const editorProposalLocation = (proposal: EditorProposal | null) => {
+  const url = new URL(window.location.href);
+  if (proposal) {
+    url.searchParams.set("proposal", proposal.proposal_id);
+    url.searchParams.set("version", String(proposal.proposal_version));
+  } else {
+    url.searchParams.delete("proposal");
+    url.searchParams.delete("version");
+  }
+  return `${url.pathname}${url.search}`;
+};
 
 function RecordPicker({ campaignId, revision, label, value, onChange, error }: { campaignId: string; revision: RevisionRef; label: string; value: string; onChange: (recordId: string) => void; error?: string }) {
   const [open, setOpen] = useState(false);
@@ -34,7 +45,7 @@ function RecordPicker({ campaignId, revision, label, value, onChange, error }: {
   return <div className="record-picker"><p id={`${inputId}-selected`}>{selected && selected.record_id === value ? <>Selected: {selected.name} <span>({selected.record_type})</span> · <code>{selected.record_id}</code></> : value ? <>Selected record ID: <code>{value}</code></> : "No record selected."}</p><button type="button" aria-label={`${label}: ${value ? "change selected record" : "choose existing record"}`} aria-haspopup="dialog" aria-controls={`${inputId}-dialog`} onClick={openPicker}>{value ? "Change selected record" : "Choose existing record"}</button>{error && <span className="error" role="alert">{error}</span>}{open && <div className="record-picker-dialog" role="dialog" aria-modal="true" aria-labelledby={`${inputId}-dialog-heading`} id={`${inputId}-dialog`}><h4 id={`${inputId}-dialog-heading`}>Choose an existing record</h4><p>Search by displayed name, record type, or stable record ID.</p><form onSubmit={(event) => { event.preventDefault(); void search(query); }}><label htmlFor={`${inputId}-search`}>Search existing records</label><input id={`${inputId}-search`} value={query} onChange={(event) => setQuery(event.target.value)} /><button type="submit" disabled={pending}>Search</button></form>{pending && <p role="status">Searching existing records.</p>}{loadError && <p className="error" role="alert">{loadError}</p>}{!pending && !loadError && <>{choices.length ? <ul role="listbox" aria-label="Existing records">{choices.map((choice) => <li key={choice.record_id}><button type="button" role="option" onClick={() => { onChange(choice.record_id); setSelected(choice); setOpen(false); }}>{choice.name} <span>({choice.record_type})</span> · <code>{choice.record_id}</code></button></li>)}</ul> : <p>No existing records match this search.</p>}</>}<button type="button" onClick={() => setOpen(false)}>Cancel</button></div>}</div>;
 }
 
-export function RecordEditor({ campaignId, revisionId, recordId, navigate }: { campaignId: string; revisionId: string; recordId: string; navigate?: (href: string) => void }) {
+export function RecordEditor({ campaignId, revisionId, recordId, proposalId, proposalVersion, navigate }: { campaignId: string; revisionId: string; recordId: string; proposalId?: string | null; proposalVersion?: number | null; navigate?: (href: string) => void }) {
   const isCreate = recordId === "__new__";
   const [view, setView] = useState<EditorRecordView | null>(null);
   const [draft, setDraft] = useState<EditorRecord | null>(null);
@@ -85,6 +96,23 @@ export function RecordEditor({ campaignId, revisionId, recordId, navigate }: { c
   };
   useEffect(() => load(), [campaignId, revisionId, recordId]);
   useEffect(() => {
+    if (!proposalId || !proposalVersion) return;
+    let active = true;
+    void httpEditorApi.proposal(proposalId, proposalVersion).then((value) => {
+      if (!active) return;
+      const binding = value.record_bindings[0];
+      const matchesEditor = value.campaign_id === campaignId
+        && (isCreate ? value.mutation_kind === "create" : binding?.record_id === recordId);
+      if (!matchesEditor) throw new Error("proposal_binding_mismatch");
+      setProposal(value);
+      setMessage("Submitted proposal restored for review.");
+    }).catch((reason: unknown) => {
+      if (!active) return;
+      setError(`Submitted proposal could not be restored (${errorText(reason)}).`);
+    });
+    return () => { active = false; };
+  }, [campaignId, isCreate, proposalId, proposalVersion, recordId]);
+  useEffect(() => {
     if (!error || !focusEditorError.current) return;
     focusEditorError.current = false;
     if (document.activeElement?.closest("#atlas-content") && !document.activeElement?.closest(".editor")) return;
@@ -133,14 +161,14 @@ export function RecordEditor({ campaignId, revisionId, recordId, navigate }: { c
     if (mode === "remove" && !removalReady) return;
     if (!view || !draft || !view.editable || !validate()) return;
     setBusy(true); setError(""); setMessage(""); setConflict(false);
-    try { const value = await httpEditorApi.propose(isCreate ? "create" : mode, campaignId, view.head_revision, draft, view.editor_workflow_version, resolutions, impact ?? undefined); setProposal(value); setCorrectionMode(false); setMessage("Exact proposal loaded for review. The current head is unchanged."); }
+    try { const value = await httpEditorApi.propose(isCreate ? "create" : mode, campaignId, view.head_revision, draft, view.editor_workflow_version, resolutions, impact ?? undefined); setProposal(value); navigate?.(editorProposalLocation(value)); setCorrectionMode(false); setMessage("Exact proposal loaded for review. The current head is unchanged."); }
     catch (reason) { setConflict(staleCategories.includes(errorCategory(reason))); focusEditorError.current = true; setError(`Proposal was not created (${errorText(reason)}).`); }
     finally { setBusy(false); }
   };
   const submitDecision = async () => {
     if (!proposal || !approvalDialog || correctionMode || (approvalDialog === "approve" && !wardenConfirmed)) return;
     const approving = approvalDialog === "approve"; setBusy(true); setError(""); setConflict(false);
-    try { const result = approving ? await httpEditorApi.approve(proposal, wardenConfirmed) : await httpEditorApi.reject(proposal, rejectionReason); setApprovalDialog(null); if (approving) { setMessage("Proposal approved and published."); window.dispatchEvent(new Event("drydock:campaign-mutated")); const revision = result.published_revision as RevisionRef | undefined; const createdRecordId = proposal.mutation_kind === "create" ? proposal.record_bindings[0]?.record_id : undefined; if (revision && navigate) navigate(createdRecordId ? `/campaigns/${encodeURIComponent(campaignId)}/records/${encodeURIComponent(createdRecordId)}?revision=${encodeURIComponent(revision.revision_id)}` : `/campaigns/${encodeURIComponent(campaignId)}?revision=${encodeURIComponent(revision.revision_id)}`); } else { setView((current) => current ? { ...current, editor_workflow_version: result.editor_workflow_version as number } : current); setProposal(null); setCorrectionMode(false); setMessage("Proposal rejected. No campaign revision changed."); } }
+    try { const result = approving ? await httpEditorApi.approve(proposal, wardenConfirmed) : await httpEditorApi.reject(proposal, rejectionReason); setApprovalDialog(null); if (approving) { setMessage("Proposal approved and published."); window.dispatchEvent(new Event("drydock:campaign-mutated")); const revision = result.published_revision as RevisionRef | undefined; const createdRecordId = proposal.mutation_kind === "create" ? proposal.record_bindings[0]?.record_id : undefined; if (revision && navigate) navigate(createdRecordId ? `/campaigns/${encodeURIComponent(campaignId)}/records/${encodeURIComponent(createdRecordId)}?revision=${encodeURIComponent(revision.revision_id)}` : `/campaigns/${encodeURIComponent(campaignId)}?revision=${encodeURIComponent(revision.revision_id)}`); } else { setView((current) => current ? { ...current, editor_workflow_version: result.editor_workflow_version as number } : current); setProposal(null); navigate?.(editorProposalLocation(null)); setCorrectionMode(false); setMessage("Proposal rejected. No campaign revision changed."); } }
     catch (reason) { setConflict(staleCategories.includes(errorCategory(reason))); focusEditorError.current = true; setError(`${approving ? "Approval" : "Rejection"} blocked (${errorText(reason)}). Refresh and review the current head.`); }
     finally { setBusy(false); }
   };
@@ -205,7 +233,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, navigate }: { c
         currentHead.head_revision, currentHead.editor_workflow_version, proposal.mutation_kind === "create" ? undefined : currentHead.record.content_digest,
         currentImpact,
       );
-      setView(currentHead); setDraft(correctedDraft); setProposal(value); setImpact(currentImpact ?? null); setCorrectionMode(false); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null; setMessage("Correction created as a new immutable proposal version.");
+      setView(currentHead); setDraft(correctedDraft); setProposal(value); navigate?.(editorProposalLocation(value)); setImpact(currentImpact ?? null); setCorrectionMode(false); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null; setMessage("Correction created as a new immutable proposal version.");
     }
     catch (reason) { setConflict(staleCategories.includes(errorCategory(reason))); focusEditorError.current = true; setError(`Correction blocked (${errorText(reason)}). Reload the current head and rebase the fields.`); }
     finally { setBusy(false); }
@@ -236,7 +264,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, navigate }: { c
     <fieldset disabled={locked}><legend>Fields</legend>{draft.fields.map((field, index) => <div key={field.field_id}><label htmlFor={`editor-field-${field.field_id}`}>{field.field_id}</label><input id={`editor-field-${field.field_id}`} value={String(field.value ?? "")} readOnly={!recordDefinitions[draft.record_type]?.fields.includes(field.field_id)} onChange={(event) => setField(index, { ...field, value: event.target.value })} aria-invalid={!!invalid(`field-${field.field_id}`)} />{invalid(`field-${field.field_id}`) && <span className="error">{invalid(`field-${field.field_id}`)}</span>}</div>)}</fieldset>
     <fieldset disabled={locked}><legend>Content sections</legend>{draft.sections.map((section, index) => <div key={section.section_id}><label htmlFor={`editor-section-${section.section_id}`}>{section.section_id}</label><textarea id={`editor-section-${section.section_id}`} rows={5} readOnly={!recordDefinitions[draft.record_type]?.sections.some((item) => item.id === section.section_id)} value={section.body} onChange={(event) => setSection(index, { ...section, body: event.target.value })} aria-invalid={!!invalid(`section-${section.section_id}`)} />{invalid(`section-${section.section_id}`) && <span className="error">{invalid(`section-${section.section_id}`)}</span>}</div>)}</fieldset>
     <fieldset disabled={locked}><legend>Typed connections ({draft.connections.length})</legend>{draft.connections.map((connection, index) => <ConnectionEditor key={connection.connection_id} campaignId={campaignId} revision={view.head_revision} connection={connection} error={invalid(`connection-${connection.connection_id}`)} onChange={(next) => update({ connections: draft.connections.map((item, itemIndex) => itemIndex === index ? next : item) })} onRemove={() => update({ connections: draft.connections.filter((_, itemIndex) => itemIndex !== index) })} />)}<button type="button" onClick={() => update({ connections: [...draft.connections, { connection_id: nextConnectionId(draft.connections), target_record_id: "", relationship: "connected-to", state: "current", context: "Describe this connection." }] })}>Add typed connection</button></fieldset>
-    <div className="actions">{!proposal && !isCreate && <button type="button" className="danger" disabled={locked} onClick={() => void startRemove()}>Load removal impact</button>}{!proposal && <button type="button" disabled={locked || mode === "remove"} onClick={() => { setMode("edit"); void save(); }}>{isCreate ? "Submit create proposal" : "Save as proposal"}</button>}{!proposal && mode === "remove" && impact && <button type="button" disabled={locked || !removalReady} onClick={() => void save()}>Submit removal proposal</button>}{proposal && correctionMode && <><button type="button" disabled={busy || (proposal.mutation_kind === "remove" && !removalReady)} onClick={() => void submitCorrection()}>Submit correction/rebase</button><button type="button" disabled={busy} onClick={cancelCorrection}>Cancel correction</button></>}</div>{impact && mode === "remove" && <RemovalResolution campaignId={campaignId} revision={view.head_revision} impact={impact} resolutions={resolutions} setResolutions={setResolutions} disabled={locked} />}{proposal && <ProposalReview proposal={proposal} approve={() => { setWardenConfirmed(false); setApprovalDialog("approve"); }} reject={() => setApprovalDialog("reject")} startCorrection={startCorrection} correctionMode={correctionMode} busy={busy} />}</section>;
+    <div className="actions">{!proposal && !isCreate && mode !== "remove" && <button type="button" className="danger" disabled={locked} onClick={() => void startRemove()}>Load removal impact</button>}{!proposal && <button type="button" disabled={locked || mode === "remove"} onClick={() => { setMode("edit"); void save(); }}>{isCreate ? "Submit create proposal" : "Save as proposal"}</button>}{!proposal && mode === "remove" && <button type="button" disabled={busy} onClick={() => { setMode("edit"); setImpact(null); setResolutions([]); setMessage("Removal canceled."); }}>Cancel removal</button>}{!proposal && mode === "remove" && impact && <button type="button" disabled={locked || !removalReady} onClick={() => void save()}>Submit removal proposal</button>}{proposal && correctionMode && <><button type="button" disabled={busy || (proposal.mutation_kind === "remove" && !removalReady)} onClick={() => void submitCorrection()}>Submit correction/rebase</button><button type="button" disabled={busy} onClick={cancelCorrection}>Cancel correction</button></>}</div>{impact && mode === "remove" && <RemovalResolution campaignId={campaignId} revision={view.head_revision} impact={impact} resolutions={resolutions} setResolutions={setResolutions} disabled={locked} />}{proposal && <ProposalReview proposal={proposal} approve={() => { setWardenConfirmed(false); setApprovalDialog("approve"); }} reject={() => setApprovalDialog("reject")} startCorrection={startCorrection} correctionMode={correctionMode} busy={busy} />}</section>;
 }
 
 function ConnectionEditor({ campaignId, revision, connection, error, onChange, onRemove }: { campaignId: string; revision: RevisionRef; connection: EditorConnection; error?: string; onChange: (connection: EditorConnection) => void; onRemove: () => void }) { return <div className="editor-connection"><RecordPicker campaignId={campaignId} revision={revision} label={`Target for ${connection.connection_id}`} value={connection.target_record_id} onChange={(target_record_id) => onChange({ ...connection, target_record_id })} error={error} /><label htmlFor={`connection-relationship-${connection.connection_id}`}>Relationship</label><select id={`connection-relationship-${connection.connection_id}`} value={connection.relationship} onChange={(event) => onChange({ ...connection, relationship: event.target.value })}>{!relationships.includes(connection.relationship) && <option value={connection.relationship} disabled>Unsupported: {connection.relationship}</option>}{relationships.map((value) => <option key={value} value={value}>{value}</option>)}</select><label htmlFor={`connection-state-${connection.connection_id}`}>State</label><select id={`connection-state-${connection.connection_id}`} value={connection.state} onChange={(event) => onChange({ ...connection, state: event.target.value })}>{!connectionStates.includes(connection.state) && <option value={connection.state} disabled>Unsupported: {connection.state}</option>}{connectionStates.map((value) => <option key={value} value={value}>{value}</option>)}</select><label htmlFor={`connection-context-${connection.connection_id}`}>Context</label><textarea id={`connection-context-${connection.connection_id}`} rows={2} value={connection.context} onChange={(event) => onChange({ ...connection, context: event.target.value })} /><button type="button" onClick={onRemove}>Remove connection {connection.connection_id}</button></div>; }

@@ -139,6 +139,12 @@ class EditorBackendTests(unittest.TestCase):
         self.assertEqual(2, self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]["editor_workflow_version"])
         self.assertEqual("edit", proposal["diff"]["summary"])
 
+    def test_editor_accepts_one_character_record_id(self):
+        revision = self._create_record("x")
+        status, view = self.app.editor_record_read("campaign_alpha", revision, "x")
+        self.assertEqual(200, status)
+        self.assertEqual("x", view["record"]["record_id"])
+
     def test_stale_record_digest_fails_before_mutation(self):
         revision = self.app.workflow.head("campaign_alpha")
         view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]

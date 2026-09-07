@@ -2199,14 +2199,21 @@ class SliceApplication:
                         value, proposal_id, version, action, expected, impact=impact,
                         existing_record_ids=self._editor_record_ids(stored["campaign_id"], stored["base"]),
                     )
-                    if not atomic_reject(
-                        stored["campaign_id"], proposal_id, version, expected, atomic_metadata
-                    ):
+                    try:
+                        finalized = atomic_reject(
+                            stored["campaign_id"], proposal_id, version, expected, atomic_metadata
+                        )
+                    except Exception:
+                        self._release(receipt_operation, operation["idempotency_key"], operation["payload_digest"])
+                        raise
+                    if not finalized:
+                        self._release(receipt_operation, operation["idempotency_key"], operation["payload_digest"])
                         raise HTTPFailure(409, "unsafe_binding", "workflow_conflict", "editor_reject", self._request_id(payload))
                     result = self.proposal_repository.get(proposal_id, version)
                 else:
                     result = self.proposals.reject(item)
                     if result is None:
+                        self._release(receipt_operation, operation["idempotency_key"], operation["payload_digest"])
                         raise HTTPFailure(409, "proposal_approval_conflict", "proposal_state_conflict", "editor_reject", self._request_id(payload))
             else:
                 atomic_publish = getattr(self.workflow, "finalize_editor_publication", None)

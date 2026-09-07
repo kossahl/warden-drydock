@@ -14,6 +14,8 @@ export interface AtlasRoute {
   relationshipCursor: string | null;
   generationCursor: string | null;
   proposalCursor: string | null;
+  proposalId: string | null;
+  proposalVersion: number | null;
 }
 
 const authorities = new Set<AtlasAuthority>(["preparation", "canon", "revealed"]);
@@ -32,6 +34,11 @@ export function parseAtlasRoute(location: string): AtlasRoute {
   else if (parts.length === 3 && parts[2] === "history") kind = "history";
   const authority = url.searchParams.get("authority");
   const status = url.searchParams.get("status");
+  const proposalId = url.searchParams.get("proposal");
+  const parsedProposalVersion = Number(url.searchParams.get("version"));
+  const proposalVersion = proposalId && Number.isInteger(parsedProposalVersion) && parsedProposalVersion > 0
+    ? parsedProposalVersion
+    : null;
   return {
     kind,
     campaignId,
@@ -45,6 +52,8 @@ export function parseAtlasRoute(location: string): AtlasRoute {
     relationshipCursor: url.searchParams.get("relationship_cursor"),
     generationCursor: url.searchParams.get("generation_cursor"),
     proposalCursor: url.searchParams.get("proposal_cursor"),
+    proposalId: proposalVersion ? proposalId : null,
+    proposalVersion,
   };
 }
 
