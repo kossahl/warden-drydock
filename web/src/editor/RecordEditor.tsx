@@ -7,6 +7,10 @@ import { httpEditorApi, nextConnectionId, type EditorConnection, type EditorFiel
 const statuses = ["idea", "draft", "review", "canon", "revealed", "archived", "accepted"];
 const authority = (status: string) => status === "canon" || status === "revealed" ? status : "preparation";
 const clone = (record: EditorRecord): EditorRecord => ({ ...record, fields: record.fields.map((item) => ({ ...item })), sections: record.sections.map((item) => ({ ...item })), connections: record.connections.map((item) => ({ ...item })) });
+const reviewedProposalCandidate = (proposal: EditorProposal): EditorRecord | null => {
+  const card = proposal.diff.cards.find((item) => (item.kind === "record_created" || item.kind === "record_updated") && item.after !== null && typeof item.after === "object" && !Array.isArray(item.after));
+  return card ? clone(card.after as EditorRecord) : null;
+};
 const publicId = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 const errorText = (reason: unknown) => reason instanceof Error ? reason.message : "request_failed";
 const errorCategory = (reason: unknown) => reason && typeof reason === "object" && "category" in reason ? String((reason as { category?: unknown }).category ?? "") : "";
@@ -68,6 +72,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   const correctionImpact = useRef<EditorRemovalImpact | null>(null);
   const correctionBase = useRef<{ view: EditorRecordView; impact: EditorRemovalImpact | null } | null>(null);
   const correctionRequest = useRef(0);
+  const proposalRequest = useRef(0);
   const errorHeading = useRef<HTMLHeadingElement>(null);
   const dialogHeading = useRef<HTMLHeadingElement>(null);
   const focusEditorError = useRef(false);
@@ -81,6 +86,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
 
   const load = (sourceRevisionId = revisionId) => {
     correctionRequest.current += 1;
+    proposalRequest.current += 1;
     setBusy(false); setError(""); setMessage(""); setConflict(false); setProposal(null); setImpact(null); setCorrectionMode(false); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
     const sourceRecordId = isCreate ? "campaign-main" : recordId;
     const request = { sequence: (loadRequest.current?.sequence ?? 0) + 1, campaignId, revisionId: sourceRevisionId, recordId: sourceRecordId };
@@ -168,10 +174,18 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   const save = async () => {
     if (mode === "remove" && !removalReady) return;
     if (!view || !draft || !view.editable || !validate()) return;
+    const request = { sequence: proposalRequest.current + 1, editorIdentity };
+    proposalRequest.current = request.sequence;
+    const isCurrentRequest = () => proposalRequest.current === request.sequence && editorIdentityRef.current === request.editorIdentity;
     setBusy(true); setError(""); setMessage(""); setConflict(false);
-    try { const value = await httpEditorApi.propose(isCreate ? "create" : mode, campaignId, view.head_revision, draft, view.editor_workflow_version, resolutions, impact ?? undefined); setProposal(value); navigate?.(editorProposalLocation(value)); setCorrectionMode(false); setMessage("Exact proposal loaded for review. The current head is unchanged."); }
-    catch (reason) { setConflict(staleCategories.includes(errorCategory(reason))); focusEditorError.current = true; setError(`Proposal was not created (${errorText(reason)}).`); }
-    finally { setBusy(false); }
+    try {
+      const value = await httpEditorApi.propose(isCreate ? "create" : mode, campaignId, view.head_revision, draft, view.editor_workflow_version, resolutions, impact ?? undefined);
+      if (!isCurrentRequest()) return;
+      setProposal(value); navigate?.(editorProposalLocation(value)); setCorrectionMode(false); setMessage("Exact proposal loaded for review. The current head is unchanged.");
+    } catch (reason) {
+      if (!isCurrentRequest()) return;
+      setConflict(staleCategories.includes(errorCategory(reason))); focusEditorError.current = true; setError(`Proposal was not created (${errorText(reason)}).`);
+    } finally { if (isCurrentRequest()) setBusy(false); }
   };
   const submitDecision = async () => {
     if (!proposal || !approvalDialog || correctionMode || (approvalDialog === "approve" && !wardenConfirmed)) return;
@@ -212,7 +226,9 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       correctionBase.current = { view: currentHead, impact: currentImpact };
       const rebasingStaleProposal = currentHead.head_revision.revision_id !== proposal.base_revision.revision_id;
       if (proposal.mutation_kind === "create" || !rebasingStaleProposal) {
-        setDraft((current) => current && proposalRecordId ? { ...current, record_id: proposalRecordId } : current);
+        const candidate = reviewedProposalCandidate(proposal);
+        if (candidate) setDraft({ ...candidate, ...(proposalRecordId ? { record_id: proposalRecordId } : {}) });
+        else setDraft((current) => current && proposalRecordId ? { ...current, record_id: proposalRecordId } : current);
       } else {
         setDraft(clone(currentHead.record));
       }

@@ -12,6 +12,7 @@ from functools import lru_cache
 from warden_drydock.core.generator import DATA
 import hashlib
 import json
+import math
 import re
 from typing import Any, Mapping
 
@@ -148,12 +149,20 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
 
 def serialize_document(value: Mapping[str, Any]) -> str:
     value = _document(value)
-    lines = ["---", f"id: {value['record_id']}", f"type: {value['record_type']}", f"name: {value['displayed_name']}", f"status: {value['status']}", f"visibility: {value['visibility']['audience']}", f"warden_only: {str(value['visibility']['warden_only']).lower()}"]
+    lines = [
+        "---",
+        f"id: {_format_frontmatter_value(value['record_id'])}",
+        f"type: {_format_frontmatter_value(value['record_type'])}",
+        f"name: {_format_frontmatter_value(value['displayed_name'])}",
+        f"status: {_format_frontmatter_value(value['status'])}",
+        f"visibility: {_format_frontmatter_value(value['visibility']['audience'])}",
+        f"warden_only: {_format_frontmatter_value(value['visibility']['warden_only'])}",
+    ]
     for field in value["fields"]:
         if field["field_id"] == "warden_only":
             continue
         scalar = field["value"]
-        lines.append(f"{field['field_id']}: {json.dumps(scalar, ensure_ascii=False) if not isinstance(scalar, str) else scalar}")
+        lines.append(f"{field['field_id']}: {_format_frontmatter_value(scalar)}")
     lines += ["---", ""]
     for section in value["sections"]:
         lines += [f"## {section['section_id']}", section["body"], ""]
@@ -169,8 +178,15 @@ def _heading_id(value: str) -> str:
 
 
 def _format_frontmatter_value(value: Any) -> str:
-    if isinstance(value, str) and re.fullmatch(r"[a-zA-Z0-9_.:/+@ -]+", value or ""):
-        return value
+    if isinstance(value, str):
+        if re.fullmatch(r"[a-zA-Z0-9_.:/+@ -]+", value or ""):
+            try:
+                decoded = json.loads(value)
+            except json.JSONDecodeError:
+                return value
+            if not (decoded is None or isinstance(decoded, bool) or (isinstance(decoded, (int, float)) and math.isfinite(decoded))):
+                return value
+        return json.dumps(value, ensure_ascii=False)
     return json.dumps(value, ensure_ascii=False)
 
 

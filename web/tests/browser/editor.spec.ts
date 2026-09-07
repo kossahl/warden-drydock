@@ -65,6 +65,9 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
   await expect(page).toHaveURL(/proposal=proposal_editor&version=1$/);
   await page.reload();
   await expect(editor.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
+  await editor.getByRole("button", { name: "Create correction/rebase" }).click();
+  await expect(editor.getByLabel("Displayed name")).toHaveValue("Edited Station Keeper");
+  await editor.getByRole("button", { name: "Cancel correction" }).click();
   await editor.getByRole("button", { name: "Approve and publish exact proposal" }).click();
   await expect(page.getByRole("heading", { name: "Approve exact proposal" })).toBeFocused();
   await expect(page.getByRole("alert")).toHaveText(/broadens audience visibility/);
@@ -245,8 +248,9 @@ test("create correction uses the candidate ID, reads campaign context, and opens
       return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: { ...editorRecord, record_id: "campaign-main" } }) });
     }
     if (request.method() === "POST" && path.endsWith("/editor/records/proposals")) {
-      initialBody = JSON.parse(request.postData() ?? "{}");
-      return route.fulfill({ status: 201, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify(createdProposal) });
+      const submittedBody = JSON.parse(request.postData() ?? "{}");
+      initialBody = submittedBody;
+      return route.fulfill({ status: 201, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ ...createdProposal, diff: { ...createdProposal.diff, cards: [{ ...createdProposal.diff.cards[0], after: submittedBody.candidate }] } }) });
     }
     if (request.method() === "POST" && path.endsWith("/corrections")) {
       correctionBody = JSON.parse(request.postData() ?? "{}");

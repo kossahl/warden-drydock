@@ -134,6 +134,68 @@ class EditorSourcePreservationTests(unittest.TestCase):
         self.assertEqual(reviewed_candidate["displayed_name"], readback["displayed_name"])
         self.assertEqual(reviewed_candidate["fields"], readback["fields"])
 
+    def test_typed_frontmatter_scalars_round_trip_through_source_preserving_mutation(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+count: old
+ratio: old
+enabled: old
+empty: old
+text_number: old
+---
+
+## Summary
+Keep this record.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        typed_values = {
+            "count": 42,
+            "ratio": 3.5,
+            "enabled": True,
+            "empty": None,
+            "text_number": "42",
+        }
+        for field in candidate["fields"]:
+            if field["field_id"] in typed_values:
+                field["value"] = typed_values[field["field_id"]]
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+        round_tripped = parse_document(result, "record-main", "npc")
+
+        self.assertEqual(typed_values, {field["field_id"]: field["value"] for field in round_tripped["fields"]})
+
+    def test_typed_frontmatter_scalars_survive_proposal_approval_and_readback(self):
+        for index, value in enumerate((42, 3.5, True, None, "42")):
+            backend = _editor_backend.EditorBackendTests(
+                "test_edit_is_exact_and_replay_does_not_advance_workflow"
+            )
+            backend.setUp()
+            self.addCleanup(backend.doCleanups)
+            self.backend = backend
+            self.app = backend.app
+            revision = self.app.workflow.head("campaign_alpha")
+            view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
+            candidate = deepcopy(view["record"])
+            next(field for field in candidate["fields"] if field["field_id"] == "system")["value"] = value
+            candidate["content_digest"] = document_digest(candidate)
+
+            _, reviewed_candidate, (status, proposal) = self._edit_candidate(
+                candidate, key=f"idem_typed_frontmatter_publication_{index}"
+            )
+            self.assertEqual(201, status)
+            _, published = backend._approve_editor(proposal)
+            published_revision = published["published_revision"]["revision_id"]
+            readback = self.app.editor_record_read(
+                "campaign_alpha", published_revision, "campaign-main"
+            )[1]["record"]
+
+            self.assertEqual(reviewed_candidate["fields"], readback["fields"])
+
     def test_trailing_newlines_survive_multiple_crlf_sections_before_connections(self):
         source = (
             "---\r\n"

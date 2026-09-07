@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import math
 import re
 from pathlib import Path
 
@@ -230,24 +231,40 @@ def validate_graph(root: Path) -> None:
     _graph_or_exit(root.resolve())
 
 
-def frontmatter(text: str) -> dict[str, str]:
+_STRING_FRONTMATTER_KEYS = {"id", "type", "name", "status", "ownership", "visibility", "warden_only"}
+
+
+def _frontmatter_scalar(value: str, key: str) -> object:
+    if value.startswith('"') and value.endswith('"'):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return value[1:-1]
+        return decoded if isinstance(decoded, str) else value[1:-1]
+    if key not in _STRING_FRONTMATTER_KEYS:
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        if decoded is None or isinstance(decoded, bool):
+            return decoded
+        if isinstance(decoded, (int, float)) and math.isfinite(decoded):
+            return decoded
+    return value
+
+
+def frontmatter(text: str) -> dict[str, object]:
     if not text.startswith("---\n"):
         return {}
     end = text.find("\n---", 4)
     if end < 0:
         return {}
-    result: dict[str, str] = {}
+    result: dict[str, object] = {}
     for line in text[4:end].splitlines():
         if ":" in line and not line.startswith(" "):
             key, value = line.split(":", 1)
             value = value.strip()
-            if value.startswith('"') and value.endswith('"'):
-                try:
-                    decoded = json.loads(value)
-                except json.JSONDecodeError:
-                    decoded = value[1:-1]
-                value = decoded if isinstance(decoded, str) else value[1:-1]
-            result[key.strip()] = value
+            result[key.strip()] = _frontmatter_scalar(value, key.strip())
     return result
 
 
@@ -515,7 +532,8 @@ def validate_campaign(root: Path) -> int:
                 if field not in metadata:
                     errors.append(f"{relative}: missing required field {field}")
             for field in entity_rule.get("nonempty_fields", []):
-                if not metadata.get(field, "").strip():
+                value = metadata.get(field, "")
+                if not isinstance(value, str) or not value.strip():
                     errors.append(f"{relative}: field {field} must not be empty")
             for field, required_value in entity_rule.get("required_values", {}).items():
                 if metadata.get(field) != required_value:
