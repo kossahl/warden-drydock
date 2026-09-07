@@ -75,7 +75,7 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\?revision=revision_three$/);
   await expect(page.getByRole("complementary", { name: "Viewed revision" })).toHaveText(/revision_three · Head/);
   await expect(page.getByRole("link", { name: "Open head", exact: true })).toHaveCount(0);
-  expect(campaignReads).toBe(2);
+  expect(campaignReads).toBe(3);
 });
 
 test("delayed editor reads cannot overwrite a different SPA record", async ({ page }) => {
@@ -150,7 +150,7 @@ test("rejection applies the returned workflow version to a fresh save", async ({
   await expect(editor.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
   expect(submittedVersions).toEqual([[1, 1], [3, 3]]);
   expect(editorReads).toBe(1);
-  await expect(page).toHaveURL(/records\/record-one\?revision=revision_two$/);
+  await expect(page).toHaveURL(/records\/record-one\?revision=revision_two&proposal=proposal_editor&version=1$/);
 });
 
 test("same-head workflow conflict reloads the editor before retrying", async ({ page }) => {
