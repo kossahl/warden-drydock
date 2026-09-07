@@ -28,7 +28,16 @@ export interface EditorRemovalImpact { contract_name: "editor_removal_impact"; c
 
 const escapeAscii = (value: string): string => value.replace(/[\u0080-\uFFFF]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
 const compareKeys = (left: string, right: string): number => { const leftCodePoints = Array.from(left, (character) => character.codePointAt(0)!); const rightCodePoints = Array.from(right, (character) => character.codePointAt(0)!); for (let index = 0; index < Math.min(leftCodePoints.length, rightCodePoints.length); index += 1) { if (leftCodePoints[index] !== rightCodePoints[index]) return leftCodePoints[index] - rightCodePoints[index]; } return leftCodePoints.length - rightCodePoints.length; };
-const canonical = (value: unknown, ensureAscii = true): string => Array.isArray(value) ? `[${value.map((item) => canonical(item, ensureAscii)).join(",")}]` : value && typeof value === "object" ? `{${Object.keys(value as Record<string, unknown>).sort(compareKeys).map((key) => `${ensureAscii ? escapeAscii(JSON.stringify(key)) : JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key], ensureAscii)}`).join(",")}}` : ensureAscii ? escapeAscii(JSON.stringify(value)) : JSON.stringify(value);
+const pythonNumber = (value: number): string => {
+  if (!Number.isFinite(value)) return "null";
+  if (Object.is(value, -0)) return "-0.0";
+  const absolute = Math.abs(value);
+  if (absolute !== 0 && (absolute < 1e-4 || absolute >= 1e16)) {
+    return value.toExponential().replace(/e([+-])(\d+)$/, (_match, sign: string, exponent: string) => `e${sign}${exponent.padStart(2, "0")}`);
+  }
+  return JSON.stringify(value);
+};
+const canonical = (value: unknown, ensureAscii = true): string => Array.isArray(value) ? `[${value.map((item) => canonical(item, ensureAscii)).join(",")}]` : value && typeof value === "object" ? `{${Object.keys(value as Record<string, unknown>).sort(compareKeys).map((key) => `${ensureAscii ? escapeAscii(JSON.stringify(key)) : JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key], ensureAscii)}`).join(",")}}` : typeof value === "number" ? pythonNumber(value) : ensureAscii ? escapeAscii(JSON.stringify(value)) : JSON.stringify(value);
 export async function digest(value: unknown, ensureAscii = true): Promise<string> { const bytes = new TextEncoder().encode(canonical(value, ensureAscii).replaceAll("\r\n", "\n").replaceAll("\r", "\n")); const hash = await crypto.subtle.digest("SHA-256", bytes); return Array.from(new Uint8Array(hash), (item) => item.toString(16).padStart(2, "0")).join(""); }
 const recordDigestInput = (record: EditorRecord) => ({ record_id: record.record_id, record_type: record.record_type, displayed_name: record.displayed_name, status: record.status, authority: record.authority, visibility: record.visibility, fields: record.fields, sections: record.sections, connections: record.connections });
 export const recomputeRecordDigest = (record: EditorRecord) => digest(recordDigestInput(record), false);

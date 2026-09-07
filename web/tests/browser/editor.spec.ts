@@ -171,7 +171,7 @@ test("same-head workflow conflict reloads the editor before retrying", async ({ 
       const version = request.postDataJSON().binding.expected_editor_workflow_version;
       submittedVersions.push(version);
       return version === 1
-        ? route.fulfill({ status: 409, json: { error: { code: "workflow_conflict", category: "workflow_conflict" } } })
+        ? route.fulfill({ status: 409, json: { error: { code: "workflow_conflict", category: "unsafe_binding" } } })
         : route.fulfill({ status: 201, json: proposal });
     }
     return route.fallback();

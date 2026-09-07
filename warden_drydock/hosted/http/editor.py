@@ -218,7 +218,7 @@ def _heading_id(value: str) -> str:
 
 def _format_frontmatter_value(value: Any) -> str:
     if isinstance(value, str):
-        if re.fullmatch(r"[a-zA-Z0-9_.:/+@ -]+", value or ""):
+        if value == value.strip() and re.fullmatch(r"[a-zA-Z0-9_.:/+@ -]+", value or ""):
             try:
                 decoded = json.loads(value)
             except json.JSONDecodeError:

@@ -134,6 +134,27 @@ class EditorSourcePreservationTests(unittest.TestCase):
         self.assertEqual(reviewed_candidate["displayed_name"], readback["displayed_name"])
         self.assertEqual(reviewed_candidate["fields"], readback["fields"])
 
+    def test_frontmatter_values_with_surrounding_whitespace_survive_publication(self):
+        revision = self.app.workflow.head("campaign_alpha")
+        view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
+        candidate = deepcopy(view["record"])
+        candidate["displayed_name"] = " Keeper "
+        next(field for field in candidate["fields"] if field["field_id"] == "system")["value"] = " mothership "
+        candidate["content_digest"] = document_digest(candidate)
+
+        _, reviewed_candidate, (status, proposal) = self._edit_candidate(
+            candidate, key="idem_whitespace_frontmatter_publication"
+        )
+        self.assertEqual(201, status)
+        _, published = self.backend._approve_editor(proposal)
+        published_revision = published["published_revision"]["revision_id"]
+        readback = self.app.editor_record_read(
+            "campaign_alpha", published_revision, "campaign-main"
+        )[1]["record"]
+
+        self.assertEqual(reviewed_candidate["displayed_name"], readback["displayed_name"])
+        self.assertEqual(reviewed_candidate["fields"], readback["fields"])
+
     def test_typed_frontmatter_scalars_round_trip_through_source_preserving_mutation(self):
         source = """---
 id: record-main

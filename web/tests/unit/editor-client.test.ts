@@ -18,6 +18,11 @@ describe("record editor client bindings", () => {
     expect(await digest({ text: "café 😀", "\uE000": "bmp", "\u{10000}": "astral" })).toBe("a32d1782b2ae0836150433ce5190c088fa8197ccca2f4748adc8834f057168c4");
   });
 
+  it("matches Python exponent formatting for floating-point request values", async () => {
+    expect(await digest({ number: 1e-7 })).toBe("ebdf2f1d26e9cdfbd84490d407c41600abee1cfe8792a692d830accba5158fdc");
+    expect(await digest({ number: 1.23e-6 })).toBe("6c52039bf8c1802b0613c78e6b56d1568c8133fd61f24fadfebab0f6f123f87e");
+  });
+
   it("allocates unique public connection IDs after removal", () => {
     const connections = [
       { connection_id: "connection_1", target_record_id: "one", relationship: "related-to", state: "current", context: "One" },

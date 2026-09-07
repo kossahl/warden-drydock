@@ -371,3 +371,35 @@ test("stale correction binds to the loaded head even if a later head appears bef
   expect(staleRequest.candidate?.displayed_name).toBe("Manually reapplied change");
   expect(staleRequest.operation_request?.expected_revision).not.toBe(laterRevision.revision_id);
 });
+
+test("URL-bound proposal survives record-read retry", async ({ page }) => {
+  await installAtlasApi(page);
+  let editorReads = 0;
+  let proposalReads = 0;
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      editorReads += 1;
+      if (editorReads === 1) return json(route, { error: { code: "editor_unavailable" } }, 503);
+      return json(route, view(headRevision, headRevision, originalRecord));
+    }
+    if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_correction/versions/1")) {
+      proposalReads += 1;
+      return json(route, proposal(headRevision, originalRecord));
+    }
+    return route.fallback();
+  });
+
+  const proposalResponse = page.waitForResponse((response) => response.request().method() === "GET"
+    && new URL(response.url()).pathname.endsWith("/editor/proposals/proposal_correction/versions/1"));
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two&proposal=proposal_correction&version=1");
+  await proposalResponse;
+  await page.waitForLoadState("networkidle");
+  const panel = page.locator("section.editor");
+  await expect(panel.getByRole("button", { name: "Retry" })).toBeVisible();
+  await panel.getByRole("button", { name: "Retry" }).click();
+  await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
+  expect(editorReads).toBe(2);
+  expect(proposalReads).toBe(2);
+});
