@@ -80,10 +80,12 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("invalid_record_name")
     if value["authority"] != authority_for(status):
         raise ValueError("authority_status_mismatch")
-    fields = list(value["fields"]); sections = list(value["sections"]); connections = list(value["connections"])
+    fields = list(value["fields"]); raw_sections = list(value["sections"]); connections = list(value["connections"])
     if any(not isinstance(item, Mapping) or set(item) != {"field_id", "value"} for item in fields): raise ValueError("invalid_fields")
-    if any(not isinstance(item, Mapping) or set(item) != {"section_id", "body"} for item in sections): raise ValueError("invalid_sections")
+    if any(not isinstance(item, Mapping) or set(item) != {"section_id", "body"} for item in raw_sections): raise ValueError("invalid_sections")
     if any(not isinstance(item, Mapping) or set(item) != {"connection_id", "target_record_id", "relationship", "state", "context"} for item in connections): raise ValueError("invalid_connections")
+    if any(not isinstance(item["body"], str) or len(item["body"]) > 200000 for item in raw_sections): raise ValueError("invalid_section_body")
+    sections = [dict(item, body=normalize_text(item["body"])) for item in raw_sections]
     _unique(fields, "field_id"); _unique(sections, "section_id"); _unique(connections, "connection_id")
     for item in fields:
         if not isinstance(item["field_id"], str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", item["field_id"]) is None:
@@ -112,11 +114,12 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
 
 def document_digest(value: Mapping[str, Any]) -> str:
     """Digest the typed document, excluding its self-referential digest."""
+    sections = [dict(item, body=normalize_text(item["body"])) for item in value["sections"]]
     return hashlib.sha256(json.dumps(
         {key: value[key] for key in (
             "record_id", "record_type", "displayed_name", "status", "authority",
-            "visibility", "fields", "sections", "connections",
-        )}, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            "visibility", "fields", "connections",
+        )} | {"sections": sections}, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     ).encode("utf-8")).hexdigest()
 
 

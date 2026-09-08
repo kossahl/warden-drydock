@@ -115,6 +115,28 @@ class EditorSourcePreservationTests(unittest.TestCase):
             )["sections"],
         )
 
+    def test_section_carriage_returns_are_normalized_before_review_and_readback(self):
+        revision = self.app.workflow.head("campaign_alpha")
+        view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
+        candidate = deepcopy(view["record"])
+        candidate["sections"][0]["body"] = "First\r\nsecond\rThird"
+        candidate["content_digest"] = document_digest(candidate)
+
+        _, reviewed_candidate, (status, proposal) = self._edit_candidate(
+            candidate, key="idem_section_carriage_returns"
+        )
+        self.assertEqual(201, status)
+        normalized_candidate = proposal["diff"]["cards"][0]["after"]
+        self.assertEqual("First\nsecond\nThird", normalized_candidate["sections"][0]["body"])
+        self.assertNotEqual(reviewed_candidate["sections"], normalized_candidate["sections"])
+
+        _, published = self.backend._approve_editor(proposal)
+        published_revision = published["published_revision"]["revision_id"]
+        readback = self.app.editor_record_read(
+            "campaign_alpha", published_revision, "campaign-main"
+        )[1]["record"]
+        self.assertEqual(normalized_candidate["sections"], readback["sections"])
+
     def test_leading_blank_lines_survive_real_publication_readback(self):
         revision = self.app.workflow.head("campaign_alpha")
         view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]

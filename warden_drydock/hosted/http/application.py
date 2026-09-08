@@ -2164,9 +2164,9 @@ class SliceApplication:
         return terminal
 
     @staticmethod
-    def _editor_conflict_value(value: dict) -> dict:
+    def _editor_conflict_value(value: dict, *, status: str = "conflict") -> dict:
         conflict = deepcopy(value)
-        conflict["core_proposal"]["proposal"]["status"] = "conflict"
+        conflict["core_proposal"]["proposal"]["status"] = status
         conflict["core_proposal"]["approval_binding"] = None
         conflict["publication"] = {"status": "not_published", "published_revision": None}
         conflict["proposal_payload_digest"] = canonical_digest({
@@ -2175,9 +2175,9 @@ class SliceApplication:
         return conflict
 
     def _editor_persist_conflict_metadata(
-        self, proposal_id: str, version: int, stored: dict, value: dict,
+        self, proposal_id: str, version: int, stored: dict, value: dict, *, status: str = "conflict",
     ) -> dict:
-        value = self._editor_conflict_value(value)
+        value = self._editor_conflict_value(value, status=status)
         save_editor = getattr(self.proposal_repository, "save_editor_metadata", None)
         if save_editor is not None:
             save_editor(proposal_id, version, value)
@@ -2307,7 +2307,7 @@ class SliceApplication:
                         self._editor_persist_conflict_metadata(proposal_id, version, stored, value)
                         raise HTTPFailure(409, "stale_revision", "stale_revision", "editor_approve", self._request_id(payload))
                     if result.status is ProposalStatus.QUARANTINED:
-                        self._editor_persist_conflict_metadata(proposal_id, version, stored, value)
+                        self._editor_persist_conflict_metadata(proposal_id, version, stored, value, status="quarantined")
                     if result.status is not ProposalStatus.PUBLISHED:
                         raise HTTPFailure(422, "proposal_validation_failure", "proposal_validation_failure", "editor_approve", self._request_id(payload))
                 except HTTPFailure:

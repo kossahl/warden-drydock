@@ -252,7 +252,7 @@ class EditorBackendTests(unittest.TestCase):
         stored = self.app.proposal_repository.get(proposal["proposal_id"], proposal["proposal_version"])
         self.assertEqual(ProposalStatus.QUARANTINED, stored.status)
         view = self.app.editor_proposal_read(proposal["proposal_id"], proposal["proposal_version"])[1]
-        self.assertEqual("conflict", view["core_proposal"]["proposal"]["status"])
+        self.assertEqual("quarantined", view["core_proposal"]["proposal"]["status"])
         self.assertEqual("not_published", view["publication"]["status"])
         with self.assertRaises(HTTPFailure) as retry_error:
             self._approve_editor(proposal)

@@ -260,6 +260,25 @@ test("superseded proposal review is read-only", async ({ page }) => {
   await expect(panel.getByRole("button", { name: "Approve and publish exact proposal" })).toBeDisabled();
 });
 
+test("quarantined proposal review is read-only", async ({ page }) => {
+  await installAtlasApi(page);
+  const quarantined = { ...proposal(headRevision, originalRecord), core_proposal: { proposal: { status: "quarantined" } } };
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) return json(route, view(headRevision, headRevision, originalRecord));
+    if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_correction/versions/1")) return json(route, quarantined);
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two&proposal=proposal_correction&version=1");
+  const panel = editor(page);
+  await expect(panel.getByText(/Status: quarantined/)).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Reject exact proposal" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Create correction\/rebase" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Approve and publish exact proposal" })).toBeDisabled();
+});
+
 test("stale correction responses cannot install a proposal after SPA navigation", async ({ page }) => {
   await installAtlasApi(page);
   let releaseCorrection!: () => void;
