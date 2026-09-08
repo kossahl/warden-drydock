@@ -380,6 +380,31 @@ Keep this record.
         self.assertIn("<!-- drydock:connection-id=custom_occurrence -->", result)
         self.assertEqual(candidate["connections"], round_tripped["connections"])
 
+    def test_mutating_connection_preserves_unrelated_markdown_bullets(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Connections
+
+- An ordinary Markdown note.
+<!-- drydock:connection-id=custom_occurrence -->
+- `guards` -> [[record-gate]] (`current`) — Watches the gate.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["connections"][0]["context"] = "Watches the gate quietly."
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+
+        self.assertIn("- An ordinary Markdown note.", result)
+        self.assertEqual(candidate["connections"], parse_document(result, "record-main", "npc")["connections"])
+        self.assertIn("<!-- drydock:connection-id=custom_occurrence -->", result)
+
     def test_replacing_different_length_sections_preserves_unrelated_bytes_and_connections(self):
         source = """---
 id: record-main

@@ -125,9 +125,17 @@ def document_digest(value: Mapping[str, Any]) -> str:
 
 def _connection_markers(content: str) -> dict[int, str]:
     """Read editor-only occurrence IDs from the first typed Connections block."""
-    markers: dict[int, str] = {}
+    return {
+        line_number: marker_id
+        for line_number, (_, marker_id) in _connection_marker_occurrences(content).items()
+    }
+
+
+def _connection_marker_occurrences(content: str) -> dict[int, tuple[int, str]]:
+    """Map each typed connection line to its associated marker line and ID."""
+    markers: dict[int, tuple[int, str]] = {}
     in_connections = False
-    pending: str | None = None
+    pending: tuple[int, str] | None = None
     for line_number, line in enumerate(content.split("\n"), 1):
         heading = re.match(r"^##\s+(.+?)\s*$", line)
         if heading:
@@ -140,7 +148,7 @@ def _connection_markers(content: str) -> dict[int, str]:
             continue
         marker = _CONNECTION_MARKER.fullmatch(line)
         if marker:
-            pending = marker.group("id")
+            pending = (line_number, marker.group("id"))
             continue
         if line.lstrip().startswith("-"):
             if pending is not None:
@@ -403,15 +411,35 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
     if connection_index is not None:
         if old["connections"] != new["connections"]:
             next_heading = next((i for i in range(connection_index + 1, len(lines)) if re.match(r"^##\s+", lines[i])), len(lines))
-            kept = [line for line in lines[connection_index + 1:next_heading]
-                    if not line.lstrip().startswith("-") and not _CONNECTION_MARKER.fullmatch(line.rstrip("\r\n"))]
             connection_lines = []
             for item in new["connections"]:
                 connection_lines.extend([
                     f"<!-- drydock:connection-id={item['connection_id']} -->{newline}",
                     f"{_connection_line(item)}{newline}",
                 ])
-            lines[connection_index + 1:next_heading] = kept[:1] + connection_lines + kept[1:]
+            # Use `parse_connections`' typed line numbers as the replacement set
+            # instead of treating every Markdown bullet as editor data.
+            current_source = normalize_text("".join(lines))
+            typed_connections, _ = parse_connections(current_source, source_id=new["record_id"], path=None)  # type: ignore[arg-type]
+            typed_line_indexes = {item.line - 1 for item in typed_connections}
+            marker_line_indexes = {
+                marker_line - 1
+                for line_number, (marker_line, _) in _connection_marker_occurrences(current_source).items()
+                if line_number - 1 in typed_line_indexes
+            }
+            segment = lines[connection_index + 1:next_heading]
+            if typed_line_indexes:
+                first_typed = min(typed_line_indexes)
+                rewritten: list[str] = []
+                for index, line in enumerate(segment, connection_index + 1):
+                    if index == first_typed:
+                        rewritten.extend(connection_lines)
+                    if index in typed_line_indexes or index in marker_line_indexes:
+                        continue
+                    rewritten.append(line)
+                lines[connection_index + 1:next_heading] = rewritten
+            else:
+                lines[connection_index + 1:next_heading] = segment[:1] + connection_lines + segment[1:]
     elif new["connections"]:
         if lines and lines[-1].strip():
             lines.append(newline)

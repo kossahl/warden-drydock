@@ -133,6 +133,48 @@ test("stale correction reads cannot overwrite a record after SPA navigation", as
   await expect(panel.getByLabel("Displayed name")).toHaveValue("Legacy Ship");
 });
 
+test("clears the old editor while a navigated record read is pending or fails", async ({ page }) => {
+  await installAtlasApi(page);
+  let releaseRecordRead!: () => void;
+  let recordReadStarted!: () => void;
+  let proposalRequests = 0;
+  const recordReadReleased = new Promise<void>((resolve) => { releaseRecordRead = resolve; });
+  const recordReadRequestStarted = new Promise<void>((resolve) => { recordReadStarted = resolve; });
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      return json(route, view(headRevision, headRevision, originalRecord));
+    }
+    if (request.method() === "GET" && path.endsWith("/records/record-two/editor")) {
+      recordReadStarted();
+      await recordReadReleased;
+      return json(route, { error: { code: "editor_read_failed", category: "service_unavailable" } }, 503);
+    }
+    if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) {
+      proposalRequests += 1;
+      return json(route, proposal(headRevision, { ...originalRecord, displayed_name: "Stale submission" }), 201);
+    }
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const panel = editor(page);
+  await expect(panel.getByLabel("Displayed name")).toHaveValue("Station Keeper");
+  await page.getByRole("link", { name: "Legacy Ship" }).first().click();
+  await recordReadRequestStarted;
+
+  await expect(editor(page)).toHaveCount(0);
+  await expect(page.getByLabel("Displayed name")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save as proposal" })).toHaveCount(0);
+  expect(proposalRequests).toBe(0);
+
+  releaseRecordRead();
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Displayed name")).toHaveCount(0);
+  expect(proposalRequests).toBe(0);
+});
+
 test("stale proposal responses cannot install a proposal after SPA navigation", async ({ page }) => {
   await installAtlasApi(page);
   let releaseProposal!: () => void;

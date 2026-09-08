@@ -151,6 +151,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       && proposal.proposal_version === proposalVersion;
     if (hasUrlProposal && loadRequest.current !== null) setProposalLoadNonce((current) => current + 1);
     if (!preserveProposal) { proposalRestoreIdentity.current = null; setProposal(null); }
+    setView(null); setDraft(null);
     setBusy(false); setError(""); setMessage(""); setConflict(false); setImpact(null); setCorrectionMode(false); setCorrectionParentRevision(null); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
     const sourceRecordId = isCreate ? "campaign-main" : recordId;
     const request = { sequence: (loadRequest.current?.sequence ?? 0) + 1, campaignId, revisionId: sourceRevisionId, recordId: sourceRecordId };

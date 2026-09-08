@@ -421,6 +421,55 @@ class SliceApplication:
         else:
             self._editor_workflow[proposal.campaign_id] = expected_workflow + 1
 
+    def _pending_approval_proposal(
+        self, manifest: SnapshotManifest, intent: PublicationIntent,
+    ) -> ProposalVersion | None:
+        """Find the one proposal that can authorize a missing projection.
+
+        The snapshot is the recovery authority, but its projection normally
+        carries the proposal provenance needed by the editor finalizer.  When
+        the process stopped before that projection was persisted, recover that
+        binding from the durable proposal row only after checking every
+        publication identity field.
+        """
+        if (
+            intent.kind is not PublicationKind.APPROVAL
+            or intent.status is not IntentStatus.PENDING
+        ):
+            return None
+        if (
+            intent.campaign_id != manifest.campaign_id
+            or intent.revision_id != manifest.revision_id
+            or intent.parent_revision != manifest.parent_revision
+            or intent.ordinal != manifest.ordinal
+            or intent.tree_digest != manifest.tree_digest
+            or intent.change_digest != manifest.change_digest
+        ):
+            return None
+        rows = self.proposal_repository.proposal_rows(
+            manifest.campaign_id, manifest.parent_revision
+        )
+        matches = []
+        for row in rows:
+            proposal = row.get("item") if isinstance(row, dict) else None
+            if proposal is None or proposal.status is not ProposalStatus.APPROVING:
+                continue
+            metadata = proposal.editor_metadata
+            if (
+                not isinstance(metadata, dict)
+                or metadata.get("contract_name") != "editor_proposal_view"
+            ):
+                continue
+            if (
+                proposal.campaign_id == manifest.campaign_id
+                and proposal.base_revision == manifest.parent_revision
+                and self._proposal_publication_digest(proposal) == manifest.change_digest
+                and manifest.publication_intent_token
+                == self._id("token", proposal.proposal_id, proposal.version)
+            ):
+                matches.append(proposal)
+        return matches[0] if len(matches) == 1 else None
+
     def _recover_pending_atlas_publications(self) -> None:
         """Resolve publication and unfinished editor-state crash windows."""
         for manifest in self.revisions.store.inventory():
@@ -432,20 +481,35 @@ class SliceApplication:
             }:
                 continue
             intent = matches[0]
-            try:
-                candidate = self.atlas_repository.get(
-                    manifest.campaign_id, manifest.revision_id
-                )
-            except KeyError:
-                # A finalized generic publication is already complete.  Only
-                # an editor proposal with unfinished state needs a projection
-                # to reconcile its second workflow boundary.
-                if intent.status is IntentStatus.FINALIZED:
-                    continue
-                self._discard_pending_publication(manifest)
-                continue
             proposal = None
             try:
+                try:
+                    candidate = self.atlas_repository.get(
+                        manifest.campaign_id, manifest.revision_id
+                    )
+                except KeyError:
+                    # A finalized generic publication is already complete. A
+                    # pending approval may still be recoverable when the
+                    # snapshot won the first durable boundary but its Atlas
+                    # projection did not.
+                    if intent.status is IntentStatus.FINALIZED:
+                        continue
+                    proposal = self._pending_approval_proposal(manifest, intent)
+                    if proposal is None:
+                        self._discard_pending_publication(manifest)
+                        continue
+                    self._atlas_provenance_overrides[manifest.revision_id] = (
+                        proposal.proposal_id, proposal.version
+                    )
+                    try:
+                        self.atlas_rebuilder.rebuild_pending(manifest)
+                    finally:
+                        self._atlas_provenance_overrides.pop(
+                            manifest.revision_id, None
+                        )
+                    candidate = self.atlas_repository.get(
+                        manifest.campaign_id, manifest.revision_id
+                    )
                 provenance = (
                     candidate.history_entry.proposal_id,
                     candidate.history_entry.proposal_version,
