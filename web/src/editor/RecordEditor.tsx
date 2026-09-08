@@ -228,7 +228,8 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
     if (!error || !focusEditorError.current) return;
     focusEditorError.current = false;
     if (document.activeElement?.closest("#atlas-content") && !document.activeElement?.closest(".editor")) return;
-    errorHeading.current?.focus();
+    const frame = requestAnimationFrame(() => errorHeading.current?.focus());
+    return () => cancelAnimationFrame(frame);
   }, [error]);
   useEffect(() => {
     if (!approvalDialog || !proposal) {
@@ -342,7 +343,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       setApprovalDialog(null); if (approving) { setMessage("Proposal approved and published."); window.dispatchEvent(new Event("drydock:campaign-mutated")); const revision = result.published_revision as RevisionRef | undefined; const createdRecordId = proposal.mutation_kind === "create" ? proposal.record_bindings[0]?.record_id : undefined; if (revision && navigate) navigate(createdRecordId ? `/campaigns/${encodeURIComponent(campaignId)}/records/${encodeURIComponent(createdRecordId)}?revision=${encodeURIComponent(revision.revision_id)}` : `/campaigns/${encodeURIComponent(campaignId)}?revision=${encodeURIComponent(revision.revision_id)}`); } else { setView((current) => current ? { ...current, editor_workflow_version: result.editor_workflow_version as number } : current); proposalRestoreIdentity.current = null; setProposal(null); navigate?.(editorProposalLocation(null)); setCorrectionMode(false); setMessage("Proposal rejected. No campaign revision changed."); }
     } catch (reason) {
       if (!isCurrentRequest()) return;
-      setConflict(isStaleReason(reason)); focusEditorError.current = true; setError(`${approving ? "Approval" : "Rejection"} blocked (${errorText(reason)}). Refresh and review the current head.`);
+      setApprovalDialog(null); setConflict(isStaleReason(reason)); focusEditorError.current = true; setError(`${approving ? "Approval" : "Rejection"} blocked (${errorText(reason)}). Refresh and review the current head.`);
     } finally { if (isCurrentRequest()) setBusy(false); }
   };
   const startCorrection = async () => {

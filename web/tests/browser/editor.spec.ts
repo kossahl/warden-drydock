@@ -166,6 +166,63 @@ test("rejection applies the returned workflow version to a fresh save", async ({
   await expect(page).toHaveURL(/records\/record-one\?revision=revision_two&proposal=proposal_editor&version=1$/);
 });
 
+test("approval conflicts close the dialog and focus the editor error", async ({ page }) => {
+  await installAtlasApi(page);
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      return route.fulfill({ headers: { "X-CSRF-Token": "browser-csrf" }, json: { contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 2, historical: false, editable: true, record: editorRecord } });
+    }
+    if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) return route.fulfill({ status: 201, json: proposal });
+    if (request.method() === "POST" && path.endsWith("/editor/proposals/proposal_editor/versions/1/approval")) {
+      return route.fulfill({ status: 409, json: { error: { code: "stale_campaign_head", category: "stale_revision" } } });
+    }
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const editor = page.locator(".editor");
+  await editor.getByRole("button", { name: "Save as proposal" }).click();
+  await editor.locator(".editor-review").getByRole("button", { name: "Approve and publish exact proposal" }).click();
+  await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
+  const approvalButton = page.getByRole("dialog").getByRole("button", { name: "Approve and publish exact proposal" });
+  await expect(approvalButton).toBeEnabled();
+  await approvalButton.click();
+
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const errorHeading = editor.getByRole("heading", { name: "Editor error" });
+  await expect(errorHeading).toBeVisible();
+  await expect(errorHeading).toBeFocused();
+});
+
+test("rejection transport errors close the dialog and focus the editor error", async ({ page }) => {
+  await installAtlasApi(page);
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      return route.fulfill({ headers: { "X-CSRF-Token": "browser-csrf" }, json: { contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 2, historical: false, editable: true, record: editorRecord } });
+    }
+    if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) return route.fulfill({ status: 201, json: proposal });
+    if (request.method() === "POST" && path.endsWith("/editor/proposals/proposal_editor/versions/1/rejection")) return route.abort("failed");
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const editor = page.locator(".editor");
+  await editor.getByRole("button", { name: "Save as proposal" }).click();
+  await editor.locator(".editor-review").getByRole("button", { name: "Reject exact proposal" }).click();
+  const rejectionButton = page.getByRole("dialog").getByRole("button", { name: "Reject exact proposal" });
+  await expect(rejectionButton).toBeEnabled();
+  await rejectionButton.click();
+
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const errorHeading = editor.getByRole("heading", { name: "Editor error" });
+  await expect(errorHeading).toBeVisible();
+  await expect(errorHeading).toBeFocused();
+});
+
 test("same-head workflow conflict reloads the editor before retrying", async ({ page }) => {
   await installAtlasApi(page);
   let editorReads = 0;

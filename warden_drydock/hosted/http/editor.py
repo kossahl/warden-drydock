@@ -239,7 +239,7 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
         _id(connection_id, public=True)
         conn.append({"connection_id": connection_id, "target_record_id": item.target_id,
                      "relationship": item.relationship, "state": item.state,
-                     "context": item.context})
+                     "context": item.context.rstrip()})
     fields = [{"field_id": key, "value": value} for key, value in metadata.items() if key not in {"id", "type", "name", "status", "visibility", "warden_only"}]
     audience = metadata.get("visibility", "warden")
     raw_warden_only = metadata.get("warden_only")
@@ -583,7 +583,7 @@ def validate_adapter_document(candidate: dict, definition: dict, before: dict | 
         old = {item[key]: item for item in before[collection]} if before else {}
         new = {item[key]: item for item in candidate[collection]}
         for identifier in old.keys() | new.keys():
-            if identifier not in spec[collection] and old.get(identifier) != new.get(identifier):
+            if identifier not in spec[collection] and not _typed_equal(old.get(identifier), new.get(identifier)):
                 raise ValueError("unsupported_editor_" + collection)
             if identifier in old and identifier not in new:
                 raise ValueError("editor_member_removal_not_allowed")

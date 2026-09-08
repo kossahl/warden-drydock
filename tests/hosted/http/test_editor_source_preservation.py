@@ -10,6 +10,7 @@ from warden_drydock.hosted.http.editor import (
     mutate_document,
     parse_document,
     serialize_document,
+    validate_adapter_document,
 )
 from warden_drydock.hosted.http.editor_semantics import _property_changes
 
@@ -371,6 +372,57 @@ Keep this record.
         self.assertIs(type(values["enabled"]), int)
         self.assertEqual(1.5, values["ratio"])
         self.assertIs(type(values["ratio"]), float)
+
+    def test_unsupported_adapter_fields_use_typed_equality(self):
+        before = {
+            "record_type": "npc",
+            "fields": [{"field_id": "score", "value": 1.0}],
+            "sections": [],
+            "connections": [],
+        }
+        candidate = {
+            "record_type": "npc",
+            "fields": [{"field_id": "score", "value": 1}],
+            "sections": [],
+            "connections": [],
+        }
+        definition = {
+            "records": {"npc": {"fields": set(), "sections": set()}},
+            "creatable": {"npc"},
+            "relationships": set(),
+            "states": set(),
+        }
+
+        with self.assertRaisesRegex(ValueError, "unsupported_editor_fields"):
+            validate_adapter_document(candidate, definition, before)
+
+    def test_source_connection_trailing_whitespace_is_read_as_context_only(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Summary
+Keep this record.
+
+## Connections
+
+""" + "- `guards` -> [[record-gate]] (`current`) — Watches the gate.  \n"
+        candidate = parse_document(source, "record-main", "npc")
+        self.assertEqual("Watches the gate.", candidate["connections"][0]["context"])
+
+        candidate["displayed_name"] = "Updated Keeper"
+        candidate["content_digest"] = document_digest(candidate)
+        result = mutate_document(source, candidate)
+        self.assertIn("— Watches the gate.  \n", result)
+
+        candidate["connections"][0]["context"] = "Watches the gate.  "
+        candidate["content_digest"] = document_digest(candidate)
+        with self.assertRaisesRegex(ValueError, "invalid_connection_context"):
+            serialize_document(candidate)
 
     def test_public_connection_ids_require_three_characters(self):
         candidate = {
