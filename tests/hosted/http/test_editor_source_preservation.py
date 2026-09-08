@@ -348,6 +348,14 @@ Keep this record.
                 field["value"] = 1
         candidate["content_digest"] = document_digest(candidate)
 
+        property_changes = self.app._editor_property_changes(
+            parse_document(source, "record-main", "npc"), candidate,
+        )
+        self.assertIn(
+            {"property": "fields.score", "before": 1.0, "after": 1},
+            property_changes,
+        )
+
         result = mutate_document(source, candidate)
         round_tripped = parse_document(result, "record-main", "npc")
         values = {field["field_id"]: field["value"] for field in round_tripped["fields"]}

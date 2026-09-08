@@ -48,7 +48,7 @@ from .contracts import (
     text_digest, validate_http_semantics,
 )
 from .repository import InMemoryHTTPRepository, ReceiptConflict
-from .editor import change_for, diff_digest as editor_diff_digest, parse_document, serialize_document, document_digest, _document, adapter_editor_definition, validate_adapter_document
+from .editor import change_for, diff_digest as editor_diff_digest, parse_document, serialize_document, document_digest, _document, _typed_equal, adapter_editor_definition, validate_adapter_document
 from .editor_semantics import EditorSemanticError, validate_editor_semantics
 
 
@@ -1530,7 +1530,7 @@ class SliceApplication:
             return []
         changes = []
         for field in ("displayed_name", "status", "authority", "visibility"):
-            if before[field] != after[field]:
+            if not _typed_equal(before[field], after[field]):
                 changes.append({"property": field, "before": before[field], "after": after[field]})
         for collection, identifier, value_key in (("fields", "field_id", "value"), ("sections", "section_id", "body")):
             old = {item[identifier]: item for item in before[collection]}
@@ -1538,7 +1538,7 @@ class SliceApplication:
             for member_id in sorted(set(old) | set(new)):
                 old_value = old.get(member_id, {}).get(value_key)
                 new_value = new.get(member_id, {}).get(value_key)
-                if old_value != new_value:
+                if not _typed_equal(old_value, new_value):
                     changes.append({"property": f"{collection}.{member_id}", "before": old_value, "after": new_value})
         return changes
 
@@ -1709,6 +1709,10 @@ class SliceApplication:
         return 200, matches[0]
 
     def _editor_proposal(self, campaign_id: str, revision_id: str, payload: dict, kind: str, record_id: str | None = None, *, operation_name: str | None = None, proposal_id_override: str | None = None, correction_of: dict | None = None) -> tuple[int, dict]:
+        if kind == "remove" and record_id == "campaign-main":
+            raise HTTPFailure(
+                422, "proposal_validation_failure", "required_record_removal", "editor_proposal", self._request_id(payload)
+            )
         operation = payload.get("operation_request")
         if not isinstance(operation, dict):
             raise HTTPFailure(422, "unsafe_binding", "invalid_operation_shape", "editor_proposal", self._request_id(payload))

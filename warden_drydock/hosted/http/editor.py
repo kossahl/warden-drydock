@@ -73,9 +73,15 @@ def _visibility(value: Any) -> dict[str, Any]:
     raise ValueError("invalid_visibility")
 
 
-def _same_scalar_type_and_value(left: Any, right: Any) -> bool:
-    """Keep JSON scalar type changes visible to source-preserving mutation."""
-    return type(left) is type(right) and left == right
+def _typed_equal(left: Any, right: Any) -> bool:
+    """Compare JSON values without treating distinct numeric types as equal."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, Mapping):
+        return set(left) == set(right) and all(_typed_equal(left[key], right[key]) for key in left)
+    if isinstance(left, (list, tuple)):
+        return len(left) == len(right) and all(_typed_equal(a, b) for a, b in zip(left, right))
+    return left == right
 
 
 def _document(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -311,7 +317,7 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
     old = parse_document(before, candidate["record_id"], candidate.get("record_type"))
     new = _document(candidate)
     duplicate_connections = len(re.findall(r"(?im)^##\s+connections\s*$", normalize_text(before))) > 1
-    if old == new and not duplicate_connections:
+    if _typed_equal(old, new) and not duplicate_connections:
         return before
     newline = "\r\n" if "\r\n" in before else "\n"
     source = before.replace("\r\n", "\n").replace("\r", "\n")
@@ -349,7 +355,7 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
                 key in field_values
                 and (
                     key not in old_field_values
-                    or not _same_scalar_type_and_value(old_field_values[key], field_values[key])
+                    or not _typed_equal(old_field_values[key], field_values[key])
                 )
             )
         )

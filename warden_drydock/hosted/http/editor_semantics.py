@@ -11,7 +11,7 @@ import re
 from typing import Any, Mapping
 
 from .contracts import canonical_digest, text_digest
-from .editor import _document, document_digest
+from .editor import _document, _typed_equal, document_digest
 
 
 class EditorSemanticError(ValueError):
@@ -26,7 +26,7 @@ def _fail(category: str, path: str) -> None:
 
 
 def _equal(left: object, right: object, category: str, path: str) -> None:
-    if left != right:
+    if not _typed_equal(left, right):
         _fail(category, path)
 
 

@@ -461,6 +461,14 @@ class EditorBackendTests(unittest.TestCase):
 
         self.assertEqual((422, "required_record_removal"), (caught.exception.status, caught.exception.payload["error"]["code"]))
 
+    def test_removal_proposal_rejects_required_campaign_anchor(self):
+        revision = self.app.workflow.head("campaign_alpha")
+
+        with self.assertRaises(HTTPFailure) as caught:
+            self.app.editor_record_remove("campaign_alpha", revision, "campaign-main", {})
+
+        self.assertEqual((422, "required_record_removal"), (caught.exception.status, caught.exception.payload["error"]["code"]))
+
     def test_mutation_preserves_source_sections_comments_and_single_connections_heading(self):
         source = """---
 id: record-main
