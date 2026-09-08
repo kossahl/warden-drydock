@@ -401,12 +401,36 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         lines[connection_index:connection_index] = inserted
 
     connection_headers = [i for i, line in enumerate(lines) if line.strip().casefold() == "## connections"]
+
+    def typed_connection_indexes(heading_index: int, next_heading: int) -> tuple[set[int], set[int]]:
+        """Return parser-identified rows and their associated editor markers."""
+        segment = lines[heading_index + 1:next_heading]
+        block = "## Connections\n" + "".join(segment)
+        typed_connections, _ = parse_connections(
+            block, source_id=new["record_id"], path=None  # type: ignore[arg-type]
+        )
+        typed_indexes = {
+            heading_index + connection.line - 1 for connection in typed_connections
+        }
+        marker_indexes = {
+            heading_index + marker_line - 1
+            for line_number, (marker_line, _) in _connection_marker_occurrences(block).items()
+            if heading_index + line_number - 1 in typed_indexes
+        }
+        return typed_indexes, marker_indexes
+
     # A source document may have acquired duplicate typed connection headings
-    # outside the editor.  Keep the first section and its comments, while
-    # folding all typed lines into the one canonical section below.
+    # outside the editor.  Remove only parser-identified typed rows and their
+    # markers; the duplicate heading itself is the only structural line removed.
     for duplicate_index in reversed(connection_headers[1:]):
         next_heading = next((i for i in range(duplicate_index + 1, len(lines)) if re.match(r"^##\s+", lines[i])), len(lines))
-        del lines[duplicate_index:next_heading]
+        typed_indexes, marker_indexes = typed_connection_indexes(duplicate_index, next_heading)
+        lines[duplicate_index + 1:next_heading] = [
+            line
+            for index, line in enumerate(lines[duplicate_index + 1:next_heading], duplicate_index + 1)
+            if index not in typed_indexes and index not in marker_indexes
+        ]
+        del lines[duplicate_index]
     connection_index = next((i for i, line in enumerate(lines) if line.strip().casefold() == "## connections"), None)
     if connection_index is not None:
         if old["connections"] != new["connections"]:
@@ -419,22 +443,23 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
                 ])
             # Use `parse_connections`' typed line numbers as the replacement set
             # instead of treating every Markdown bullet as editor data.
-            current_source = normalize_text("".join(lines))
-            typed_connections, _ = parse_connections(current_source, source_id=new["record_id"], path=None)  # type: ignore[arg-type]
-            typed_line_indexes = {item.line - 1 for item in typed_connections}
-            marker_line_indexes = {
-                marker_line - 1
-                for line_number, (marker_line, _) in _connection_marker_occurrences(current_source).items()
-                if line_number - 1 in typed_line_indexes
-            }
+            typed_line_indexes, marker_line_indexes = typed_connection_indexes(
+                connection_index, next_heading
+            )
             segment = lines[connection_index + 1:next_heading]
             if typed_line_indexes:
-                first_typed = min(typed_line_indexes)
+                typed_line_indexes = sorted(typed_line_indexes)
                 rewritten: list[str] = []
                 for index, line in enumerate(segment, connection_index + 1):
-                    if index == first_typed:
-                        rewritten.extend(connection_lines)
-                    if index in typed_line_indexes or index in marker_line_indexes:
+                    if index in marker_line_indexes:
+                        continue
+                    if index in typed_line_indexes:
+                        item_index = typed_line_indexes.index(index)
+                        if item_index < len(new["connections"]):
+                            start = item_index * 2
+                            rewritten.extend(connection_lines[start:start + 2])
+                        if item_index == len(typed_line_indexes) - 1:
+                            rewritten.extend(connection_lines[len(typed_line_indexes) * 2:])
                         continue
                     rewritten.append(line)
                 lines[connection_index + 1:next_heading] = rewritten

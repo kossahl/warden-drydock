@@ -405,6 +405,74 @@ visibility: warden
         self.assertEqual(candidate["connections"], parse_document(result, "record-main", "npc")["connections"])
         self.assertIn("<!-- drydock:connection-id=custom_occurrence -->", result)
 
+    def test_duplicate_connections_heading_preserves_non_typed_content(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Connections
+
+- `guards` -> [[record-gate]] (`current`) — Watches the gate.
+
+## Connections
+
+Duplicate prose stays here.
+<!-- Preserve this duplicate comment. -->
+- An ordinary duplicate bullet stays here.
+- `visits` -> [[record-hall]] (`current`) — Checks in.
+
+## Notes
+Keep this section.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["displayed_name"] = "Keeper Updated"
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+
+        self.assertEqual(1, result.count("## Connections"))
+        self.assertIn("Duplicate prose stays here.", result)
+        self.assertIn("<!-- Preserve this duplicate comment. -->", result)
+        self.assertIn("- An ordinary duplicate bullet stays here.", result)
+        self.assertNotIn("visits", result)
+        self.assertIn("## Notes\nKeep this section.", result)
+
+    def test_interleaved_non_typed_content_keeps_original_position(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Connections
+
+- `guards` -> [[record-gate]] (`current`) — Watches the gate.
+Campaign-authored prose remains between these connections.
+- An ordinary Markdown bullet remains between these connections.
+- `visits` -> [[record-hall]] (`current`) — Checks in.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["connections"][0]["context"] = "Watches the gate quietly."
+        candidate["connections"][1]["context"] = "Checks in at dusk."
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+
+        first = result.index("Watches the gate quietly.")
+        prose = result.index("Campaign-authored prose remains between these connections.")
+        bullet = result.index("- An ordinary Markdown bullet remains between these connections.")
+        second = result.index("Checks in at dusk.")
+        self.assertLess(first, prose)
+        self.assertLess(prose, bullet)
+        self.assertLess(bullet, second)
+        self.assertEqual(candidate["connections"], parse_document(result, "record-main", "npc")["connections"])
+
     def test_replacing_different_length_sections_preserves_unrelated_bytes_and_connections(self):
         source = """---
 id: record-main
