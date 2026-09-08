@@ -420,7 +420,7 @@ test("stale correction responses cannot install a proposal after SPA navigation"
 
 test("historical proposal URLs keep review and correction available", async ({ page }) => {
   await installAtlasApi(page);
-  const correctedProposal = { ...proposal(headRevision, { ...currentRecord, displayed_name: "Corrected historical" }, 2, 8, "proposal_historical"), correction_of: { proposal_id: "proposal_historical", proposal_version: 1 } };
+  const correctedProposal = { ...proposal(currentRevision, { ...currentRecord, displayed_name: "Corrected historical" }, 2, 8, "proposal_historical"), correction_of: { proposal_id: "proposal_historical", proposal_version: 1 } };
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -428,6 +428,7 @@ test("historical proposal URLs keep review and correction available", async ({ p
       if (path.includes(`/revisions/${currentRevision.revision_id}/`)) return json(route, view(currentRevision, currentRevision, currentRecord, 8));
       return json(route, view(oldRevision, currentRevision, originalRecord, 7, true));
     }
+    if (request.method() === "GET" && path.endsWith(`/campaigns/campaign_atlas/revisions/${currentRevision.revision_id}`)) return json(route, { viewed_revision: currentRevision });
     if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_historical/versions/1")) return json(route, proposal(oldRevision, { ...originalRecord, displayed_name: "Historical proposal" }, 1, 7, "proposal_historical"));
     if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_historical/versions/2")) return json(route, correctedProposal);
     if (request.method() === "POST" && path.endsWith("/corrections")) return json(route, correctedProposal, 201);
@@ -446,10 +447,40 @@ test("historical proposal URLs keep review and correction available", async ({ p
   await expect(panel.getByLabel("Displayed name")).toBeEnabled();
   await panel.getByLabel("Displayed name").fill("Corrected historical");
   await panel.getByRole("button", { name: "Submit correction/rebase" }).click();
-  await expect(panel.getByRole("link", { name: /proposal_historical/ })).toHaveAttribute("href", /revision=revision_one&proposal=proposal_historical&version=1$/);
-  await panel.getByRole("link", { name: /proposal_historical/ }).click();
-  await expect(page).toHaveURL(/revision=revision_one&proposal=proposal_historical&version=1$/);
+  await expect(page).toHaveURL(/revision=revision_three&proposal=proposal_historical&version=2$/);
   await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
+});
+
+test("connection context validation blocks empty and multiline proposals on the connection row", async ({ page }) => {
+  await installAtlasApi(page);
+  const record = {
+    ...originalRecord,
+    connections: [{ connection_id: "connection_one", target_record_id: "record-two", relationship: "guards", state: "current", context: "Valid context." }],
+  };
+  let proposalRequests = 0;
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) return json(route, view(headRevision, headRevision, record));
+    if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) {
+      proposalRequests += 1;
+      return json(route, proposal(headRevision, record), 201);
+    }
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const panel = editor(page);
+  const context = panel.getByLabel("Context", { exact: true });
+  await context.fill("   ");
+  await panel.getByRole("button", { name: "Save as proposal" }).click();
+  await expect(panel.getByRole("alert")).toContainText("Connection context is required.");
+  expect(proposalRequests).toBe(0);
+
+  await context.fill("First line\nSecond line");
+  await panel.getByRole("button", { name: "Save as proposal" }).click();
+  await expect(panel.getByRole("alert")).toContainText("Connection context must be a single line.");
+  expect(proposalRequests).toBe(0);
 });
 
 test("workflow-stale proposal URLs disable decisions but keep correction available", async ({ page }) => {

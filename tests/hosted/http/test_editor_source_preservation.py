@@ -11,6 +11,7 @@ from warden_drydock.hosted.http.editor import (
     parse_document,
     serialize_document,
 )
+from warden_drydock.hosted.http.editor_semantics import _property_changes
 
 
 class EditorSourcePreservationTests(unittest.TestCase):
@@ -355,6 +356,10 @@ Keep this record.
             {"property": "fields.score", "before": 1.0, "after": 1},
             property_changes,
         )
+        self.assertIn(
+            {"property": "fields.score", "before": 1.0, "after": 1},
+            _property_changes(parse_document(source, "record-main", "npc"), candidate),
+        )
 
         result = mutate_document(source, candidate)
         round_tripped = parse_document(result, "record-main", "npc")
@@ -366,6 +371,30 @@ Keep this record.
         self.assertIs(type(values["enabled"]), int)
         self.assertEqual(1.5, values["ratio"])
         self.assertIs(type(values["ratio"]), float)
+
+    def test_public_connection_ids_require_three_characters(self):
+        candidate = {
+            "record_id": "record-main",
+            "record_type": "npc",
+            "displayed_name": "Keeper",
+            "status": "draft",
+            "authority": "preparation",
+            "visibility": {"audience": "warden", "warden_only": True},
+            "fields": [],
+            "sections": [{"section_id": "summary", "body": "Keep this record."}],
+            "connections": [{
+                "connection_id": "a",
+                "target_record_id": "record-gate",
+                "relationship": "guards",
+                "state": "current",
+                "context": "Watches the gate.",
+            }],
+            "content_digest": "0" * 64,
+        }
+        candidate["content_digest"] = document_digest(candidate)
+
+        with self.assertRaisesRegex(ValueError, "unsafe_identifier"):
+            serialize_document(candidate)
 
     def test_typed_frontmatter_scalars_survive_proposal_approval_and_readback(self):
         for index, value in enumerate((42, 3.5, True, None, "42")):

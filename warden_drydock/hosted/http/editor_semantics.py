@@ -47,7 +47,7 @@ def _record(value: Mapping[str, Any], path: str) -> None:
 def _property_changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for name in ("displayed_name", "status", "authority", "visibility"):
-        if before[name] != after[name]:
+        if not _typed_equal(before[name], after[name]):
             result.append({"property": name, "before": before[name], "after": after[name]})
     for collection, identifier, value_key in (("fields", "field_id", "value"), ("sections", "section_id", "body")):
         old = {item[identifier]: item for item in before[collection]}
@@ -55,7 +55,7 @@ def _property_changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> li
         for member_id in sorted(set(old) | set(new)):
             old_value = old.get(member_id, {}).get(value_key)
             new_value = new.get(member_id, {}).get(value_key)
-            if old_value != new_value:
+            if not _typed_equal(old_value, new_value):
                 result.append({"property": f"{collection}.{member_id}", "before": old_value, "after": new_value})
     return result
 

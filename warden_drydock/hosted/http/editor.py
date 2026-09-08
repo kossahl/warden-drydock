@@ -45,7 +45,8 @@ def _split_lf_lines(value: str) -> list[str]:
 
 def _id(value: Any, *, public: bool = False) -> str:
     pattern = _PUBLIC if public else _ID
-    if not isinstance(value, str) or not 1 <= len(value) <= 80 or pattern.fullmatch(value) is None:
+    minimum = 3 if public else 1
+    if not isinstance(value, str) or not minimum <= len(value) <= 80 or pattern.fullmatch(value) is None:
         raise ValueError("unsafe_identifier")
     return value
 
