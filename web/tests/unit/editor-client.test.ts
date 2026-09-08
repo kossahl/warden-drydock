@@ -109,7 +109,7 @@ describe("record editor client bindings", () => {
     const response = { contract_name: "editor_proposal_view", contract_version: 1 };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
-        ok: false, headers: new Headers(), json: async () => ({ error: { code: "operation_in_progress", category: "operation_in_progress" } }),
+        ok: false, headers: new Headers(), json: async () => ({ error: { code: "operation_in_progress", category: "service_unavailable" } }),
         status: 503, statusText: "Service Unavailable", redirected: false, type: "basic", url: "",
       } as Response)
       .mockResolvedValueOnce({
@@ -125,5 +125,24 @@ describe("record editor client bindings", () => {
     const firstBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     const retryBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
     expect(retryBody).toEqual(firstBody);
+  });
+
+  it("reserves one operation identity for identical concurrent mutations", async () => {
+    const response = { contract_name: "editor_proposal_view", contract_version: 1 };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
+      ok: true, headers: new Headers(), json: async () => response,
+      status: 201, statusText: "Created", redirected: false, type: "basic", url: "",
+    }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const revision = { revision_id: "revision_concurrent", ordinal: 1, tree_digest: "a".repeat(64) };
+
+    await Promise.all([
+      httpEditorApi.propose("edit", "campaign_concurrent", revision, record(), 7),
+      httpEditorApi.propose("edit", "campaign_concurrent", revision, record(), 7),
+    ]);
+
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(secondBody).toEqual(firstBody);
   });
 });

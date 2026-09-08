@@ -155,18 +155,36 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
     sections: list[dict[str, str]] = []
     current = None
     in_connections = False
-    for line in body.splitlines():
+    body_lines = body.split("\n")
+    current_body: list[str] | None = None
+
+    def finish_section(*, at_eof: bool = False) -> None:
+        if current is None or current_body is None:
+            return
+        # At EOF the serializer adds one structural newline after the final
+        # section. It must not become part of the typed body, while any
+        # preceding empty lines remain intentional content.
+        lines = current_body[:-1] if at_eof and current_body and current_body[-1] == "" else current_body
+        current["body"] = "\n".join(lines)
+
+    for line in body_lines:
         match = re.match(r"^##\s+(.+?)\s*$", line)
         if match:
+            finish_section()
             heading = match.group(1).strip()
             in_connections = heading.casefold() == "connections"
             if in_connections:
                 current = None
+                current_body = None
                 continue
             current = {"section_id": re.sub(r"[^a-z0-9-]+", "-", heading.lower()).strip("-") or "summary", "body": ""}
             sections.append(current)
+            current_body = []
         elif current is not None and not in_connections:
-            current["body"] += ("\n" if current["body"] else "") + line
+            assert current_body is not None
+            current_body.append(line)
+            current["body"] = "\n".join(current_body)
+    finish_section(at_eof=True)
     if not sections: sections = [{"section_id": "summary", "body": body.strip()}]
     connection_markers = _connection_markers(normalized_content)
     connections, _ = parse_connections(normalized_content, source_id=record_id, path=None)  # type: ignore[arg-type]
@@ -219,6 +237,12 @@ def _heading_id(value: str) -> str:
 
 
 def _format_frontmatter_value(value: Any) -> str:
+    def encoded(item: Any) -> str:
+        # Python's ensure_ascii=False leaves U+2028/U+2029 literal. Markdown
+        # readers commonly treat those characters as line boundaries, so keep
+        # them escaped inside frontmatter JSON strings.
+        return json.dumps(item, ensure_ascii=False).replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+
     if isinstance(value, str):
         if value == value.strip() and re.fullmatch(r"[a-zA-Z0-9_.:/+@ -]+", value or ""):
             try:
@@ -227,8 +251,8 @@ def _format_frontmatter_value(value: Any) -> str:
                 return value
             if not (decoded is None or isinstance(decoded, bool) or (isinstance(decoded, (int, float)) and math.isfinite(decoded))):
                 return value
-        return json.dumps(value, ensure_ascii=False)
-    return json.dumps(value, ensure_ascii=False)
+        return encoded(value)
+    return encoded(value)
 
 
 def _connection_line(connection: Mapping[str, Any]) -> str:

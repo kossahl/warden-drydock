@@ -115,6 +115,24 @@ class EditorSourcePreservationTests(unittest.TestCase):
             )["sections"],
         )
 
+    def test_leading_blank_lines_survive_real_publication_readback(self):
+        revision = self.app.workflow.head("campaign_alpha")
+        view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
+        candidate = deepcopy(view["record"])
+        candidate["sections"][0]["body"] = "\nFirst line after the intentional blank."
+        candidate["content_digest"] = document_digest(candidate)
+
+        _, reviewed_candidate, (status, proposal) = self._edit_candidate(
+            candidate, key="idem_leading_newline_publication"
+        )
+        self.assertEqual(201, status)
+        _, published = self.backend._approve_editor(proposal)
+        published_revision = published["published_revision"]["revision_id"]
+        readback = self.app.editor_record_read(
+            "campaign_alpha", published_revision, "campaign-main"
+        )[1]
+        self.assertEqual(reviewed_candidate["sections"], readback["record"]["sections"])
+
     def test_quoted_frontmatter_values_survive_real_publication_readback(self):
         revision = self.app.workflow.head("campaign_alpha")
         view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
@@ -154,6 +172,26 @@ class EditorSourcePreservationTests(unittest.TestCase):
             "campaign_alpha", published_revision, "campaign-main"
         )[1]["record"]
 
+        self.assertEqual(reviewed_candidate["displayed_name"], readback["displayed_name"])
+        self.assertEqual(reviewed_candidate["fields"], readback["fields"])
+
+    def test_unicode_line_separators_survive_frontmatter_publication(self):
+        revision = self.app.workflow.head("campaign_alpha")
+        view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
+        candidate = deepcopy(view["record"])
+        candidate["displayed_name"] = "Keeper\u2028Line\u2029Next"
+        next(field for field in candidate["fields"] if field["field_id"] == "system")["value"] = "adapter\u2028value\u2029tail"
+        candidate["content_digest"] = document_digest(candidate)
+
+        _, reviewed_candidate, (status, proposal) = self._edit_candidate(
+            candidate, key="idem_unicode_line_separators"
+        )
+        self.assertEqual(201, status)
+        _, published = self.backend._approve_editor(proposal)
+        published_revision = published["published_revision"]["revision_id"]
+        readback = self.app.editor_record_read(
+            "campaign_alpha", published_revision, "campaign-main"
+        )[1]["record"]
         self.assertEqual(reviewed_candidate["displayed_name"], readback["displayed_name"])
         self.assertEqual(reviewed_candidate["fields"], readback["fields"])
 

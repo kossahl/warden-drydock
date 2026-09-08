@@ -1426,7 +1426,7 @@ class SliceApplication:
     def _editor_validate_changes(
         self, campaign_id: str, revision_id: str, changes: list[ExactTextChange],
         request_id: str,
-    ) -> None:
+    ) -> list[dict]:
         """Run the complete typed mutation through the deterministic engine.
 
         This is deliberately before a proposal is claimed or stamped as
@@ -1441,7 +1441,17 @@ class SliceApplication:
         if result.staged_handle != base_handle:
             self.registry.discard(result.staged_handle)
         if result.status is Status.STAGED:
-            return
+            return [
+                {
+                    "finding_id": self._id("finding", request_id, index, finding.code, finding.subject_id),
+                    "code": finding.code,
+                    "severity": finding.severity.value,
+                    "location": "record",
+                    "retryable": False,
+                }
+                for index, finding in enumerate(result.findings)
+                if finding.severity.value in {"warning", "error"}
+            ]
         code = next((finding.code for finding in result.findings if finding.severity.value == "error"), None)
         if code is None and any(change.change_kind is ChangeKind.CREATE for change in changes):
             code = "record_type_unknown"
@@ -1716,7 +1726,7 @@ class SliceApplication:
                 changes.append(source_change)
                 source_before[source_change.change_id] = source_content
 
-        self._editor_validate_changes(
+        validation_findings = self._editor_validate_changes(
             campaign_id, revision_id, changes, self._request_id(payload),
         )
 
@@ -1747,7 +1757,9 @@ class SliceApplication:
                 resolution = next(item for item in resolutions if item["reference_id"] == reference["reference_id"])
                 cards.append({"change_id": self._id("change", campaign_id, revision_id, reference["source_record_id"], reference["connection_id"]), "kind": "reference_resolution", "subject_record_id": reference["source_record_id"], "before": reference, "after": resolution, "property_changes": [], "connection": None, "resolution": resolution, "derived_backlinks": [{"source_record_id": reference["source_record_id"], "target_record_id": resolution.get("replacement_target_record_id") or reference["target_record_id"], "connection_id": reference["connection_id"], "effect": "updated" if resolution["action"] == "redirect" else "removed"}]})
         authority_changes, visibility_changes = self._editor_transition_changes(before_doc, after_doc, change.change_id)
-        validation_digest = canonical_digest({"status": "passed", "error_count": 0, "findings": []})
+        validation = {"status": "passed", "error_count": 0, "findings": validation_findings}
+        validation_digest = canonical_digest(validation)
+        validation["validation_digest"] = validation_digest
         affected_record_count = len({card["subject_record_id"] for card in cards})
         diff_projection = {"cards": cards, "affected_record_count": affected_record_count,
                            "authority_changes": authority_changes, "visibility_changes": visibility_changes,
@@ -1760,7 +1772,7 @@ class SliceApplication:
             document = card.get("after") if isinstance(card.get("after"), dict) and "content_digest" in card["after"] else card.get("before")
             core_changes.append({"change_id": card["change_id"], "subject_id": card["subject_record_id"], "change_type": "add" if card["kind"] == "record_created" else ("remove" if card["kind"] == "record_removed" else "update"), "from_authority": document.get("authority", "absent") if isinstance(document, dict) else "preparation", "to_authority": (card["after"].get("authority") if isinstance(card.get("after"), dict) and "authority" in card["after"] else ("absent" if card["kind"] == "record_removed" else document.get("authority", "preparation") if isinstance(document, dict) else "preparation")), "content_digest": document.get("content_digest", text_digest(json.dumps(card.get("connection"), sort_keys=True))) if isinstance(document, dict) else text_digest(json.dumps(card.get("connection"), sort_keys=True))})
         proposal_binding = dict(binding, expected_editor_workflow_version=current + 1)
-        value = {"contract_name": "editor_proposal_view", "contract_version": 1, "proposal_id": proposal_id, "proposal_version": version, "campaign_id": campaign_id, "source_revision": self._editor_revision_ref(self.campaigns[campaign_id].revisions[revision_id]), "base_revision": self._editor_revision_ref(self.campaigns[campaign_id].revisions[revision_id]), "expected_campaign_head": self._editor_revision_ref(self.campaigns[campaign_id].revisions[revision_id]), "editor_workflow_version": current + 1, "proposal_payload_digest": "0" * 64, "mutation_kind": kind, "record_bindings": [proposal_binding], "core_proposal": {"contract_name": "canon_proposal", "contract_version": 2, "draft": {"draft_id": proposal_id, "authority": "draft", "source_set_digest": text_digest(change.replacement), "content_digest": text_digest(change.replacement)}, "proposal": {"proposal_id": proposal_id, "proposal_version": version, "status": "needs_review", "campaign_id": campaign_id, "base_revision": revision_id, "source_revision": revision_id, "expected_campaign_head": revision_id, "expected_editor_workflow_version": current + 1, "diff_digest": digest, "authority_change_ids": [item["change_id"] for item in authority_changes], "visibility_change_ids": [item["change_id"] for item in visibility_changes], "changes": core_changes}, "validation": {"status": "passed", "validation_digest": validation_digest, "error_count": 0}, "approval_binding": None}, "diff": {"diff_digest": digest, "cards": cards, "affected_record_count": affected_record_count, "authority_changes": authority_changes, "visibility_changes": visibility_changes, "unresolved_reference_count": diff_projection["unresolved_reference_count"], "impact_digest": removal_impact["impact_digest"] if removal_impact else None, "source_changes": source_changes, "summary": kind}, "impact_digest": removal_impact["impact_digest"] if removal_impact else None, "impact_binding": {"binding": binding, "impact_digest": removal_impact["impact_digest"]} if removal_impact else None, "resolutions": resolutions if kind == "remove" else [], "validation": {"status": "passed", "validation_digest": validation_digest, "error_count": 0, "findings": []}, "authority_outcome": authority_changes, "visibility_outcome": visibility_changes, "publication": {"status": "not_published", "published_revision": None}}
+        value = {"contract_name": "editor_proposal_view", "contract_version": 1, "proposal_id": proposal_id, "proposal_version": version, "campaign_id": campaign_id, "source_revision": self._editor_revision_ref(self.campaigns[campaign_id].revisions[revision_id]), "base_revision": self._editor_revision_ref(self.campaigns[campaign_id].revisions[revision_id]), "expected_campaign_head": self._editor_revision_ref(self.campaigns[campaign_id].revisions[revision_id]), "editor_workflow_version": current + 1, "proposal_payload_digest": "0" * 64, "mutation_kind": kind, "record_bindings": [proposal_binding], "core_proposal": {"contract_name": "canon_proposal", "contract_version": 2, "draft": {"draft_id": proposal_id, "authority": "draft", "source_set_digest": text_digest(change.replacement), "content_digest": text_digest(change.replacement)}, "proposal": {"proposal_id": proposal_id, "proposal_version": version, "status": "needs_review", "campaign_id": campaign_id, "base_revision": revision_id, "source_revision": revision_id, "expected_campaign_head": revision_id, "expected_editor_workflow_version": current + 1, "diff_digest": digest, "authority_change_ids": [item["change_id"] for item in authority_changes], "visibility_change_ids": [item["change_id"] for item in visibility_changes], "changes": core_changes}, "validation": {"status": "passed", "validation_digest": validation_digest, "error_count": 0}, "approval_binding": None}, "diff": {"diff_digest": digest, "cards": cards, "affected_record_count": affected_record_count, "authority_changes": authority_changes, "visibility_changes": visibility_changes, "unresolved_reference_count": diff_projection["unresolved_reference_count"], "impact_digest": removal_impact["impact_digest"] if removal_impact else None, "source_changes": source_changes, "summary": kind}, "impact_digest": removal_impact["impact_digest"] if removal_impact else None, "impact_binding": {"binding": binding, "impact_digest": removal_impact["impact_digest"]} if removal_impact else None, "resolutions": resolutions if kind == "remove" else [], "validation": validation, "authority_outcome": authority_changes, "visibility_outcome": visibility_changes, "publication": {"status": "not_published", "published_revision": None}}
         if correction_of is not None:
             value["correction_of"] = correction_of
         if kind == "remove":
@@ -2159,6 +2171,17 @@ class SliceApplication:
         })
         return conflict
 
+    def _editor_persist_conflict_metadata(
+        self, proposal_id: str, version: int, stored: dict, value: dict,
+    ) -> dict:
+        value = self._editor_conflict_value(value)
+        save_editor = getattr(self.proposal_repository, "save_editor_metadata", None)
+        if save_editor is not None:
+            save_editor(proposal_id, version, value)
+        stored["value"] = value
+        self._persist_editor_state()
+        return value
+
     def _editor_action(self, proposal_id: str, version: int, payload: dict, action: str):
         with self._editor_mutation_lock:
             operation = payload.get("operation_request")
@@ -2173,7 +2196,7 @@ class SliceApplication:
             item = self.proposal_repository.get(proposal_id, version)
             if item is None:
                 raise HTTPFailure(404, "not_found", "proposal_not_found", "editor_" + action)
-            if action == "approve" and item.status is ProposalStatus.CONFLICT:
+            if action == "approve" and item.status in {ProposalStatus.CONFLICT, ProposalStatus.QUARANTINED}:
                 raise HTTPFailure(409, "stale_revision", "stale_revision", "editor_approve", self._request_id(payload))
             if action == "approve":
                 recovered = self._editor_terminal_approval_replay(
@@ -2278,13 +2301,10 @@ class SliceApplication:
                         finalize=finalize_publication if atomic_publish is not None else None,
                     )
                     if result.status is ProposalStatus.CONFLICT:
-                        value = self._editor_conflict_value(value)
-                        save_editor = getattr(self.proposal_repository, "save_editor_metadata", None)
-                        if save_editor is not None:
-                            save_editor(proposal_id, version, value)
-                        stored["value"] = value
-                        self._persist_editor_state()
+                        self._editor_persist_conflict_metadata(proposal_id, version, stored, value)
                         raise HTTPFailure(409, "stale_revision", "stale_revision", "editor_approve", self._request_id(payload))
+                    if result.status is ProposalStatus.QUARANTINED:
+                        self._editor_persist_conflict_metadata(proposal_id, version, stored, value)
                     if result.status is not ProposalStatus.PUBLISHED:
                         raise HTTPFailure(422, "proposal_validation_failure", "proposal_validation_failure", "editor_approve", self._request_id(payload))
                 except HTTPFailure:

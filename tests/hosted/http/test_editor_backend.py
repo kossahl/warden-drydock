@@ -1,4 +1,5 @@
 from copy import deepcopy
+from dataclasses import replace
 from unittest import mock
 import json
 from pathlib import Path
@@ -13,7 +14,7 @@ from warden_drydock.hosted.http.editor import document_digest, mutate_document, 
 from warden_drydock.hosted.http.editor_semantics import validate_editor_semantics
 from warden_drydock.hosted.http.repository import InMemoryHTTPRepository
 from warden_drydock.hosted.proposals.service import ProposalStatus
-from warden_drydock.hosted.engine.models import ChangeKind, ExactTextChange, exact_diff_digest, content_digest
+from warden_drydock.hosted.engine.models import ChangeKind, ExactTextChange, Finding, Severity, Stage, exact_diff_digest, content_digest
 from warden_drydock.hosted.revisions import InMemoryWorkflowRepository
 
 
@@ -237,6 +238,47 @@ class EditorBackendTests(unittest.TestCase):
         with self.assertRaises(HTTPFailure) as retry_error:
             self._approve_editor(proposal)
         self.assertEqual((409, "stale_revision"), (retry_error.exception.status, retry_error.exception.payload["error"]["code"]))
+
+    def test_quarantined_editor_approval_persists_terminal_conflict_metadata(self):
+        _, _, (_, proposal) = self._edit("idem_editor_quarantine")
+
+        def quarantine(item, **kwargs):
+            return self.app.proposal_repository.replace_status(item, ProposalStatus.QUARANTINED)
+
+        with mock.patch.object(self.app.proposals, "approve", side_effect=quarantine):
+            with self.assertRaises(HTTPFailure) as error:
+                self._approve_editor(proposal)
+        self.assertEqual((422, "proposal_validation_failure"), (error.exception.status, error.exception.payload["error"]["category"]))
+        stored = self.app.proposal_repository.get(proposal["proposal_id"], proposal["proposal_version"])
+        self.assertEqual(ProposalStatus.QUARANTINED, stored.status)
+        view = self.app.editor_proposal_read(proposal["proposal_id"], proposal["proposal_version"])[1]
+        self.assertEqual("conflict", view["core_proposal"]["proposal"]["status"])
+        self.assertEqual("not_published", view["publication"]["status"])
+        with self.assertRaises(HTTPFailure) as retry_error:
+            self._approve_editor(proposal)
+        self.assertEqual((409, "stale_revision"), (retry_error.exception.status, retry_error.exception.payload["error"]["code"]))
+        approval = self._editor_approval_payload(proposal)
+        self.assertIsNone(self.receipts.replay(
+            "editor_proposal_approve",
+            approval["operation_request"]["idempotency_key"],
+            approval["operation_request"]["payload_digest"],
+        ))
+
+    def test_staged_validation_warnings_are_carried_into_editor_proposal(self):
+        original = self.app.engine.stage_exact_diff
+
+        def stage(request):
+            result = original(request)
+            return replace(result, findings=(Finding("validation_warning", Severity.WARNING, Stage.STAGE, "staged"),))
+
+        with mock.patch.object(self.app.engine, "stage_exact_diff", side_effect=stage):
+            _, _, (_, proposal) = self._edit("idem_editor_validation_warning")
+        self.assertEqual("warning", proposal["validation"]["findings"][0]["severity"])
+        self.assertEqual("validation_warning", proposal["validation"]["findings"][0]["code"])
+        self.assertEqual(
+            proposal["validation"]["validation_digest"],
+            canonical_digest({key: proposal["validation"][key] for key in ("status", "error_count", "findings")}),
+        )
 
     def test_restart_recovers_editor_publication_and_exact_replay_once(self):
         _, _, (_, proposal) = self._edit("idem_editor_pending_recovery")
