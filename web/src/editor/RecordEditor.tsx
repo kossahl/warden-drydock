@@ -41,13 +41,11 @@ const correctionReference = (proposal: EditorProposal): EditorProposalReference 
 const sameRevision = (left: RevisionRef, right: RevisionRef) => left.revision_id === right.revision_id && left.tree_digest === right.tree_digest;
 const proposalMatchesEditorView = (proposal: EditorProposal, view: EditorRecordView) => {
   const binding = proposal.record_bindings[0];
-  const proposalWorkflowMatchesView = proposal.editor_workflow_version === view.editor_workflow_version
-    || proposal.editor_workflow_version === view.editor_workflow_version + 1;
   return !!binding
     && sameRevision(proposal.base_revision, view.viewed_revision)
     && sameRevision(binding.base_revision, view.viewed_revision)
     && sameRevision(proposal.expected_campaign_head, view.head_revision)
-    && proposalWorkflowMatchesView
+    && proposal.editor_workflow_version === view.editor_workflow_version
     && binding.expected_editor_workflow_version === proposal.editor_workflow_version;
 };
 

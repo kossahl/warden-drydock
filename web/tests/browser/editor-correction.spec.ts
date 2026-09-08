@@ -452,6 +452,24 @@ test("historical proposal URLs keep review and correction available", async ({ p
   await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
 });
 
+test("workflow-stale proposal URLs disable decisions but keep correction available", async ({ page }) => {
+  await installAtlasApi(page);
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) return json(route, view(headRevision, headRevision, originalRecord, 2));
+    if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_workflow_stale/versions/1")) return json(route, proposal(headRevision, { ...originalRecord, displayed_name: "Workflow-stale proposal" }, 1, 1, "proposal_workflow_stale"));
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two&proposal=proposal_workflow_stale&version=1");
+  const panel = editor(page);
+  await expect(panel.getByRole("button", { name: "Reject exact proposal" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Approve and publish exact proposal" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Create correction/rebase" })).toBeEnabled();
+  await expect(panel.getByText(/This proposal is stale/)).toBeVisible();
+});
+
 test("historical create proposal URLs keep the create review visible", async ({ page }) => {
   await installAtlasApi(page);
   const createProposal = {
