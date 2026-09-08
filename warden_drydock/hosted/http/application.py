@@ -1617,7 +1617,8 @@ class SliceApplication:
             return
         allowed = {"remove_reference", "redirect", "accept_unresolved"}
         for resolution in resolutions:
-            if not isinstance(resolution, dict) or resolution.get("action") not in allowed:
+            action = resolution.get("action") if isinstance(resolution, dict) else None
+            if not isinstance(action, str) or action not in allowed:
                 raise HTTPFailure(
                     422, "proposal_validation_failure", "invalid_resolution_action",
                     stage, self._request_id(payload),

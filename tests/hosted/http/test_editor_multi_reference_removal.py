@@ -226,27 +226,28 @@ class MultiReferenceRemovalTests(unittest.TestCase):
             }],
         )
         _, impact = self.app.editor_removal_impact("campaign_alpha", revision, "record-target")
-        payload = self._remove_payload(
-            revision,
-            impact,
-            [{
-                "reference_id": impact["incoming_references"][0]["reference_id"],
-                "action": "remove",
-                "replacement_target_record_id": None,
-            }],
-            key="idem_remove_unknown_action",
-        )
         source_before = self.app._record("campaign_alpha", revision, "record-source")["content"]
         workflow_before = self.app._editor_version("campaign_alpha")
         proposals_before = dict(self.app._editor_proposals)
-        with self.assertRaises(HTTPFailure) as caught:
-            self.app.editor_record_remove("campaign_alpha", revision, "record-target", payload)
+        for index, action in enumerate(("remove", [])):
+            payload = self._remove_payload(
+                revision,
+                impact,
+                [{
+                    "reference_id": impact["incoming_references"][0]["reference_id"],
+                    "action": action,
+                    "replacement_target_record_id": None,
+                }],
+                key=f"idem_remove_unknown_action_{index}",
+            )
+            with self.assertRaises(HTTPFailure) as caught:
+                self.app.editor_record_remove("campaign_alpha", revision, "record-target", payload)
 
-        self.assertEqual("invalid_resolution_action", caught.exception.payload["error"]["code"])
-        self.assertEqual(revision, self.app.workflow.head("campaign_alpha"))
-        self.assertEqual(workflow_before, self.app._editor_version("campaign_alpha"))
-        self.assertEqual(source_before, self.app._record("campaign_alpha", revision, "record-source")["content"])
-        self.assertEqual(proposals_before, self.app._editor_proposals)
+            self.assertEqual("invalid_resolution_action", caught.exception.payload["error"]["code"])
+            self.assertEqual(revision, self.app.workflow.head("campaign_alpha"))
+            self.assertEqual(workflow_before, self.app._editor_version("campaign_alpha"))
+            self.assertEqual(source_before, self.app._record("campaign_alpha", revision, "record-source")["content"])
+            self.assertEqual(proposals_before, self.app._editor_proposals)
 
 if __name__ == "__main__":
     unittest.main()
