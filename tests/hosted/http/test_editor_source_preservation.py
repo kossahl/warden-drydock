@@ -137,6 +137,33 @@ class EditorSourcePreservationTests(unittest.TestCase):
         )[1]["record"]
         self.assertEqual(normalized_candidate["sections"], readback["sections"])
 
+    def test_unicode_line_separator_does_not_create_a_mutation_heading(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Summary
+Keep this record.\u2028## This resembles a heading
+This remains part of the summary.
+
+## Notes
+Keep this section.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["displayed_name"] = "Keeper Updated"
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+        round_tripped = parse_document(result, "record-main", "npc")
+
+        self.assertEqual(candidate["sections"], round_tripped["sections"])
+        self.assertIn("Keep this record.\u2028## This resembles a heading\n", result)
+        self.assertIn("This remains part of the summary.", result)
+
     def test_leading_blank_lines_survive_real_publication_readback(self):
         revision = self.app.workflow.head("campaign_alpha")
         view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]

@@ -34,6 +34,31 @@ const proposal = (base: RevisionRef, record: EditorRecord, version = 1, workflow
   authority_outcome: [], visibility_outcome: [], publication: { status: "not_published", published_revision: null },
 });
 
+const removalImpact = (base: RevisionRef) => ({
+  contract_name: "editor_removal_impact" as const, contract_version: 1 as const,
+  binding: { campaign_id: "campaign_atlas", base_revision: base, record_id: originalRecord.record_id, record_digest: originalRecord.content_digest, expected_editor_workflow_version: 1 },
+  impact_digest: "i".repeat(64), record: originalRecord, outgoing_connections: [],
+  incoming_references: [{ reference_id: "reference_1", source_record_id: "record-source", target_record_id: originalRecord.record_id, connection_id: "connection_source", relationship: "guards", state: "current", context: "Guards the station.", resolution_required: true as const, permitted_unresolved: false }],
+  backlink_policy: "server_derived_from_typed_connections" as const,
+});
+
+const removalProposal = (base: RevisionRef, version = 1, resolutions: Array<Record<string, unknown>> = []): EditorProposal => ({
+  ...proposal(base, originalRecord, version, 1, "proposal_removal"),
+  mutation_kind: "remove",
+  diff: {
+    ...proposal(base, originalRecord, version, 1, "proposal_removal").diff,
+    cards: [
+      { change_id: "change_remove", kind: "record_removed", subject_record_id: originalRecord.record_id, before: originalRecord, after: null, property_changes: [] },
+      { change_id: "change_reference", kind: "reference_resolution", subject_record_id: "record-source", before: { source_record_id: "record-source", connection_id: "connection_source" }, resolution: resolutions[0] ?? null },
+    ],
+    summary: "remove",
+    unresolved_reference_count: 1,
+  },
+  impact_digest: "i".repeat(64),
+  impact_binding: removalImpact(base).binding,
+  resolutions,
+});
+
 const editor = (page: Page) => page.locator(".editor").filter({ hasText: "Edit record" });
 
 type CorrectionRequest = {
@@ -319,6 +344,38 @@ test("quarantined proposal review is read-only", async ({ page }) => {
   await expect(panel.getByRole("button", { name: "Reject exact proposal" })).toBeDisabled();
   await expect(panel.getByRole("button", { name: "Create correction\/rebase" })).toBeDisabled();
   await expect(panel.getByRole("button", { name: "Approve and publish exact proposal" })).toBeDisabled();
+});
+
+test("restored removal proposals show correction resolutions and require valid input", async ({ page }) => {
+  await installAtlasApi(page);
+  const correctionBodies: Array<{ resolutions?: Array<Record<string, unknown>> }> = [];
+  const impact = removalImpact(headRevision);
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) return json(route, view(headRevision, headRevision, originalRecord));
+    if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_removal/versions/1")) return json(route, removalProposal(headRevision));
+    if (request.method() === "GET" && path.endsWith("/records/record-one/removal-impact")) return json(route, impact);
+    if (request.method() === "POST" && path.endsWith("/corrections")) {
+      correctionBodies.push(JSON.parse(request.postData() ?? "{}") as { resolutions?: Array<Record<string, unknown>> });
+      return json(route, removalProposal(headRevision, 2, [{ reference_id: "reference_1", action: "remove_reference", replacement_target_record_id: null }]), 201);
+    }
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two&proposal=proposal_removal&version=1");
+  const panel = editor(page);
+  await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
+  await panel.getByRole("button", { name: "Create correction/rebase" }).click();
+  await expect(panel.getByRole("heading", { name: "Removal impact and resolutions" })).toBeVisible();
+  const submit = panel.getByRole("button", { name: "Submit correction/rebase" });
+  await expect(submit).toBeDisabled();
+  await panel.getByLabel("Resolution for reference_1").selectOption("remove_reference");
+  await expect(submit).toBeEnabled();
+  await submit.click();
+
+  expect(correctionBodies[0]?.resolutions).toEqual([{ reference_id: "reference_1", action: "remove_reference", replacement_target_record_id: null }]);
+  await expect(panel.getByText(/proposal_removal.*, version 2/)).toBeVisible();
 });
 
 test("stale correction responses cannot install a proposal after SPA navigation", async ({ page }) => {

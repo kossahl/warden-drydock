@@ -371,6 +371,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       if (currentImpact) {
         setResolutions(currentImpact.incoming_references.map((reference) => resolutions.find((item) => item.reference_id === reference.reference_id) ?? { reference_id: reference.reference_id, action: "", replacement_target_record_id: null }));
       }
+      setMode(proposal.mutation_kind === "remove" ? "remove" : "edit");
       setView(currentHead); setImpact(currentImpact); setCorrectionMode(true); setMessage("Correction mode: edit the candidate from the current head, then submit a new proposal version.");
     } catch (reason) {
       if (!isCurrentRequest()) return;

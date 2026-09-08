@@ -34,6 +34,15 @@ def _contains_connection_line_boundary(value: str) -> bool:
     return any(character in _CONNECTION_LINE_BOUNDARIES for character in value)
 
 
+def _split_lf_lines(value: str) -> list[str]:
+    """Split only on LF, retaining LF endings for source-preserving edits."""
+    parts = value.split("\n")
+    lines = [f"{part}\n" for part in parts[:-1]]
+    if parts[-1]:
+        lines.append(parts[-1])
+    return lines
+
+
 def _id(value: Any, *, public: bool = False) -> str:
     pattern = _PUBLIC if public else _ID
     if not isinstance(value, str) or not 1 <= len(value) <= 80 or pattern.fullmatch(value) is None:
@@ -292,7 +301,7 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         return before
     newline = "\r\n" if "\r\n" in before else "\n"
     source = before.replace("\r\n", "\n").replace("\r", "\n")
-    lines = source.splitlines(keepends=True)
+    lines = _split_lf_lines(source)
     if not lines or not source.startswith("---\n"):
         return serialize_document(new).replace("\n", newline)
     end = next((index for index, line in enumerate(lines[1:], 1) if line.rstrip("\n") == "---"), None)
@@ -361,7 +370,7 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         if old_body == body_text:
             consumed.add(section_id)
             continue
-        replacement = [] if body_text == "" else body_text.splitlines(keepends=True)
+        replacement = [] if body_text == "" else _split_lf_lines(body_text)
         if replacement and not replacement[-1].endswith("\n"):
             replacement[-1] += "\n"
         # ``parse_document`` represents the blank line before the next
@@ -394,7 +403,7 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         for item in missing:
             inserted.extend([f"## {item['section_id']}{newline}"])
             if item["body"]:
-                inserted.extend(normalize_text(item["body"]).splitlines(keepends=True))
+                inserted.extend(_split_lf_lines(normalize_text(item["body"])))
                 if not inserted[-1].endswith("\n"):
                     inserted[-1] += newline
             inserted.append(newline)
