@@ -244,6 +244,52 @@ Keep this section.
         self.assertEqual(reviewed_candidate["displayed_name"], readback["displayed_name"])
         self.assertEqual(reviewed_candidate["fields"], readback["fields"])
 
+    def test_structured_and_non_finite_field_values_fail_before_proposal_creation(self):
+        revision = self.app.workflow.head("campaign_alpha")
+        view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
+        source_before = self.app._record("campaign_alpha", revision, "campaign-main")["content"]
+
+        for index, value in enumerate(({"unexpected": "object"}, ["unexpected"], float("nan"), float("inf"), float("-inf"))):
+            candidate = deepcopy(view["record"])
+            candidate["fields"][0]["value"] = value
+            candidate["content_digest"] = document_digest(candidate)
+            with self.subTest(value=value):
+                with self.assertRaises(_editor_backend.HTTPFailure) as caught:
+                    self._edit_candidate(candidate, key=f"idem_invalid_field_value_{index}")
+                self.assertEqual("invalid_field_value", caught.exception.payload["error"]["code"])
+                self.assertEqual(revision, self.app.workflow.head("campaign_alpha"))
+                self.assertEqual(source_before, self.app._record("campaign_alpha", revision, "campaign-main")["content"])
+                self.assertEqual({}, self.app._editor_proposals)
+
+    def test_connection_removal_matches_surviving_rows_by_occurrence_id(self):
+        source = (
+            "---\n"
+            "id: record-source\n"
+            "type: npc\n"
+            "name: Source\n"
+            "status: draft\n"
+            "visibility: warden\n"
+            "---\n\n"
+            "## Summary\n"
+            "Keep this record.\n\n"
+            "## Connections\n\n"
+            "<!-- drydock:connection-id=connection_first -->\n"
+            "- `connected-to` -> [[record-first]] (`current`) — First.\n"
+            "Campaign-authored prose between connections.\n"
+            "<!-- drydock:connection-id=connection_second -->\n"
+            "- `supports` -> [[record-second]] (`current`) — Second.\n"
+        )
+        candidate = parse_document(source, "record-source", "npc")
+        candidate["connections"] = [candidate["connections"][1]]
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+
+        self.assertNotIn("record-first", result)
+        self.assertIn("Campaign-authored prose between connections.", result)
+        self.assertLess(result.index("Campaign-authored prose"), result.index("connection_second"))
+        self.assertEqual(candidate["connections"], parse_document(result, "record-source", "npc")["connections"])
+
     def test_typed_frontmatter_scalars_round_trip_through_source_preserving_mutation(self):
         source = """---
 id: record-main

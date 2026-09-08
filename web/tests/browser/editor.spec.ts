@@ -38,7 +38,7 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
       if (path.endsWith("/atlas/history")) return route.fulfill({ json: { ...newestFiveHistory, binding } });
     }
     if (path.endsWith("/records/record-one/editor") && request.method() === "GET") {
-      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: editorRecord }) });
+      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 2, historical: false, editable: true, record: editorRecord }) });
     }
     if (path.endsWith("/records/record-one/proposals") && request.method() === "POST") {
       csrfRequests.push(request.headers()["x-csrf-token"] ?? "");
@@ -72,10 +72,18 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
   await editor.getByRole("button", { name: "Cancel correction" }).click();
   await editor.getByRole("button", { name: "Approve and publish exact proposal" }).click();
   await expect(page.getByRole("heading", { name: "Approve exact proposal" })).toBeFocused();
+  const approveTrigger = editor.locator(".editor-review").getByRole("button", { name: "Approve and publish exact proposal", exact: true });
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+  await expect(approveTrigger).toBeFocused();
+  await approveTrigger.click();
+  await expect(page.getByRole("heading", { name: "Approve exact proposal" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(approveTrigger).toBeFocused();
+  await approveTrigger.click();
   await expect(page.getByRole("alert")).toHaveText(/broadens audience visibility/);
-  await expect(page.getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
   await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
-  await page.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
   await expect.poll(() => csrfRequests).toEqual(["browser-csrf", "browser-csrf"]);
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\?revision=revision_three$/);
   await expect(page.getByRole("complementary", { name: "Viewed revision" })).toHaveText(/revision_three · Head/);
@@ -146,7 +154,7 @@ test("rejection applies the returned workflow version to a fresh save", async ({
   const editor = page.locator(".editor");
   await editor.getByLabel("Displayed name").fill("Edited keeper");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
-  await editor.getByRole("button", { name: "Reject exact proposal" }).click();
+  await editor.locator(".editor-review").getByRole("button", { name: "Reject exact proposal" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Reject exact proposal" }).click();
   await expect(editor.getByText("Proposal rejected. No campaign revision changed.")).toBeVisible();
   await expect(editor.getByLabel("Displayed name")).toHaveValue("Edited keeper");
@@ -288,8 +296,8 @@ test("create correction uses the candidate ID, reads campaign context, and opens
   expect((correctionBody as any)?.candidate?.connections?.[0]?.context).toBe("Corrected connection context.");
   await expect(editor.getByRole("link", { name: /proposal_created/ })).toHaveAttribute("href", /proposal=proposal_created&version=1$/);
   await editor.getByRole("button", { name: "Approve and publish exact proposal" }).click();
-  await expect(page.getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
   await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
-  await page.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-created\?revision=revision_three$/);
 });

@@ -93,6 +93,15 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
     if any(not isinstance(item, Mapping) or set(item) != {"field_id", "value"} for item in fields): raise ValueError("invalid_fields")
     if any(not isinstance(item, Mapping) or set(item) != {"section_id", "body"} for item in raw_sections): raise ValueError("invalid_sections")
     if any(not isinstance(item, Mapping) or set(item) != {"connection_id", "target_record_id", "relationship", "state", "context"} for item in connections): raise ValueError("invalid_connections")
+    for item in fields:
+        scalar = item["value"]
+        if not (
+            scalar is None
+            or isinstance(scalar, (str, bool))
+            or (isinstance(scalar, int) and not isinstance(scalar, bool))
+            or (isinstance(scalar, float) and math.isfinite(scalar))
+        ):
+            raise ValueError("invalid_field_value")
     if any(not isinstance(item["body"], str) or len(item["body"]) > 200000 for item in raw_sections): raise ValueError("invalid_section_body")
     sections = [dict(item, body=normalize_text(item["body"])) for item in raw_sections]
     _unique(fields, "field_id"); _unique(sections, "section_id"); _unique(connections, "connection_id")
@@ -411,22 +420,26 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
 
     connection_headers = [i for i, line in enumerate(lines) if line.strip().casefold() == "## connections"]
 
-    def typed_connection_indexes(heading_index: int, next_heading: int) -> tuple[set[int], set[int]]:
+    def typed_connection_slots(heading_index: int, next_heading: int) -> list[tuple[int, int | None, str]]:
         """Return parser-identified rows and their associated editor markers."""
         segment = lines[heading_index + 1:next_heading]
         block = "## Connections\n" + "".join(segment)
         typed_connections, _ = parse_connections(
             block, source_id=new["record_id"], path=None  # type: ignore[arg-type]
         )
-        typed_indexes = {
-            heading_index + connection.line - 1 for connection in typed_connections
-        }
-        marker_indexes = {
-            heading_index + marker_line - 1
-            for line_number, (marker_line, _) in _connection_marker_occurrences(block).items()
-            if heading_index + line_number - 1 in typed_indexes
-        }
-        return typed_indexes, marker_indexes
+        occurrences = _connection_marker_occurrences(block)
+        return [
+            (
+                heading_index + connection.line - 1,
+                heading_index + occurrences[connection.line][0] - 1 if connection.line in occurrences else None,
+                occurrences[connection.line][1] if connection.line in occurrences else f"connection_{index}",
+            )
+            for index, connection in enumerate(typed_connections, 1)
+        ]
+
+    def typed_connection_indexes(heading_index: int, next_heading: int) -> tuple[set[int], set[int]]:
+        slots = typed_connection_slots(heading_index, next_heading)
+        return {line for line, _, _ in slots}, {marker for _, marker, _ in slots if marker is not None}
 
     # A source document may have acquired duplicate typed connection headings
     # outside the editor.  Remove only parser-identified typed rows and their
@@ -452,25 +465,39 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
                 ])
             # Use `parse_connections`' typed line numbers as the replacement set
             # instead of treating every Markdown bullet as editor data.
-            typed_line_indexes, marker_line_indexes = typed_connection_indexes(
-                connection_index, next_heading
-            )
+            slots = typed_connection_slots(connection_index, next_heading)
+            typed_line_indexes = {line for line, _, _ in slots}
+            marker_line_indexes = {marker for _, marker, _ in slots if marker is not None}
+            slots_by_line = {line: connection_id for line, _, connection_id in slots}
+            connections_by_id = {item["connection_id"]: item for item in new["connections"]}
+            emitted_ids: set[str] = set()
             segment = lines[connection_index + 1:next_heading]
             if typed_line_indexes:
-                typed_line_indexes = sorted(typed_line_indexes)
                 rewritten: list[str] = []
                 for index, line in enumerate(segment, connection_index + 1):
                     if index in marker_line_indexes:
                         continue
                     if index in typed_line_indexes:
-                        item_index = typed_line_indexes.index(index)
-                        if item_index < len(new["connections"]):
-                            start = item_index * 2
-                            rewritten.extend(connection_lines[start:start + 2])
-                        if item_index == len(typed_line_indexes) - 1:
-                            rewritten.extend(connection_lines[len(typed_line_indexes) * 2:])
+                        connection_id = slots_by_line[index]
+                        item = connections_by_id.get(connection_id)
+                        if item is not None:
+                            rewritten.extend([
+                                f"<!-- drydock:connection-id={item['connection_id']} -->{newline}",
+                                f"{_connection_line(item)}{newline}",
+                            ])
+                            emitted_ids.add(connection_id)
                         continue
                     rewritten.append(line)
+                additions = [item for item in new["connections"] if item["connection_id"] not in emitted_ids]
+                if additions:
+                    added_lines = [line for item in additions for line in (
+                        f"<!-- drydock:connection-id={item['connection_id']} -->{newline}",
+                        f"{_connection_line(item)}{newline}",
+                    )]
+                    insert_at = len(rewritten)
+                    while insert_at > 0 and not rewritten[insert_at - 1].strip():
+                        insert_at -= 1
+                    rewritten[insert_at:insert_at] = added_lines
                 lines[connection_index + 1:next_heading] = rewritten
             else:
                 lines[connection_index + 1:next_heading] = segment[:1] + connection_lines + segment[1:]

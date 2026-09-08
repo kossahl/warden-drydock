@@ -437,6 +437,9 @@ test("historical proposal URLs keep review and correction available", async ({ p
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_one&proposal=proposal_historical&version=1");
   const panel = editor(page);
   await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Reject exact proposal" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Approve and publish exact proposal" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Create correction/rebase" })).toBeEnabled();
   await expect(panel.getByLabel("Displayed name")).toBeDisabled();
   await panel.getByRole("button", { name: "Create correction/rebase" }).click();
   await expect(panel.getByLabel("Displayed name")).toHaveValue("Current Head Keeper");

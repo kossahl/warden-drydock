@@ -1586,6 +1586,7 @@ class SliceApplication:
     def _editor_semantic(self, payload: dict, *, stage: str, proposal: dict | None = None,
                          current_head: dict | None = None, current_workflow_version: int | None = None,
                          impact: dict | None = None, existing_record_ids: set[str] | None = None) -> None:
+        self._editor_validate_resolution_actions(payload, stage)
         try:
             validate_editor_semantics(
                 payload, proposal=proposal, current_head=current_head,
@@ -1609,6 +1610,18 @@ class SliceApplication:
                 "workflow_conflict": "unsafe_binding",
                 "stale_record_digest": "stale_revision",
             }.get(exc.category, exc.category), code, stage, self._request_id(payload)) from exc
+
+    def _editor_validate_resolution_actions(self, payload: dict, stage: str) -> None:
+        resolutions = payload.get("resolutions")
+        if not isinstance(resolutions, list):
+            return
+        allowed = {"remove_reference", "redirect", "accept_unresolved"}
+        for resolution in resolutions:
+            if not isinstance(resolution, dict) or resolution.get("action") not in allowed:
+                raise HTTPFailure(
+                    422, "proposal_validation_failure", "invalid_resolution_action",
+                    stage, self._request_id(payload),
+                )
 
     def editor_record_read(self, campaign_id: str, revision_id: str, record_id: str) -> tuple[int, dict]:
         campaign, manifest, head, document = self._editor_context(campaign_id, revision_id, record_id)
@@ -1708,6 +1721,7 @@ class SliceApplication:
             expected_fields = {"contract_name", "contract_version", "operation_request", "prior_proposal", "binding", "mutation_kind", "candidate", "resolutions", "impact_digest", "impact_binding"}
         if set(payload) != expected_fields:
             raise HTTPFailure(422, "unsafe_binding", "invalid_request_shape", "editor_proposal", self._request_id(payload))
+        self._editor_validate_resolution_actions(payload, "editor_proposal")
         operation_fields = {"contract_name", "contract_version", "request_id", "operation", "idempotency_key", "payload_digest", "expected_revision", "expected_editor_workflow_version", "subject_id"}
         if set(operation) != operation_fields or operation.get("contract_name") != "editor_operation_request" or operation.get("contract_version") != 1:
             raise HTTPFailure(422, "unsafe_binding", "invalid_operation_shape", "editor_proposal", self._request_id(payload))
