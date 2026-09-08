@@ -1963,6 +1963,10 @@ class SliceApplication:
         return status, value
 
     def editor_removal_impact(self, campaign_id: str, revision_id: str, record_id: str) -> tuple[int, dict]:
+        if record_id == "campaign-main":
+            raise HTTPFailure(
+                422, "proposal_validation_failure", "required_record_removal", "editor_removal_impact"
+            )
         campaign, manifest = self._campaign_revision(campaign_id, revision_id)
         removed = parse_document(self._record(campaign_id, revision_id, record_id)["content"], record_id)
         bundle = self.atlas_repository.get(campaign_id, revision_id)

@@ -325,6 +325,40 @@ Keep this record.
 
         self.assertEqual(typed_values, {field["field_id"]: field["value"] for field in round_tripped["fields"]})
 
+    def test_numeric_scalar_type_changes_are_preserved_during_mutation(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+score: 1.0
+enabled: true
+ratio: 1.5
+---
+
+## Summary
+Keep this record.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        for field in candidate["fields"]:
+            if field["field_id"] == "score":
+                field["value"] = 1
+            elif field["field_id"] == "enabled":
+                field["value"] = 1
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+        round_tripped = parse_document(result, "record-main", "npc")
+        values = {field["field_id"]: field["value"] for field in round_tripped["fields"]}
+
+        self.assertEqual(1, values["score"])
+        self.assertIs(type(values["score"]), int)
+        self.assertEqual(1, values["enabled"])
+        self.assertIs(type(values["enabled"]), int)
+        self.assertEqual(1.5, values["ratio"])
+        self.assertIs(type(values["ratio"]), float)
+
     def test_typed_frontmatter_scalars_survive_proposal_approval_and_readback(self):
         for index, value in enumerate((42, 3.5, True, None, "42")):
             backend = _editor_backend.EditorBackendTests(

@@ -447,11 +447,19 @@ class EditorBackendTests(unittest.TestCase):
         self.assertEqual(workflow_audit_after_retry, tuple(restarted.workflow.audit))
 
     def test_removal_impact_derives_typed_incoming_references(self):
-        revision = self.app.workflow.head("campaign_alpha")
-        status, impact = self.app.editor_removal_impact("campaign_alpha", revision, "campaign-main")
+        revision = self._create_record("record-target")
+        status, impact = self.app.editor_removal_impact("campaign_alpha", revision, "record-target")
         self.assertEqual(200, status)
         self.assertEqual("server_derived_from_typed_connections", impact["binding"].get("backlink_policy", "server_derived_from_typed_connections"))
         self.assertEqual([], impact["incoming_references"])
+
+    def test_removal_impact_rejects_required_campaign_anchor(self):
+        revision = self.app.workflow.head("campaign_alpha")
+
+        with self.assertRaises(HTTPFailure) as caught:
+            self.app.editor_removal_impact("campaign_alpha", revision, "campaign-main")
+
+        self.assertEqual((422, "required_record_removal"), (caught.exception.status, caught.exception.payload["error"]["code"]))
 
     def test_mutation_preserves_source_sections_comments_and_single_connections_heading(self):
         source = """---

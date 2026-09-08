@@ -73,6 +73,11 @@ def _visibility(value: Any) -> dict[str, Any]:
     raise ValueError("invalid_visibility")
 
 
+def _same_scalar_type_and_value(left: Any, right: Any) -> bool:
+    """Keep JSON scalar type changes visible to source-preserving mutation."""
+    return type(left) is type(right) and left == right
+
+
 def _document(value: Mapping[str, Any]) -> dict[str, Any]:
     required = {"record_id", "record_type", "displayed_name", "status", "authority", "visibility", "fields", "sections", "connections", "content_digest"}
     if set(value) != required:
@@ -340,7 +345,13 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
                 "visibility": old["visibility"]["audience"],
                 "warden_only": old["visibility"]["warden_only"],
             }.get(key) != all_values[key])
-            or (key in field_values and old_field_values.get(key) != field_values[key])
+            or (
+                key in field_values
+                and (
+                    key not in old_field_values
+                    or not _same_scalar_type_and_value(old_field_values[key], field_values[key])
+                )
+            )
         )
         if key in all_values and changed:
             lines[index] = f"{key}: {_format_frontmatter_value(all_values[key])}{newline}"
