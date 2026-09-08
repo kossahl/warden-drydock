@@ -61,11 +61,19 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   for (let index = 0; index < 2; index += 1) {
     await editor.getByRole("button", { name: "Add typed connection", exact: true }).click();
     const connection = editor.locator(".editor-connection").nth(index);
-    await connection.getByRole("button", { name: new RegExp(`Target for connection_${index + 1}: choose existing record`) }).click();
+    const pickerButton = connection.getByRole("button", { name: new RegExp(`Target for connection_${index + 1}: choose existing record`) });
+    await pickerButton.click();
     const targetDialog = page.getByRole("dialog");
+    await expect(targetDialog.getByLabel("Search existing records")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(targetDialog).toBeHidden();
+    await expect(pickerButton).toBeFocused();
+    await pickerButton.click();
+    await expect(targetDialog.getByLabel("Search existing records")).toBeFocused();
     await targetDialog.getByLabel("Search existing records").fill("npc-target");
     await targetDialog.getByRole("button", { name: "Search", exact: true }).click();
     await targetDialog.getByRole("option", { name: /npc-target/ }).click();
+    if (index === 1) await connection.getByLabel("Relationship", { exact: true }).selectOption("supports");
     await connection.getByLabel("Context", { exact: true }).fill(`Source reference ${index + 1}.`);
   }
   await submit("Submit create proposal");
@@ -114,6 +122,12 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   expect(removal.diff.cards.filter((card) => card.kind === "reference_resolution")).toHaveLength(2);
   expect(removal.record_bindings.map((binding) => binding.record_id).sort()).toEqual(["npc-source", "npc-target"]);
   for (const resolution of await resolutions.all()) await expect(resolution).toBeDisabled();
+  await editor.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
+  const removalApproval = page.getByRole("dialog");
+  await expect(removalApproval).toContainText("This record disappears only from the new approved revision");
+  await expect(removalApproval).toContainText("Historical revisions retain it");
+  await expect(removalApproval).toContainText("npc-source");
+  await removalApproval.getByRole("button", { name: "Cancel", exact: true }).click();
   await editor.getByRole("button", { name: "Create correction/rebase", exact: true }).click();
   await expect(resolutions.first()).toBeEnabled();
   await resolutions.first().selectOption("redirect");

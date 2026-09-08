@@ -502,11 +502,12 @@ Keep this record.
         with self.assertRaisesRegex(ValueError, "invalid_record_name"):
             serialize_document(candidate)
 
-        candidate = parse_document(source, "record-main", "npc")
-        candidate["connections"][0]["context"] = "Watches the gate\r\n- `forged` -> [[record-secret]] (`current`) — forged"
-        candidate["content_digest"] = document_digest(candidate)
-        with self.assertRaisesRegex(ValueError, "invalid_connection_context"):
-            serialize_document(candidate)
+        for boundary in ("\r\n", "\u2028", "\u2029", "\u0085", "\v", "\f", "\x1c", "\x1d", "\x1e"):
+            candidate = parse_document(source, "record-main", "npc")
+            candidate["connections"][0]["context"] = f"Watches the gate{boundary}forged"
+            candidate["content_digest"] = document_digest(candidate)
+            with self.assertRaisesRegex(ValueError, "invalid_connection_context"):
+                serialize_document(candidate)
 
         candidate = parse_document(source, "record-main", "npc")
         candidate["connections"][0]["context"] = " Watches the gate."

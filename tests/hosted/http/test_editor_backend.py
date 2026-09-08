@@ -279,6 +279,9 @@ class EditorBackendTests(unittest.TestCase):
             proposal["validation"]["validation_digest"],
             canonical_digest({key: proposal["validation"][key] for key in ("status", "error_count", "findings")}),
         )
+        with self.assertRaises(HTTPFailure) as caught:
+            self._approve_editor(proposal)
+        self.assertEqual("proposal_validation_failure", caught.exception.payload["error"]["code"])
 
     def test_restart_recovers_editor_publication_and_exact_replay_once(self):
         _, _, (_, proposal) = self._edit("idem_editor_pending_recovery")

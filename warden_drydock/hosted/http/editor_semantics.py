@@ -344,7 +344,12 @@ def validate_editor_semantics(payload: Mapping[str, Any], *, proposal: Mapping[s
         if payload.get("warden_confirmed") is not True:
             _fail("proposal_approval_conflict", "warden_confirmed")
         if name == "editor_proposal_approval_request":
-            if payload["proposal_status"] != "needs_review" or payload["validation_status"] != "passed" or payload["validation_digest"] != proposal["validation"]["validation_digest"]:
+            if (
+                payload["proposal_status"] != "needs_review"
+                or payload["validation_status"] != "passed"
+                or payload["validation_digest"] != proposal["validation"]["validation_digest"]
+                or proposal["validation"]["findings"]
+            ):
                 _fail("proposal_validation_failure", "approval gate")
             _equal(payload["diff"], proposal["diff"], "proposal_approval_conflict", "diff")
             _equal(payload["affected_record_count"], proposal["diff"]["affected_record_count"], "proposal_approval_conflict", "affected_record_count")

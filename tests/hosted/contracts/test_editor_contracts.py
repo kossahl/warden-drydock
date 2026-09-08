@@ -420,7 +420,7 @@ def validate_editor_semantics(
             if name == "editor_proposal_approval_request":
                 if proposal["core_proposal"]["proposal"]["status"] != "needs_review" or proposal["publication"]["status"] != "not_published":
                     raise EditorSemanticError("proposal_approval_conflict", "proposal.status")
-                if proposal["validation"]["status"] != "passed" or proposal["validation"]["error_count"] != 0:
+                if proposal["validation"]["status"] != "passed" or proposal["validation"]["error_count"] != 0 or proposal["validation"]["findings"]:
                     raise EditorSemanticError("proposal_validation_failure", "validation.status")
                 if payload["validation_status"] != "passed":
                     raise EditorSemanticError("proposal_validation_failure", "validation_status")

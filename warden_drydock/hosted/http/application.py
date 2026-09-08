@@ -1539,6 +1539,7 @@ class SliceApplication:
                 "workflow_conflict": "workflow_conflict",
                 "invalid_connections": "invalid_connections",
                 "incomplete_removal_resolution": "incomplete_removal_resolution",
+                "proposal_validation_failure": "proposal_validation_failure",
             }.get(exc.category, "editor_semantic_invalid")
             raise HTTPFailure(status, {
                 "workflow_conflict": "unsafe_binding",
@@ -1971,6 +1972,8 @@ class SliceApplication:
         if payload["proposal"] != {"proposal_id": proposal_id, "proposal_version": version}:
             raise HTTPFailure(422, "proposal_approval_conflict", "approval_binding_mismatch", "editor_approve" if approve else "editor_reject", self._request_id(payload))
         if approve:
+            if value["validation"]["findings"]:
+                raise HTTPFailure(422, "proposal_validation_failure", "proposal_validation_failure", "editor_approve", self._request_id(payload))
             if payload["diff"] != value["diff"] or payload["proposal_status"] != "needs_review" or payload["validation_status"] != "passed" or payload["warden_confirmed"] is not True:
                 raise HTTPFailure(422, "proposal_approval_conflict", "approval_binding_mismatch", "editor_approve", self._request_id(payload))
             expected_ids = [card["change_id"] for card in value["diff"]["cards"]]

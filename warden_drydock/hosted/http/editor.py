@@ -27,6 +27,11 @@ _CONNECTION_MARKER = re.compile(
     r"^\s*<!--\s*drydock:connection-id=(?P<id>[a-z][a-z0-9]*(?:_[a-z0-9]+)*)\s*-->\s*$"
 )
 _STATUSES = {"idea", "draft", "review", "canon", "revealed", "archived", "accepted"}
+_CONNECTION_LINE_BOUNDARIES = frozenset("\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029")
+
+
+def _contains_connection_line_boundary(value: str) -> bool:
+    return any(character in _CONNECTION_LINE_BOUNDARIES for character in value)
 
 
 def _id(value: Any, *, public: bool = False) -> str:
@@ -93,8 +98,7 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
             not isinstance(item["context"], str)
             or not item["context"]
             or len(item["context"]) > 2000
-            or "\n" in item["context"]
-            or "\r" in item["context"]
+            or _contains_connection_line_boundary(item["context"])
             or item["context"] != item["context"].strip()
         ):
             raise ValueError("invalid_connection_context")
@@ -121,7 +125,7 @@ def _connection_markers(content: str) -> dict[int, str]:
     markers: dict[int, str] = {}
     in_connections = False
     pending: str | None = None
-    for line_number, line in enumerate(content.splitlines(), 1):
+    for line_number, line in enumerate(content.split("\n"), 1):
         heading = re.match(r"^##\s+(.+?)\s*$", line)
         if heading:
             if in_connections:

@@ -58,7 +58,7 @@ class MultiReferenceRemovalTests(unittest.TestCase):
                 {
                     "connection_id": "connection_two",
                     "target_record_id": "record-target",
-                    "relationship": "connected-to",
+                    "relationship": "supports",
                     "state": "current",
                     "context": "Second context.",
                 },
@@ -120,7 +120,7 @@ class MultiReferenceRemovalTests(unittest.TestCase):
                 {
                     "connection_id": "connection_remove",
                     "target_record_id": "record-target",
-                    "relationship": "connected-to",
+                    "relationship": "supports",
                     "state": "current",
                     "context": "Remove this context.",
                 },
@@ -186,7 +186,7 @@ class MultiReferenceRemovalTests(unittest.TestCase):
             "record-source",
             connections=[
                 {"connection_id": "connection_one", "target_record_id": "record-target", "relationship": "connected-to", "state": "current", "context": "One."},
-                {"connection_id": "connection_two", "target_record_id": "record-target", "relationship": "connected-to", "state": "current", "context": "Two."},
+                {"connection_id": "connection_two", "target_record_id": "record-target", "relationship": "supports", "state": "current", "context": "Two."},
             ],
         )
         _, impact = self.app.editor_removal_impact("campaign_alpha", revision, "record-target")

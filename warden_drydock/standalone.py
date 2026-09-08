@@ -70,7 +70,7 @@ class Connection:
 
 
 def _section_lines(text: str, heading: str) -> list[tuple[int, str]]:
-    lines = text.splitlines()
+    lines = text.split("\n")
     start = None
     for index, line in enumerate(lines):
         if line.strip().casefold() == f"## {heading}".casefold():
