@@ -63,6 +63,22 @@ describe("durable live capture queue", () => {
     expect(transport.sendCapture).toHaveBeenCalledTimes(2);
   });
 
+  it("stops draining later captures after a retryable failure", async () => {
+    const store = new MemoryCaptureStore();
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => { throw Object.assign(new Error("offline"), { retryable: true }); }),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 2 })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    await queue.capture(input);
+    await queue.capture({ ...input, eventId: "event_beta", operationId: "operation_beta", text: "The lights failed." });
+
+    const result = await queue.sync(input.sessionId);
+
+    expect(transport.sendCapture).toHaveBeenCalledTimes(1);
+    expect(result.captures.every(({ state }) => state === "Saved on device")).toBe(true);
+  });
+
   it("marks a digest conflict as needing attention without deleting the capture", async () => {
     const store = new MemoryCaptureStore();
     const transport: CaptureSyncTransport = {
@@ -121,11 +137,29 @@ describe("durable live capture queue", () => {
     expect(transport.sendEnd).toHaveBeenCalledWith(expect.anything(), 3);
   });
 
+  it("refreshes the server workflow version before a later sync run", async () => {
+    const store = new MemoryCaptureStore();
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async (_capture, workflowVersion) => ({ outcome: "accepted" as const, workflowVersion: workflowVersion + 1 })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 8 })),
+      readSession: vi.fn(async () => ({ workflowVersion: 7, acknowledgedOperationIds: [] })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    await queue.capture({ ...input, workflowVersion: 1 });
+
+    await queue.sync(input.sessionId);
+
+    expect(transport.sendCapture).toHaveBeenCalledWith(expect.anything(), 7);
+  });
+
   it("allows required acknowledgements from other devices through the end barrier", async () => {
     const store = new MemoryCaptureStore("device_alpha");
     const transport: CaptureSyncTransport = {
       sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 2 })),
       sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 3 })),
+      readSession: vi.fn(async () => ({ workflowVersion: 2, acknowledgedOperationIds: [
+        { deviceId: "device_remote", operationId: "operation_remote" },
+      ] })),
     };
     const queue = new CaptureQueue(store, transport);
     const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [
@@ -136,6 +170,24 @@ describe("durable live capture queue", () => {
 
     expect(result.end).toEqual({ key: end.key, state: "Synced" });
     expect(transport.sendEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for a remote required acknowledgement before sending the end barrier", async () => {
+    const store = new MemoryCaptureStore("device_alpha");
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 2 })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 3 })),
+      readSession: vi.fn(async () => ({ workflowVersion: 2, acknowledgedOperationIds: [] })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [
+      { deviceId: "device_remote", operationId: "operation_remote" },
+    ] });
+
+    const result = await queue.sync(input.sessionId);
+
+    expect(result.end).toEqual({ key: end.key, state: "Saved on device" });
+    expect(transport.sendEnd).not.toHaveBeenCalled();
   });
 
   it("reports unavailable browser storage instead of claiming local success", async () => {

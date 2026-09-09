@@ -1,4 +1,4 @@
-import { digest } from "../../src/api/digest";
+import { canonicalJson, digest } from "../../src/api/digest";
 import { httpCaptureTransport } from "../../src/api/liveClient";
 import { MemoryCaptureStore, type CaptureInput } from "../../src/live/captureStore";
 
@@ -21,14 +21,16 @@ describe("live capture HTTP transport", () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       status: 200,
-      headers: new Headers(),
+      headers: new Headers([["X-CSRF-Token", "csrf_alpha"]]),
       json: async () => ({ outcome: "accepted", session: { workflow_version: 3 } }),
     }) as unknown as Response);
     vi.stubGlobal("fetch", fetchMock);
     try {
       const capture = await new MemoryCaptureStore("device_alpha").saveCapture(input);
       await expect(httpCaptureTransport.sendCapture(capture, capture.workflowVersion)).resolves.toEqual({ outcome: "accepted", workflowVersion: 3 });
-      const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+      const postCall = calls.find(([, init]) => init.method === "POST")!;
+      const [url, init] = postCall;
       const body = JSON.parse(init.body as string) as Record<string, unknown>;
       const operationRequest = body.operation_request as Record<string, unknown>;
       const expectedInput = {
@@ -49,6 +51,8 @@ describe("live capture HTTP transport", () => {
       expect(body).toMatchObject({ contract_name: "live_capture_request", contract_version: 2, ...expectedInput });
       expect(operationRequest).toMatchObject({ operation: "live_capture", expected_workflow_version: capture.workflowVersion });
       expect(operationRequest.idempotency_key).toMatch(/^live_capture_[a-f0-9]{64}$/);
+      expect(new Headers(init.headers).get("X-CSRF-Token")).toBe("csrf_alpha");
+      expect(canonicalJson({ text: "café 🚀" })).toBe('{"text":"caf\\u00e9 \\ud83d\\ude80"}');
     } finally {
       vi.unstubAllGlobals();
     }
@@ -75,7 +79,9 @@ describe("live capture HTTP transport", () => {
         requiredOperationIds: [{ deviceId: "device_alpha", operationId: "operation_alpha" }],
       });
       await expect(httpCaptureTransport.sendEnd(end, end.workflowVersion)).resolves.toEqual({ readyForProposal: true, workflowVersion: 3 });
-      const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+      const postCall = calls.find(([, init]) => init.method === "POST")!;
+      const [url, init] = postCall;
       const body = JSON.parse(init.body as string) as Record<string, unknown>;
       const operationRequest = body.operation_request as Record<string, unknown>;
       const expectedInput = {
@@ -108,8 +114,10 @@ describe("live capture HTTP transport", () => {
       const second = await new MemoryCaptureStore("device_beta").saveCapture(input);
       await httpCaptureTransport.sendCapture(first, first.workflowVersion);
       await httpCaptureTransport.sendCapture(second, second.workflowVersion);
-      const firstCall = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-      const secondCall = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+      const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+      const postCalls = calls.filter(([, init]) => init.method === "POST");
+      const firstCall = postCalls[0];
+      const secondCall = postCalls[1];
       const firstBody = JSON.parse(firstCall[1].body as string) as { operation_request: { idempotency_key: string } };
       const secondBody = JSON.parse(secondCall[1].body as string) as { operation_request: { idempotency_key: string } };
       expect(firstBody.operation_request.idempotency_key).not.toBe(secondBody.operation_request.idempotency_key);

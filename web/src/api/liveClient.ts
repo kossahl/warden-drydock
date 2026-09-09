@@ -1,5 +1,5 @@
 import { digest } from "./digest";
-import { browserId, requestJson } from "./client";
+import { browserId, ensureCsrfToken, requestJson } from "./client";
 import type { LiveCaptureResult, LiveSessionView, OperationRequest } from "../contracts/v2";
 import type { CaptureSyncTransport, StoredCapture, StoredEndIntent } from "../live/captureStore";
 
@@ -27,6 +27,7 @@ async function liveIdempotencyKey(kind: "capture" | "end", sessionId: string, de
 
 export const httpCaptureTransport: CaptureSyncTransport = {
   async sendCapture(capture: StoredCapture, workflowVersion: number) {
+    await ensureCsrfToken();
     const input = {
       campaign_id: capture.campaignId,
       session_id: capture.sessionId,
@@ -53,6 +54,7 @@ export const httpCaptureTransport: CaptureSyncTransport = {
   },
 
   async sendEnd(end: StoredEndIntent, workflowVersion: number) {
+    await ensureCsrfToken();
     const input = {
       campaign_id: end.campaignId,
       session_id: end.sessionId,
@@ -72,5 +74,14 @@ export const httpCaptureTransport: CaptureSyncTransport = {
       }),
     });
     return { readyForProposal: result.end_barrier?.ready_for_proposal === true, workflowVersion: result.workflow_version };
+  },
+
+  async readSession(campaignId: string, sessionId: string) {
+    const result = await requestJson<LiveSessionView>(path(campaignId, ""));
+    if (result.session_id !== sessionId) throw new Error("session_observe_mismatch");
+    return {
+      workflowVersion: result.workflow_version,
+      acknowledgedOperationIds: result.acknowledgements.map(({ device_id: deviceId, operation_id: operationId }) => ({ deviceId, operationId })),
+    };
   },
 };

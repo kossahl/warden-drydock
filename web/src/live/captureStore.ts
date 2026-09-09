@@ -68,9 +68,15 @@ export interface EndSyncResponse {
   workflowVersion: number;
 }
 
+export interface SessionSyncResponse {
+  workflowVersion: number;
+  acknowledgedOperationIds: ReadonlyArray<ReceiptIdentity>;
+}
+
 export interface CaptureSyncTransport {
   sendCapture(capture: StoredCapture, workflowVersion: number): Promise<CaptureSyncResponse>;
   sendEnd(end: StoredEndIntent, workflowVersion: number): Promise<EndSyncResponse>;
+  readSession?(campaignId: PublicId, sessionId: PublicId): Promise<SessionSyncResponse>;
 }
 
 export interface CaptureStore {
@@ -233,7 +239,7 @@ export class MemoryCaptureStore implements CaptureStore {
     const key = captureKey(input.sessionId, deviceId, operationId);
     const existing = this.captures.get(key);
     if (existing) {
-      const candidate = await captureDigest({ ...input, deviceId, operationId, eventId, deviceOrder: existing.deviceOrder, recordId: input.recordId ?? null });
+      const candidate = await captureDigest({ ...input, deviceId, operationId, eventId: input.eventId ?? existing.eventId, deviceOrder: existing.deviceOrder, recordId: input.recordId ?? null });
       if (candidate !== existing.payloadDigest) throw new CaptureConflictError();
       return copyCapture(existing);
     }
@@ -391,7 +397,7 @@ class IndexedDbCaptureStore implements CaptureStore {
     const key = captureKey(input.sessionId, deviceId, operationId);
     const existing = await this.getCapture(key);
     if (existing) {
-      const candidate = await captureDigest({ ...input, deviceId, operationId, eventId, deviceOrder: existing.deviceOrder, recordId: input.recordId ?? null });
+      const candidate = await captureDigest({ ...input, deviceId, operationId, eventId: input.eventId ?? existing.eventId, deviceOrder: existing.deviceOrder, recordId: input.recordId ?? null });
       if (candidate !== existing.payloadDigest) throw new CaptureConflictError();
       return copyCapture(existing);
     }
@@ -411,7 +417,10 @@ class IndexedDbCaptureStore implements CaptureStore {
     } catch (error) {
       if (error instanceof CaptureConflictError) {
         const concurrent = await this.getCapture(key);
-        if (concurrent && concurrent.payloadDigest === record.payloadDigest) return copyCapture(concurrent);
+        if (concurrent) {
+          const replayDigest = await captureDigest({ ...input, deviceId, operationId, eventId: input.eventId ?? concurrent.eventId, deviceOrder: concurrent.deviceOrder, recordId: input.recordId ?? null });
+          if (concurrent.payloadDigest === replayDigest) return copyCapture(concurrent);
+        }
       }
       throw error;
     }
@@ -463,32 +472,37 @@ class IndexedDbCaptureStore implements CaptureStore {
   public async saveEnd(input: EndInput): Promise<StoredEndIntent> {
     assertContext(input);
     const deviceId = await this.getDeviceId();
-    const existing = await this.getEnd(input.sessionId);
-    const operationId = input.operationId ?? existing?.operationId ?? id("operation_end");
+    const operationId = input.operationId ?? id("operation_end");
     const requiredOperationIds = sortedReceipts(input.requiredOperationIds ?? (await this.listCaptures(input.sessionId)).map(({ deviceId: captureDeviceId, operationId: captureOperationId }) => ({ deviceId: captureDeviceId, operationId: captureOperationId })));
     const candidate: StoredEndIntent = { ...input, key: endKey(input.sessionId, deviceId, operationId), deviceId, operationId, requiredOperationIds, payloadDigest: "", state: "Saved on device", lastError: null };
     candidate.payloadDigest = await endDigest(candidate);
-    if (existing) {
-      if (candidate.payloadDigest !== existing.payloadDigest) throw new CaptureConflictError("session end is already bound to a different operation set");
-      return copyEnd(existing);
-    }
     const database = await openDatabase();
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const transaction = database.transaction(endStore, "readwrite");
-        const request = transaction.objectStore(endStore).add(candidate);
-        request.onerror = () => { database.close(); reject(request.error?.name === "ConstraintError" ? new CaptureConflictError() : new CaptureStorageError(request.error?.message ?? "indexeddb_end_write_failed")); };
-        transaction.oncomplete = () => { database.close(); resolve(); };
-        transaction.onerror = () => { database.close(); reject(new CaptureStorageError(transaction.error?.message ?? "indexeddb_end_write_failed")); };
-      });
-      return copyEnd(candidate);
-    } catch (error) {
-      if (error instanceof CaptureConflictError) {
-        const concurrent = await this.getEnd(input.sessionId);
-        if (concurrent && concurrent.payloadDigest === candidate.payloadDigest) return copyEnd(concurrent);
-      }
-      throw error;
-    }
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction(endStore, "readwrite");
+      const store = transaction.objectStore(endStore);
+      const request = store.index("sessionId").getAll(input.sessionId);
+      let existing: StoredEndIntent | undefined;
+      request.onsuccess = () => {
+        existing = (request.result as StoredEndIntent[])[0];
+        if (!existing) store.add(candidate);
+      };
+      request.onerror = () => { database.close(); reject(new CaptureStorageError(request.error?.message ?? "indexeddb_end_read_failed")); };
+      transaction.oncomplete = async () => {
+        database.close();
+        if (!existing) {
+          resolve(copyEnd(candidate));
+          return;
+        }
+        const replayCandidate = { ...input, key: existing.key, deviceId: existing.deviceId, operationId: input.operationId ?? existing.operationId, requiredOperationIds, payloadDigest: "", state: existing.state, lastError: existing.lastError };
+        replayCandidate.payloadDigest = await endDigest(replayCandidate);
+        if (replayCandidate.payloadDigest !== existing.payloadDigest) {
+          reject(new CaptureConflictError("session end is already bound to a different operation set"));
+          return;
+        }
+        resolve(copyEnd(existing));
+      };
+      transaction.onerror = () => { database.close(); reject(new CaptureStorageError(transaction.error?.message ?? "indexeddb_end_write_failed")); };
+    });
   }
 
   public async getEnd(sessionId: PublicId): Promise<StoredEndIntent | null> {
@@ -533,7 +547,27 @@ export class CaptureQueue {
 
   public async sync(sessionId: PublicId): Promise<CaptureSyncResult> {
     let captures = await this.store.listCaptures(sessionId);
+    let end = await this.store.getEnd(sessionId);
     let workflowVersion: number | undefined;
+    let observedSession: SessionSyncResponse | undefined;
+    const summarize = async (): Promise<CaptureSyncResult> => {
+      const finalCaptures = await this.store.listCaptures(sessionId);
+      const finalEnd = await this.store.getEnd(sessionId);
+      return {
+        captures: finalCaptures.map(({ key, state }) => ({ key, state })),
+        end: finalEnd ? { key: finalEnd.key, state: finalEnd.state } : null,
+      };
+    };
+
+    if (this.transport.readSession && (captures.length > 0 || end !== null)) {
+      try {
+        observedSession = await this.transport.readSession(captures[0]?.campaignId ?? end!.campaignId, sessionId);
+        workflowVersion = observedSession.workflowVersion;
+      } catch {
+        return summarize();
+      }
+    }
+
     for (const capture of captures) {
       if (capture.state === "Synced" || capture.state === "Needs attention") continue;
       await this.store.updateCapture(capture.key, "Syncing", null);
@@ -544,36 +578,54 @@ export class CaptureQueue {
         const state = outcome === "accepted" || outcome === "exact_replay" ? "Synced" : outcome === "digest_conflict" ? "Needs attention" : "Needs attention";
         await this.store.updateCapture(capture.key, state, state === "Needs attention" ? "capture_outcome_invalid" : null);
       } catch (error) {
-        await this.store.updateCapture(capture.key, isRetryableCaptureError(error) ? "Saved on device" : "Needs attention", error instanceof Error ? error.message : "capture_sync_failed");
+        const retryable = isRetryableCaptureError(error);
+        await this.store.updateCapture(capture.key, retryable ? "Saved on device" : "Needs attention", error instanceof Error ? error.message : "capture_sync_failed");
+        if (retryable) break;
       }
     }
     captures = await this.store.listCaptures(sessionId);
-    const end = await this.store.getEnd(sessionId);
+    end = await this.store.getEnd(sessionId);
     if (end && end.state !== "Synced" && end.state !== "Needs attention") {
       const byIdentity = new Map(captures.map((capture) => [`${capture.deviceId}\u0000${capture.operationId}`, capture]));
       const localDeviceId = await this.store.getDeviceId();
-      const missingLocal = end.requiredOperationIds.some((receipt) => receipt.deviceId === localDeviceId && !byIdentity.has(`${receipt.deviceId}\u0000${receipt.operationId}`));
-      const pending = end.requiredOperationIds.some((receipt) => {
-        const capture = byIdentity.get(`${receipt.deviceId}\u0000${receipt.operationId}`);
-        return capture !== undefined && capture.state !== "Synced";
-      });
-      if (missingLocal) await this.store.updateEnd(end.key, "Needs attention", "required_capture_missing");
-      else if (pending) await this.store.updateEnd(end.key, "Saved on device", "captures_pending");
-      else {
-        await this.store.updateEnd(end.key, "Syncing", null);
+      let observationError: unknown = null;
+      if (this.transport.readSession) {
         try {
-          const result = await this.transport.sendEnd(end, workflowVersion ?? end.workflowVersion);
-          await this.store.updateEnd(end.key, result.readyForProposal ? "Synced" : "Saved on device", result.readyForProposal ? null : "live_barrier_pending");
+          observedSession = await this.transport.readSession(end.campaignId, sessionId);
+          workflowVersion = observedSession.workflowVersion;
         } catch (error) {
-          await this.store.updateEnd(end.key, isRetryableCaptureError(error) ? "Saved on device" : "Needs attention", error instanceof Error ? error.message : "end_sync_failed");
+          observationError = error;
+        }
+      }
+      if (observationError) {
+        const retryable = isRetryableCaptureError(observationError);
+        await this.store.updateEnd(end.key, retryable ? "Saved on device" : "Needs attention", observationError instanceof Error ? observationError.message : "session_observe_failed");
+      } else {
+        const acknowledged = new Set((observedSession?.acknowledgedOperationIds ?? []).map(({ deviceId, operationId }) => `${deviceId}\u0000${operationId}`));
+        const serverAcknowledgementsAvailable = Boolean(this.transport.readSession);
+        const missingLocal = end.requiredOperationIds.some((receipt) => {
+          const key = `${receipt.deviceId}\u0000${receipt.operationId}`;
+          return receipt.deviceId === localDeviceId && !byIdentity.has(key) && (!serverAcknowledgementsAvailable || !acknowledged.has(key));
+        });
+        const pending = end.requiredOperationIds.some((receipt) => {
+          const key = `${receipt.deviceId}\u0000${receipt.operationId}`;
+          if (serverAcknowledgementsAvailable) return !acknowledged.has(key);
+          const capture = byIdentity.get(key);
+          return capture === undefined ? receipt.deviceId !== localDeviceId : capture.state !== "Synced";
+        });
+        if (missingLocal) await this.store.updateEnd(end.key, "Needs attention", "required_capture_missing");
+        else if (pending) await this.store.updateEnd(end.key, "Saved on device", serverAcknowledgementsAvailable ? "captures_pending" : "remote_acknowledgements_unavailable");
+        else {
+          await this.store.updateEnd(end.key, "Syncing", null);
+          try {
+            const result = await this.transport.sendEnd(end, workflowVersion ?? end.workflowVersion);
+            await this.store.updateEnd(end.key, result.readyForProposal ? "Synced" : "Saved on device", result.readyForProposal ? null : "live_barrier_pending");
+          } catch (error) {
+            await this.store.updateEnd(end.key, isRetryableCaptureError(error) ? "Saved on device" : "Needs attention", error instanceof Error ? error.message : "end_sync_failed");
+          }
         }
       }
     }
-    const finalCaptures = await this.store.listCaptures(sessionId);
-    const finalEnd = await this.store.getEnd(sessionId);
-    return {
-      captures: finalCaptures.map(({ key, state }) => ({ key, state })),
-      end: finalEnd ? { key: finalEnd.key, state: finalEnd.state } : null,
-    };
+    return summarize();
   }
 }

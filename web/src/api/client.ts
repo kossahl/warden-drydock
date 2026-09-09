@@ -11,6 +11,17 @@ export interface SliceApi { readiness(): Promise<ProviderReadiness>; consent(ide
 export async function recordGenerationContext(record: RecordView): Promise<GenerationContext> { return { scope: "record", record_id: record.record_id, content_digest: await sha256(record.content.replace(/\r\n/g, "\n").replace(/\r/g, "\n")) }; }
 let nextId = 0;
 let csrfToken = "";
+let csrfBootstrap: Promise<void> | undefined;
+export async function ensureCsrfToken(): Promise<void> {
+  if (csrfToken) return;
+  csrfBootstrap ??= (async () => {
+    const response = await fetch("/api/v1/provider/readiness", { headers: { Accept: "application/json" } });
+    csrfToken = response.headers.get("X-CSRF-Token") ?? csrfToken;
+    await response.json().catch(() => null);
+    if (!response.ok) throw new ApiError(response.status, "csrf_bootstrap_failed");
+  })().finally(() => { csrfBootstrap = undefined; });
+  return csrfBootstrap;
+}
 export function browserId(prefix: string): string { nextId += 1; return `${prefix}_${Date.now().toString(36)}_${nextId}`; }
 export async function requestJson<T>(path: string, init?: RequestInit): Promise<T> { const response = await fetch(`/api/v1${path}`, { ...init, headers: { Accept: "application/json", "Content-Type": "application/json", ...(init?.method === "POST" && csrfToken ? { "X-CSRF-Token": csrfToken } : {}), ...init?.headers } }); csrfToken = response.headers.get("X-CSRF-Token") ?? csrfToken; const body = await response.json().catch(() => null) as { error?: { code?: string } } | null; if (!response.ok) throw new ApiError(response.status, body?.error?.code ?? "request_failed"); return body as T; }
 function operation(name: OperationRequest["operation"], retryKey: string, payloadDigest: string, expectedRevision: string | null, subjectId?: string, intentDigest?: string): OperationRequest { return { contract_name: "operation_request", contract_version: 2, request_id: browserId("request"), operation: name, idempotency_key: retryKey, payload_digest: payloadDigest, expected_revision: expectedRevision, expected_workflow_version: null, ...(subjectId ? { subject_id: subjectId } : {}), ...(intentDigest ? { intent_digest: intentDigest } : {}) }; }
