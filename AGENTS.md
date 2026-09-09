@@ -167,9 +167,10 @@ Run `graft map` first — a token-budgeted orientation (dir clusters, hubs,
 hotspots), no LLM, no key.
 
 On a fresh clone, run `graft build` if `graft/` is absent before using the
-queries below. If the optional `graft` CLI is unavailable, continue with the
-normal repository tools and treat graph context as unavailable rather than
-blocking the task.
+queries below. In a reused worktree, run `graft check` after a checkout, pull,
+or rebase and run `graft build` if it reports stale. If the optional `graft`
+CLI is unavailable, continue with the normal repository tools and treat graph
+context as unavailable rather than blocking the task.
 
 - Run `graft ask "<your question>" --source` → ranked nodes with the relevant
   code spans inlined (each hit's ≤8-line crux by default; `--full` for whole
@@ -179,7 +180,7 @@ blocking the task.
   exhaustive tasks ("every occurrence / every caller of this pattern"), ranked
   results are top-N, not complete — run `graft grep "<literal>"` instead
   (exhaustive over indexed files, grouped by enclosing symbol), falling back
-  to raw `grep -rn` only for unindexed files.
+  to `rg` scoped to the relevant source paths only for unindexed files.
 - `graft skeleton <file>` → every definition's signature + span, ~10× cheaper
   than reading the file; use it to skim an API surface.
 - `graft callers <symbol>` gives precomputed, exact edges — who calls this.
