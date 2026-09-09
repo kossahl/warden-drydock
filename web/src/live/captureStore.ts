@@ -164,6 +164,8 @@ export class CaptureStorageError extends Error {
 
 export function isRetryableCaptureError(error: unknown): boolean {
   if (typeof error === "object" && error !== null && "retryable" in error && typeof error.retryable === "boolean") return error.retryable;
+  if (typeof error === "object" && error !== null && "code" in error && (error.code === "stale_workflow_version" || error.code === "stale_workflow")) return true;
+  if (error instanceof Error && error.message === "session_observe_mismatch") return false;
   if (typeof error === "object" && error !== null && "status" in error && typeof error.status === "number") return error.status >= 500;
   return true;
 }
@@ -243,6 +245,7 @@ export class MemoryCaptureStore implements CaptureStore {
       if (candidate !== existing.payloadDigest) throw new CaptureConflictError();
       return copyCapture(existing);
     }
+    if ([...this.ends.values()].some((end) => end.sessionId === input.sessionId)) throw new CaptureConflictError("session_end_immutable");
     const record = { ...input, key, deviceId, deviceOrder: ++this.deviceOrder, eventId, operationId, recordId: input.recordId ?? null, payloadDigest: "", state: "Saved on device" as const, lastError: null };
     record.payloadDigest = await captureDigest(record);
     this.captures.set(key, record);
@@ -407,11 +410,48 @@ class IndexedDbCaptureStore implements CaptureStore {
     const database = await openDatabase();
     try {
       await new Promise<void>((resolve, reject) => {
-        const transaction = database.transaction(captureStore, "readwrite");
-        const request = transaction.objectStore(captureStore).add(record);
-        request.onerror = () => { database.close(); reject(request.error?.name === "ConstraintError" ? new CaptureConflictError() : new CaptureStorageError(request.error?.message ?? "indexeddb_capture_write_failed")); };
+        const transaction = database.transaction([captureStore, endStore], "readwrite");
+        const captures = transaction.objectStore(captureStore);
+        const ends = transaction.objectStore(endStore);
+        const existingRequest = captures.get(key);
+        const endsRequest = ends.index("sessionId").getAll(input.sessionId);
+        let existingReady = false;
+        let endReady = false;
+        let existingInTransaction: StoredCapture | undefined;
+        let endsInTransaction: StoredEndIntent[] = [];
+        let failure: Error | undefined;
+        const abort = (error: Error) => {
+          failure = error;
+          transaction.abort();
+        };
+        const maybeAdd = () => {
+          if (!existingReady || !endReady) return;
+          if (existingInTransaction) {
+            abort(new CaptureConflictError());
+            return;
+          }
+          if (endsInTransaction.length > 0) {
+            abort(new CaptureConflictError("session_end_immutable"));
+            return;
+          }
+          const addRequest = captures.add(record);
+          addRequest.onerror = () => abort(addRequest.error?.name === "ConstraintError" ? new CaptureConflictError() : new CaptureStorageError(addRequest.error?.message ?? "indexeddb_capture_write_failed"));
+        };
+        existingRequest.onsuccess = () => {
+          existingInTransaction = existingRequest.result as StoredCapture | undefined;
+          existingReady = true;
+          maybeAdd();
+        };
+        endsRequest.onsuccess = () => {
+          endsInTransaction = endsRequest.result as StoredEndIntent[];
+          endReady = true;
+          maybeAdd();
+        };
+        existingRequest.onerror = () => abort(new CaptureStorageError(existingRequest.error?.message ?? "indexeddb_capture_read_failed"));
+        endsRequest.onerror = () => abort(new CaptureStorageError(endsRequest.error?.message ?? "indexeddb_end_read_failed"));
         transaction.oncomplete = () => { database.close(); resolve(); };
-        transaction.onerror = () => { database.close(); reject(new CaptureStorageError(transaction.error?.message ?? "indexeddb_capture_write_failed")); };
+        transaction.onabort = () => { database.close(); reject(failure ?? new CaptureStorageError("indexeddb_capture_write_failed")); };
+        transaction.onerror = () => { failure ??= new CaptureStorageError(transaction.error?.message ?? "indexeddb_capture_write_failed"); };
       });
       return copyCapture(record);
     } catch (error) {
@@ -563,7 +603,14 @@ export class CaptureQueue {
       try {
         observedSession = await this.transport.readSession(captures[0]?.campaignId ?? end!.campaignId, sessionId);
         workflowVersion = observedSession.workflowVersion;
-      } catch {
+      } catch (observationError) {
+        if (!isRetryableCaptureError(observationError)) {
+          const message = observationError instanceof Error ? observationError.message : "session_observe_failed";
+          for (const capture of captures) {
+            if (capture.state !== "Synced") await this.store.updateCapture(capture.key, "Needs attention", message);
+          }
+          if (end && end.state !== "Synced") await this.store.updateEnd(end.key, "Needs attention", message);
+        }
         return summarize();
       }
     }
@@ -609,8 +656,9 @@ export class CaptureQueue {
         });
         const pending = end.requiredOperationIds.some((receipt) => {
           const key = `${receipt.deviceId}\u0000${receipt.operationId}`;
-          if (serverAcknowledgementsAvailable) return !acknowledged.has(key);
           const capture = byIdentity.get(key);
+          if (capture && capture.state !== "Synced") return true;
+          if (serverAcknowledgementsAvailable) return !acknowledged.has(key);
           return capture === undefined ? receipt.deviceId !== localDeviceId : capture.state !== "Synced";
         });
         if (missingLocal) await this.store.updateEnd(end.key, "Needs attention", "required_capture_missing");

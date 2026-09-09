@@ -45,6 +45,13 @@ describe("durable live capture queue", () => {
     expect(await store.listCaptures(input.sessionId)).toHaveLength(1);
   });
 
+  it("rejects new captures after the end intent is persisted", async () => {
+    const store = new MemoryCaptureStore();
+    await store.saveEnd({ ...input, operationId: "operation_end", requiredOperationIds: [] });
+
+    await expect(store.saveCapture({ ...input, eventId: "event_beta", operationId: "operation_beta", text: "The lights failed." })).rejects.toThrow("session_end_immutable");
+  });
+
   it("keeps a capture pending through a temporary outage and syncs it on retry", async () => {
     const store = new MemoryCaptureStore();
     let attempts = 0;
@@ -79,6 +86,27 @@ describe("durable live capture queue", () => {
     expect(result.captures.every(({ state }) => state === "Saved on device")).toBe(true);
   });
 
+  it("keeps a stale workflow race retryable for the next sync", async () => {
+    const store = new MemoryCaptureStore();
+    let reads = 0;
+    let attempts = 0;
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => {
+        attempts += 1;
+        if (attempts === 1) throw Object.assign(new Error("stale workflow"), { status: 409, code: "stale_workflow_version" });
+        return { outcome: "accepted" as const, workflowVersion: 3 };
+      }),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 3 })),
+      readSession: vi.fn(async () => ({ workflowVersion: ++reads, acknowledgedOperationIds: [] })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    await queue.capture(input);
+
+    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Saved on device");
+    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Synced");
+    expect(transport.sendCapture).toHaveBeenNthCalledWith(2, expect.anything(), 2);
+  });
+
   it("marks a digest conflict as needing attention without deleting the capture", async () => {
     const store = new MemoryCaptureStore();
     const transport: CaptureSyncTransport = {
@@ -91,6 +119,43 @@ describe("durable live capture queue", () => {
     expect(result.captures[0]).toEqual({ key: saved.key, state: "Needs attention" });
     expect((await store.listCaptures(input.sessionId))[0].text).toBe(input.text);
     expect(transport.sendEnd).not.toHaveBeenCalled();
+  });
+
+  it("does not let a conflicting local capture satisfy the end barrier", async () => {
+    const store = new MemoryCaptureStore();
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "digest_conflict" as const, workflowVersion: 1 })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 2 })),
+      readSession: vi.fn(async () => ({ workflowVersion: 1, acknowledgedOperationIds: [
+        { deviceId: await store.getDeviceId(), operationId: "operation_alpha" },
+      ] })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const saved = await queue.capture(input);
+    const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [{ deviceId: saved.deviceId, operationId: saved.operationId }] });
+
+    const result = await queue.sync(input.sessionId);
+
+    expect(result.captures).toEqual([{ key: saved.key, state: "Needs attention" }]);
+    expect(result.end).toEqual({ key: end.key, state: "Saved on device" });
+    expect(transport.sendEnd).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a permanent session observation failure on queued records", async () => {
+    const store = new MemoryCaptureStore();
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 2 })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 3 })),
+      readSession: vi.fn(async () => { throw new Error("session_observe_mismatch"); }),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const saved = await queue.capture(input);
+    const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [{ deviceId: saved.deviceId, operationId: saved.operationId }] });
+
+    const result = await queue.sync(input.sessionId);
+
+    expect(result.captures).toEqual([{ key: saved.key, state: "Needs attention" }]);
+    expect(result.end).toEqual({ key: end.key, state: "Needs attention" });
   });
 
   it("does not send the end intent until its exact local operation set is synced", async () => {
