@@ -522,7 +522,7 @@ test("connection context validation blocks empty and multiline proposals on the 
   await installAtlasApi(page);
   const record = {
     ...originalRecord,
-    connections: [{ connection_id: "connection_one", target_record_id: "record-two", relationship: "guards", state: "current", context: "Valid context." }],
+    connections: [{ connection_id: "connection_one", target_record_id: "record-two", relationship: "connected-to", state: "current", context: "Valid context." }],
   };
   let proposalRequests = 0;
   await page.route("**/api/v1/**", async (route) => {
