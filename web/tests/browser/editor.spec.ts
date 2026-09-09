@@ -384,3 +384,37 @@ test("create validation carries the handout audience rule into the focused field
   await expect(editor.getByText("This field is required.")).toBeVisible();
   expect(proposalPosts).toBe(0);
 });
+
+test("player-visible connections reject Warden-only targets before posting", async ({ page }) => {
+  await installAtlasApi(page);
+  const playerRecord = { ...editorRecord, visibility: { audience: "players" as const, warden_only: false as const } };
+  let targetReads = 0;
+  let proposalPosts = 0;
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: playerRecord }) });
+    }
+    if (request.method() === "GET" && path.endsWith("/records/record-two/editor")) {
+      targetReads += 1;
+      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: secondEditorRecord }) });
+    }
+    if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) proposalPosts += 1;
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const editor = page.locator(".editor").filter({ hasText: "Edit record" });
+  await editor.getByRole("button", { name: "Add typed connection" }).click();
+  await editor.getByRole("button", { name: "Target for connection_1: choose existing record" }).click();
+  const targetDialog = page.getByRole("dialog");
+  await targetDialog.getByLabel("Search existing records").fill("record-two");
+  await targetDialog.getByRole("button", { name: "Search", exact: true }).click();
+  await targetDialog.getByRole("option", { name: /record-two/ }).click();
+  await editor.getByRole("button", { name: "Save as proposal" }).click();
+
+  await expect(editor.getByRole("alert")).toHaveText("Player-visible records cannot connect to Warden-only targets.");
+  expect(targetReads).toBe(1);
+  expect(proposalPosts).toBe(0);
+});

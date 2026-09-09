@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import unittest
+from pathlib import Path
 
 from tests.hosted.http import test_editor_backend as _editor_backend
 from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input
@@ -14,6 +15,7 @@ from warden_drydock.hosted.http.editor import (
     validate_adapter_document,
 )
 from warden_drydock.hosted.http.editor_semantics import _property_changes
+from warden_drydock.standalone import parse_connections
 
 
 class EditorSourcePreservationTests(unittest.TestCase):
@@ -437,6 +439,23 @@ Keep this record.
         with self.assertRaisesRegex(ValueError, "invalid_field_value"):
             parse_document(source, "record-main", "npc")
 
+    def test_editor_rejects_integral_float_fields_outside_javascript_safe_range(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+count: 9007199254740992.0
+---
+
+## Summary
+Keep this record.
+"""
+
+        with self.assertRaisesRegex(ValueError, "invalid_field_value"):
+            parse_document(source, "record-main", "npc")
+
     def test_unsupported_adapter_fields_use_typed_equality(self):
         before = {
             "record_type": "npc",
@@ -694,12 +713,17 @@ Keep this section.
 
         result = mutate_document(source, candidate)
 
-        self.assertEqual(1, result.count("## Connections"))
+        self.assertEqual(2, result.count("## Connections"))
         self.assertIn("Duplicate prose stays here.", result)
         self.assertIn("<!-- Preserve this duplicate comment. -->", result)
         self.assertIn("- An ordinary duplicate bullet stays here.", result)
         self.assertNotIn("visits", result)
         self.assertIn("## Notes\nKeep this section.", result)
+        connections, errors = parse_connections(
+            result, source_id="record-main", path=Path("record-main.md")
+        )
+        self.assertEqual(["record-gate"], [item.target_id for item in connections])
+        self.assertEqual([], errors)
 
     def test_interleaved_non_typed_content_keeps_original_position(self):
         source = """---

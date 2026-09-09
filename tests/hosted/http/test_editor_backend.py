@@ -132,7 +132,9 @@ class EditorBackendTests(unittest.TestCase):
         return proposal
 
     def _create_record(self, record_id, *, record_type="npc", authority="preparation", connections=None):
-        proposal = self._create_record_proposal(record_id, record_type=record_type, authority=authority, connections=connections)
+        proposal = EditorBackendTests._create_record_proposal(
+            self, record_id, record_type=record_type, authority=authority, connections=connections,
+        )
         self._approve_editor(proposal)
         return self.app.workflow.head("campaign_alpha")
 

@@ -2301,6 +2301,16 @@ class SliceApplication:
                 if recovered is not None:
                     self._store(receipt_operation, operation["idempotency_key"], operation["payload_digest"], recovered[0], recovered[1])
                     return recovered
+                if (
+                    isinstance(operation, dict)
+                    and self._abandoned(receipt_operation, operation.get("idempotency_key"), operation.get("payload_digest"))
+                    and item.status is ProposalStatus.APPROVING
+                    and self._matching_publication(item) is None
+                ):
+                    # A process can die after the durable approval claim but
+                    # before publication creates a snapshot.  Re-open only
+                    # that abandoned, unpublished claim for exact retry.
+                    item = self.proposal_repository.replace_status(item, ProposalStatus.DRAFT)
             elif isinstance(operation, dict) and self._abandoned(receipt_operation, operation.get("idempotency_key"), operation.get("payload_digest")) and item.status is ProposalStatus.REJECTED:
                 expected = operation.get("expected_editor_workflow_version")
                 original = self._editor_original_value(item, expected) if type(expected) is int else None

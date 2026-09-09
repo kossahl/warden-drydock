@@ -285,6 +285,31 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
     });
     setFieldErrors(next); return Object.keys(next).length === 0;
   };
+  const targetVisibilityErrors = async (): Promise<Record<string, string>> => {
+    if (!draft || !view || draft.visibility.audience !== "players") return {};
+    const targetIds = new Set(draft.connections.map((connection) => connection.target_record_id));
+    const targetAudiences = new Map<string, EditorRecord["visibility"]["audience"] | undefined>();
+    await Promise.all(Array.from(targetIds, async (targetId) => {
+      if (targetId === draft.record_id) {
+        targetAudiences.set(targetId, draft.visibility.audience);
+        return;
+      }
+      try {
+        const target = await httpEditorApi.read(campaignId, view.head_revision.revision_id, targetId);
+        targetAudiences.set(targetId, target.record?.visibility?.audience);
+      } catch {
+        targetAudiences.set(targetId, undefined);
+      }
+    }));
+    const next: Record<string, string> = {};
+    draft.connections.forEach((connection) => {
+      const audience = targetAudiences.get(connection.target_record_id);
+      const key = `connection-${connection.connection_id}`;
+      if (audience === undefined) next[key] = "Target visibility could not be verified.";
+      else if (audience === "warden") next[key] = "Player-visible records cannot connect to Warden-only targets.";
+    });
+    return next;
+  };
   const removalReady = !!impact && impact.incoming_references.every((reference) => {
     const resolution = resolutions.find((item) => item.reference_id === reference.reference_id);
     const replacement = resolution?.replacement_target_record_id;
@@ -321,6 +346,13 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
     const isCurrentRequest = () => proposalRequest.current === request.sequence && editorIdentityRef.current === request.editorIdentity;
     setBusy(true); setError(""); setMessage(""); setConflict(false);
     try {
+      if (mode !== "remove") {
+        const visibilityErrors = await targetVisibilityErrors();
+        if (Object.keys(visibilityErrors).length > 0) {
+          setFieldErrors(visibilityErrors);
+          return;
+        }
+      }
       const value = await httpEditorApi.propose(isCreate ? "create" : mode, campaignId, view.head_revision, draft, view.editor_workflow_version, resolutions, impact ?? undefined);
       if (!isCurrentRequest()) return;
       proposalRestoreIdentity.current = editorIdentity;
@@ -423,6 +455,13 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       && proposalIdentityRef.current === request.proposalIdentity;
     setBusy(true); setError(""); setConflict(false);
     try {
+      if (proposal.mutation_kind !== "remove") {
+        const visibilityErrors = await targetVisibilityErrors();
+        if (Object.keys(visibilityErrors).length > 0) {
+          setFieldErrors(visibilityErrors);
+          return;
+        }
+      }
       const proposalRecordId = proposal.record_bindings[0]?.record_id;
       const correctedDraft = proposal.mutation_kind === "create" && proposalRecordId
         ? { ...draft, record_id: proposalRecordId }

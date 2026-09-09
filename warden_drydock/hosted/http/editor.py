@@ -116,7 +116,11 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
                 and not isinstance(scalar, bool)
                 and abs(scalar) <= _MAX_SAFE_INTEGER
             )
-            or (isinstance(scalar, float) and math.isfinite(scalar))
+            or (
+                isinstance(scalar, float)
+                and math.isfinite(scalar)
+                and (not scalar.is_integer() or abs(scalar) <= _MAX_SAFE_INTEGER)
+            )
         ):
             raise ValueError("invalid_field_value")
     if any(not isinstance(item["body"], str) or len(item["body"]) > 200000 for item in raw_sections): raise ValueError("invalid_section_body")
@@ -486,16 +490,21 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         return {line for line, _, _ in slots}, {marker for _, marker, _ in slots if marker is not None}
 
     # A source document may have acquired duplicate typed connection headings
-    # outside the editor.  Remove only parser-identified typed rows and their
-    # markers; the duplicate heading itself is the only structural line removed.
+    # outside the editor. Remove typed rows and markers, but keep a duplicate
+    # heading as a boundary when authored bullets remain in its block.
     for duplicate_index in reversed(connection_headers[1:]):
         next_heading = next((i for i in range(duplicate_index + 1, len(lines)) if re.match(r"^##\s+", lines[i])), len(lines))
         typed_indexes, marker_indexes = typed_connection_indexes(duplicate_index, next_heading)
-        lines[duplicate_index + 1:next_heading] = [
+        remaining = [
             line
             for index, line in enumerate(lines[duplicate_index + 1:next_heading], duplicate_index + 1)
             if index not in typed_indexes and index not in marker_indexes
         ]
+        lines[duplicate_index + 1:next_heading] = remaining
+        # Keep the duplicate as a parser boundary when authored bullets remain;
+        # otherwise they would become malformed rows in the first block.
+        if any(line.lstrip().startswith("-") for line in remaining):
+            continue
         del lines[duplicate_index]
     connection_index = next((i for i, line in enumerate(lines) if line.strip().casefold() == "## connections"), None)
     if connection_index is not None:

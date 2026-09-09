@@ -6,6 +6,7 @@ from unittest import mock
 from tests.hosted.http import test_editor_backend as backend
 from warden_drydock.hosted.http.application import HTTPFailure, SliceApplication, SyntheticProvider
 from warden_drydock.hosted.http.editor import document_digest
+from warden_drydock.hosted.proposals.service import ProposalStatus
 
 
 class EditorReceiptRecoveryTests(unittest.TestCase):
@@ -183,6 +184,33 @@ class EditorReceiptRecoveryTests(unittest.TestCase):
         status, result = self.app.editor_proposal_approve(*args)
         self.assertEqual((200, "published"), (status, result["outcome"]))
         self.assertEqual((status, result), self.app.editor_proposal_approve(*args))
+
+    def test_approval_claim_recovers_after_process_dies_before_publication_snapshot(self):
+        _, _, (_, proposal) = self._edit("idem_editor_claim_crash")
+        payload = self._editor_approval_payload(proposal)
+        args = (proposal["proposal_id"], proposal["proposal_version"], payload)
+
+        with mock.patch.object(self.app.proposals, "_stage", side_effect=SystemExit("claim crash")):
+            with self.assertRaises(SystemExit):
+                self.app.editor_proposal_approve(*args)
+
+        self.assertEqual(
+            ProposalStatus.APPROVING,
+            self.app.proposal_repository.get(proposal["proposal_id"], proposal["proposal_version"]).status,
+        )
+        self.assertEqual(1, len(self.app.revisions.store.inventory()))
+
+        self._restart()
+        self.assertEqual(
+            ProposalStatus.APPROVING,
+            self.app.proposal_repository.get(proposal["proposal_id"], proposal["proposal_version"]).status,
+        )
+        status, result = self.app.editor_proposal_approve(*args)
+        self.assertEqual((200, "published"), (status, result["outcome"]))
+        self.assertEqual(
+            ProposalStatus.PUBLISHED,
+            self.app.proposal_repository.get(proposal["proposal_id"], proposal["proposal_version"]).status,
+        )
 
     def test_rejection_releases_claim_when_atomic_finalization_does_not_commit(self):
         for failure in (False, RuntimeError("finalization failed")):
