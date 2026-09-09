@@ -1,5 +1,5 @@
 import { digest } from "../api/digest";
-import type { Digest, PublicId, SaveSyncState } from "../contracts/v2";
+import type { Digest, LiveSessionMode, PublicId, SaveSyncState } from "../contracts/v2";
 
 export type CaptureType = "confirmed_fact" | "unresolved_question";
 export type CaptureState = SaveSyncState;
@@ -71,6 +71,14 @@ export interface EndSyncResponse {
 export interface SessionSyncResponse {
   workflowVersion: number;
   acknowledgedOperationIds: ReadonlyArray<ReceiptIdentity>;
+  acknowledgements?: ReadonlyArray<SessionAcknowledgement>;
+  captureOperationIds?: ReadonlyArray<ReceiptIdentity>;
+  mode?: LiveSessionMode;
+}
+
+export interface SessionAcknowledgement extends ReceiptIdentity {
+  payloadDigest: Digest;
+  outcome: CaptureOutcome;
 }
 
 export interface CaptureSyncTransport {
@@ -307,6 +315,8 @@ const orderMetaKey = "device_order";
 
 interface MetaRow { key: string; value: string | number; }
 
+class EndSnapshotChangedError extends Error {}
+
 function openDatabase(): Promise<IDBDatabase> {
   if (!globalThis.indexedDB) return Promise.reject(new CaptureStorageError());
   return new Promise((resolve, reject) => {
@@ -513,36 +523,69 @@ class IndexedDbCaptureStore implements CaptureStore {
     assertContext(input);
     const deviceId = await this.getDeviceId();
     const operationId = input.operationId ?? id("operation_end");
-    const requiredOperationIds = sortedReceipts(input.requiredOperationIds ?? (await this.listCaptures(input.sessionId)).map(({ deviceId: captureDeviceId, operationId: captureOperationId }) => ({ deviceId: captureDeviceId, operationId: captureOperationId })));
-    const candidate: StoredEndIntent = { ...input, key: endKey(input.sessionId, deviceId, operationId), deviceId, operationId, requiredOperationIds, payloadDigest: "", state: "Saved on device", lastError: null };
-    candidate.payloadDigest = await endDigest(candidate);
-    const database = await openDatabase();
-    return new Promise((resolve, reject) => {
-      const transaction = database.transaction(endStore, "readwrite");
-      const store = transaction.objectStore(endStore);
-      const request = store.index("sessionId").getAll(input.sessionId);
+    const useCaptureWatermark = input.requiredOperationIds === undefined;
+    while (true) {
+      const requiredOperationIds = sortedReceipts(input.requiredOperationIds ?? (await this.listCaptures(input.sessionId)).map(({ deviceId: captureDeviceId, operationId: captureOperationId }) => ({ deviceId: captureDeviceId, operationId: captureOperationId })));
+      const candidate: StoredEndIntent = { ...input, key: endKey(input.sessionId, deviceId, operationId), deviceId, operationId, requiredOperationIds, payloadDigest: "", state: "Saved on device", lastError: null };
+      candidate.payloadDigest = await endDigest(candidate);
+      const database = await openDatabase();
       let existing: StoredEndIntent | undefined;
-      request.onsuccess = () => {
-        existing = (request.result as StoredEndIntent[])[0];
-        if (!existing) store.add(candidate);
-      };
-      request.onerror = () => { database.close(); reject(new CaptureStorageError(request.error?.message ?? "indexeddb_end_read_failed")); };
-      transaction.oncomplete = async () => {
-        database.close();
-        if (!existing) {
-          resolve(copyEnd(candidate));
-          return;
-        }
-        const replayCandidate = { ...input, key: existing.key, deviceId: existing.deviceId, operationId: input.operationId ?? existing.operationId, requiredOperationIds, payloadDigest: "", state: existing.state, lastError: existing.lastError };
-        replayCandidate.payloadDigest = await endDigest(replayCandidate);
-        if (replayCandidate.payloadDigest !== existing.payloadDigest) {
-          reject(new CaptureConflictError("session end is already bound to a different operation set"));
-          return;
-        }
-        resolve(copyEnd(existing));
-      };
-      transaction.onerror = () => { database.close(); reject(new CaptureStorageError(transaction.error?.message ?? "indexeddb_end_write_failed")); };
-    });
+      try {
+        existing = await new Promise<StoredEndIntent | undefined>((resolve, reject) => {
+          const transaction = database.transaction([captureStore, endStore], "readwrite");
+          const captures = transaction.objectStore(captureStore);
+          const ends = transaction.objectStore(endStore);
+          const existingRequest = ends.index("sessionId").getAll(input.sessionId);
+          const capturesRequest = captures.index("sessionId").getAll(input.sessionId);
+          let existingReady = false;
+          let capturesReady = false;
+          let capturedRows: StoredCapture[] = [];
+          let failure: Error | undefined;
+          const abort = (error: Error) => {
+            failure = error;
+            transaction.abort();
+          };
+          const maybeWrite = () => {
+            if (!existingReady || !capturesReady) return;
+            existing = (existingRequest.result as StoredEndIntent[])[0];
+            if (existing) return;
+            if (useCaptureWatermark) {
+              const currentRequiredOperationIds = sortedReceipts(capturedRows.map(({ deviceId: captureDeviceId, operationId: captureOperationId }) => ({ deviceId: captureDeviceId, operationId: captureOperationId })));
+              const snapshotMatches = currentRequiredOperationIds.length === requiredOperationIds.length
+                && currentRequiredOperationIds.every((receipt, index) => receipt.deviceId === requiredOperationIds[index].deviceId && receipt.operationId === requiredOperationIds[index].operationId);
+              if (!snapshotMatches) {
+                abort(new EndSnapshotChangedError());
+                return;
+              }
+            }
+            const addRequest = ends.add(candidate);
+            addRequest.onerror = () => abort(addRequest.error?.name === "ConstraintError" ? new CaptureConflictError() : new CaptureStorageError(addRequest.error?.message ?? "indexeddb_end_write_failed"));
+          };
+          existingRequest.onsuccess = () => {
+            existingReady = true;
+            maybeWrite();
+          };
+          capturesRequest.onsuccess = () => {
+            capturedRows = capturesRequest.result as StoredCapture[];
+            capturesReady = true;
+            maybeWrite();
+          };
+          existingRequest.onerror = () => abort(new CaptureStorageError(existingRequest.error?.message ?? "indexeddb_end_read_failed"));
+          capturesRequest.onerror = () => abort(new CaptureStorageError(capturesRequest.error?.message ?? "indexeddb_capture_read_failed"));
+          transaction.oncomplete = () => { database.close(); resolve(existing); };
+          transaction.onabort = () => { database.close(); reject(failure ?? new CaptureStorageError("indexeddb_end_write_failed")); };
+          transaction.onerror = () => { failure ??= new CaptureStorageError(transaction.error?.message ?? "indexeddb_end_write_failed"); };
+        });
+      } catch (error) {
+        if (error instanceof EndSnapshotChangedError) continue;
+        throw error;
+      }
+      if (!existing) return copyEnd(candidate);
+      const replayCandidate = { ...input, key: existing.key, deviceId: existing.deviceId, operationId: input.operationId ?? existing.operationId, requiredOperationIds, payloadDigest: "", state: existing.state, lastError: existing.lastError };
+      replayCandidate.payloadDigest = await endDigest(replayCandidate);
+      if (replayCandidate.payloadDigest !== existing.payloadDigest) throw new CaptureConflictError("session end is already bound to a different operation set");
+      return copyEnd(existing);
+    }
   }
 
   public async getEnd(sessionId: PublicId): Promise<StoredEndIntent | null> {
@@ -598,11 +641,41 @@ export class CaptureQueue {
         end: finalEnd ? { key: finalEnd.key, state: finalEnd.state } : null,
       };
     };
+    const reconcileObservedReceipts = async (): Promise<void> => {
+      if (!observedSession?.acknowledgements) return;
+      const acknowledged = new Map(observedSession.acknowledgements.map((receipt) => [`${receipt.deviceId}\u0000${receipt.operationId}`, receipt]));
+      for (const capture of captures) {
+        if (capture.state === "Synced" || capture.state === "Needs attention") continue;
+        const receipt = acknowledged.get(`${capture.deviceId}\u0000${capture.operationId}`);
+        if (!receipt) continue;
+        const matches = receipt.outcome !== "digest_conflict" && receipt.payloadDigest === capture.payloadDigest;
+        await this.store.updateCapture(capture.key, matches ? "Synced" : "Needs attention", matches ? null : "idempotency_digest_conflict");
+      }
+      if (end && end.state !== "Synced" && end.state !== "Needs attention") {
+        const receipt = acknowledged.get(`${end.deviceId}\u0000${end.operationId}`);
+        if (receipt) {
+          const matches = receipt.outcome !== "digest_conflict" && receipt.payloadDigest === end.payloadDigest;
+          await this.store.updateEnd(end.key, matches ? "Synced" : "Needs attention", matches ? null : "idempotency_digest_conflict");
+        }
+      }
+    };
+    const surfaceEndedSession = async (): Promise<CaptureSyncResult> => {
+      const message = "live_session_ended";
+      for (const capture of captures) {
+        if (capture.state !== "Synced") await this.store.updateCapture(capture.key, "Needs attention", message);
+      }
+      if (end && end.state !== "Synced") await this.store.updateEnd(end.key, "Needs attention", message);
+      return summarize();
+    };
 
     if (this.transport.readSession && (captures.length > 0 || end !== null)) {
       try {
         observedSession = await this.transport.readSession(captures[0]?.campaignId ?? end!.campaignId, sessionId);
         workflowVersion = observedSession.workflowVersion;
+        await reconcileObservedReceipts();
+        captures = await this.store.listCaptures(sessionId);
+        end = await this.store.getEnd(sessionId);
+        if (observedSession.mode && observedSession.mode !== "active") return surfaceEndedSession();
       } catch (observationError) {
         if (!isRetryableCaptureError(observationError)) {
           const message = observationError instanceof Error ? observationError.message : "session_observe_failed";
@@ -633,21 +706,28 @@ export class CaptureQueue {
     captures = await this.store.listCaptures(sessionId);
     end = await this.store.getEnd(sessionId);
     if (end && end.state !== "Synced" && end.state !== "Needs attention") {
-      const byIdentity = new Map(captures.map((capture) => [`${capture.deviceId}\u0000${capture.operationId}`, capture]));
       const localDeviceId = await this.store.getDeviceId();
       let observationError: unknown = null;
       if (this.transport.readSession) {
         try {
           observedSession = await this.transport.readSession(end.campaignId, sessionId);
           workflowVersion = observedSession.workflowVersion;
+          await reconcileObservedReceipts();
+          captures = await this.store.listCaptures(sessionId);
+          end = await this.store.getEnd(sessionId);
         } catch (error) {
           observationError = error;
         }
       }
       if (observationError) {
         const retryable = isRetryableCaptureError(observationError);
-        await this.store.updateEnd(end.key, retryable ? "Saved on device" : "Needs attention", observationError instanceof Error ? observationError.message : "session_observe_failed");
+        if (end) await this.store.updateEnd(end.key, retryable ? "Saved on device" : "Needs attention", observationError instanceof Error ? observationError.message : "session_observe_failed");
+      } else if (observedSession?.mode && observedSession.mode !== "active") {
+        return surfaceEndedSession();
+      } else if (!end || end.state === "Synced" || end.state === "Needs attention") {
+        return summarize();
       } else {
+        const byIdentity = new Map(captures.map((capture) => [`${capture.deviceId}\u0000${capture.operationId}`, capture]));
         const acknowledged = new Set((observedSession?.acknowledgedOperationIds ?? []).map(({ deviceId, operationId }) => `${deviceId}\u0000${operationId}`));
         const serverAcknowledgementsAvailable = Boolean(this.transport.readSession);
         const missingLocal = end.requiredOperationIds.some((receipt) => {
@@ -661,7 +741,11 @@ export class CaptureQueue {
           if (serverAcknowledgementsAvailable) return !acknowledged.has(key);
           return capture === undefined ? receipt.deviceId !== localDeviceId : capture.state !== "Synced";
         });
+        const requiredKeys = new Set(end.requiredOperationIds.map(({ deviceId, operationId }) => `${deviceId}\u0000${operationId}`));
+        const serverCaptureKeys = new Set((observedSession?.captureOperationIds ?? observedSession?.acknowledgedOperationIds ?? []).map(({ deviceId, operationId }) => `${deviceId}\u0000${operationId}`));
+        const hiddenServerCapture = serverAcknowledgementsAvailable && [...serverCaptureKeys].some((key) => !requiredKeys.has(key));
         if (missingLocal) await this.store.updateEnd(end.key, "Needs attention", "required_capture_missing");
+        else if (hiddenServerCapture) await this.store.updateEnd(end.key, "Needs attention", "live_barrier_conflict");
         else if (pending) await this.store.updateEnd(end.key, "Saved on device", serverAcknowledgementsAvailable ? "captures_pending" : "remote_acknowledgements_unavailable");
         else {
           await this.store.updateEnd(end.key, "Syncing", null);

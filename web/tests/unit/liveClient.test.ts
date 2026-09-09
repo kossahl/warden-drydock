@@ -125,4 +125,31 @@ describe("live capture HTTP transport", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("preserves receipt digests, capture identities, and terminal session mode", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({
+        session_id: "session_alpha",
+        workflow_version: 4,
+        mode: "ended_review_pending",
+        events: [{ device_id: "device_alpha", operation_id: "operation_alpha" }],
+        acknowledgements: [{ device_id: "device_alpha", operation_id: "operation_alpha", payload_digest: "a".repeat(64), outcome: "accepted" }],
+      }),
+    }) as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await expect(httpCaptureTransport.readSession!("campaign_alpha", "session_alpha")).resolves.toEqual({
+        workflowVersion: 4,
+        acknowledgedOperationIds: [{ deviceId: "device_alpha", operationId: "operation_alpha" }],
+        acknowledgements: [{ deviceId: "device_alpha", operationId: "operation_alpha", payloadDigest: "a".repeat(64), outcome: "accepted" }],
+        captureOperationIds: [{ deviceId: "device_alpha", operationId: "operation_alpha" }],
+        mode: "ended_review_pending",
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

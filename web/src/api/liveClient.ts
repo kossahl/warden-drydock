@@ -79,9 +79,13 @@ export const httpCaptureTransport: CaptureSyncTransport = {
   async readSession(campaignId: string, sessionId: string) {
     const result = await requestJson<LiveSessionView>(path(campaignId, ""));
     if (result.session_id !== sessionId) throw new Error("session_observe_mismatch");
+    const acknowledgements = result.acknowledgements.map(({ device_id: deviceId, operation_id: operationId, payload_digest: payloadDigest, outcome }) => ({ deviceId, operationId, payloadDigest, outcome }));
     return {
       workflowVersion: result.workflow_version,
-      acknowledgedOperationIds: result.acknowledgements.map(({ device_id: deviceId, operation_id: operationId }) => ({ deviceId, operationId })),
+      acknowledgedOperationIds: acknowledgements.map(({ deviceId, operationId }) => ({ deviceId, operationId })),
+      acknowledgements,
+      captureOperationIds: result.events.map(({ device_id: deviceId, operation_id: operationId }) => ({ deviceId, operationId })),
+      mode: result.mode,
     };
   },
 };

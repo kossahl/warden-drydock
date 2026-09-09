@@ -107,6 +107,34 @@ describe("durable live capture queue", () => {
     expect(transport.sendCapture).toHaveBeenNthCalledWith(2, expect.anything(), 2);
   });
 
+  it("reconciles a committed capture when its response was lost", async () => {
+    const store = new MemoryCaptureStore();
+    let reads = 0;
+    let attempts = 0;
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => {
+        attempts += 1;
+        throw Object.assign(new Error("response lost"), { retryable: true });
+      }),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 3 })),
+      readSession: vi.fn(async () => {
+        reads += 1;
+        const capture = (await store.listCaptures(input.sessionId))[0];
+        return {
+          workflowVersion: reads,
+          acknowledgedOperationIds: capture && reads > 1 ? [{ deviceId: capture.deviceId, operationId: capture.operationId }] : [],
+          acknowledgements: capture && reads > 1 ? [{ deviceId: capture.deviceId, operationId: capture.operationId, payloadDigest: capture.payloadDigest, outcome: "accepted" as const }] : [],
+        };
+      }),
+    };
+    const queue = new CaptureQueue(store, transport);
+    await queue.capture(input);
+
+    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Saved on device");
+    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Synced");
+    expect(attempts).toBe(1);
+  });
+
   it("marks a digest conflict as needing attention without deleting the capture", async () => {
     const store = new MemoryCaptureStore();
     const transport: CaptureSyncTransport = {
@@ -156,6 +184,48 @@ describe("durable live capture queue", () => {
 
     expect(result.captures).toEqual([{ key: saved.key, state: "Needs attention" }]);
     expect(result.end).toEqual({ key: end.key, state: "Needs attention" });
+  });
+
+  it("surfaces a session that ended in another tab", async () => {
+    const store = new MemoryCaptureStore();
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 2 })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 3 })),
+      readSession: vi.fn(async () => ({ workflowVersion: 2, acknowledgedOperationIds: [], mode: "ended_review_pending" as const })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const saved = await queue.capture(input);
+    const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [{ deviceId: saved.deviceId, operationId: saved.operationId }] });
+
+    const result = await queue.sync(input.sessionId);
+
+    expect(result.captures).toEqual([{ key: saved.key, state: "Needs attention" }]);
+    expect(result.end).toEqual({ key: end.key, state: "Needs attention" });
+    expect(transport.sendCapture).not.toHaveBeenCalled();
+    expect(transport.sendEnd).not.toHaveBeenCalled();
+  });
+
+  it("rejects an end watermark that hides a server capture", async () => {
+    const store = new MemoryCaptureStore();
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 2 })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 3 })),
+      readSession: vi.fn(async () => ({ workflowVersion: 2, acknowledgedOperationIds: [
+        { deviceId: "device_alpha", operationId: "operation_alpha" },
+        { deviceId: "device_remote", operationId: "operation_remote" },
+      ], captureOperationIds: [
+        { deviceId: "device_alpha", operationId: "operation_alpha" },
+        { deviceId: "device_remote", operationId: "operation_remote" },
+      ] })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const saved = await queue.capture(input);
+    const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [{ deviceId: saved.deviceId, operationId: saved.operationId }] });
+
+    const result = await queue.sync(input.sessionId);
+
+    expect(result.end).toEqual({ key: end.key, state: "Needs attention" });
+    expect(transport.sendEnd).not.toHaveBeenCalled();
   });
 
   it("does not send the end intent until its exact local operation set is synced", async () => {
