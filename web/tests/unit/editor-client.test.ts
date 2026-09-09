@@ -145,4 +145,32 @@ describe("record editor client bindings", () => {
     const secondBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
     expect(secondBody).toEqual(firstBody);
   });
+
+  it("reuses a pending operation identity after a module reload", async () => {
+    const response = { contract_name: "editor_proposal_view", contract_version: 1 };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("network response lost"))
+      .mockResolvedValueOnce({
+        ok: true, headers: new Headers(), json: async () => response,
+        status: 201, statusText: "Created", redirected: false, type: "basic", url: "",
+      } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.clear();
+    const revision = { revision_id: "revision_reload", ordinal: 1, tree_digest: "1".repeat(64) };
+
+    await expect(httpEditorApi.propose("edit", "campaign_reload", revision, record(), 7)).rejects.toThrow("network response lost");
+    expect(localStorage.length).toBe(1);
+    const stored = localStorage.getItem(localStorage.key(0) ?? "") ?? "";
+    expect(stored).not.toContain("campaign_reload");
+    expect(stored).not.toContain("record-one");
+
+    vi.resetModules();
+    const reloadedClient = await import("../../src/editor/editorClient");
+    await reloadedClient.httpEditorApi.propose("edit", "campaign_reload", revision, record(), 7);
+
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const retryBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(retryBody).toEqual(firstBody);
+    expect(localStorage.length).toBe(0);
+  });
 });

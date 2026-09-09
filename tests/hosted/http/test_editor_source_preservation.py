@@ -373,6 +373,47 @@ Keep this record.
         self.assertEqual(1.5, values["ratio"])
         self.assertIs(type(values["ratio"]), float)
 
+    def test_unheaded_body_is_not_repeated_when_metadata_changes(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+Campaign-authored prose without a heading.
+It must remain in place.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["displayed_name"] = "Updated Keeper"
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+
+        self.assertNotIn("## summary", result.casefold())
+        self.assertEqual(1, result.count("Campaign-authored prose without a heading."))
+        self.assertIn("name: Updated Keeper\n", result)
+        self.assertIn("warden_only: true\n", result)
+        self.assertTrue(result.endswith("Campaign-authored prose without a heading.\nIt must remain in place.\n"))
+
+    def test_editor_rejects_integer_fields_outside_javascript_safe_range(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+count: 9007199254740992
+---
+
+## Summary
+Keep this record.
+"""
+
+        with self.assertRaisesRegex(ValueError, "invalid_field_value"):
+            parse_document(source, "record-main", "npc")
+
     def test_unsupported_adapter_fields_use_typed_equality(self):
         before = {
             "record_type": "npc",

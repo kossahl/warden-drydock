@@ -45,12 +45,50 @@ export const recomputeRecordDigest = (record: EditorRecord) => digest(recordDige
 const operationPayload = (payload: Record<string, unknown>) => Object.fromEntries(Object.entries(payload).filter(([key]) => !["contract_name", "contract_version", "operation_request", "request_id", "idempotency_key", "payload_digest"].includes(key)));
 const revisionId = (value: unknown): string => typeof value === "string" ? value : (value as RevisionRef).revision_id;
 let csrfToken: string | null = null;
+const pendingOperationStorageKey = "warden-drydock.editor.pending-operation-ids.v1";
+type OperationIdentity = { request_id: string; idempotency_key: string };
+
+const readPersistedOperationIdentities = (): Record<string, OperationIdentity> => {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(pendingOperationStorageKey) ?? "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).filter(([, identity]) => (
+      identity && typeof identity === "object" && !Array.isArray(identity)
+      && typeof (identity as OperationIdentity).request_id === "string"
+      && typeof (identity as OperationIdentity).idempotency_key === "string"
+    ))) as Record<string, OperationIdentity>;
+  } catch {
+    return {};
+  }
+};
+
+const persistOperationIdentity = (retryKey: string, identity: OperationIdentity): void => {
+  try {
+    const identities = readPersistedOperationIdentities();
+    identities[retryKey] = identity;
+    localStorage.setItem(pendingOperationStorageKey, JSON.stringify(identities));
+  } catch {
+    // Private browsing and disabled storage fall back to the module-local map.
+  }
+};
+
+const removePersistedOperationIdentity = (retryKey: string): void => {
+  try {
+    const identities = readPersistedOperationIdentities();
+    if (!(retryKey in identities)) return;
+    delete identities[retryKey];
+    if (Object.keys(identities).length === 0) localStorage.removeItem(pendingOperationStorageKey);
+    else localStorage.setItem(pendingOperationStorageKey, JSON.stringify(identities));
+  } catch {
+    // Ignore storage failures. The request result still controls the caller.
+  }
+};
 
 type ResponseError = Error & { category?: string; code?: string; responseReceived?: boolean };
 const request = async <T>(path: string, init: RequestInit = {}): Promise<T> => { const headers = new Headers(init.headers); headers.set("Accept", "application/json"); if (init.body !== undefined) headers.set("Content-Type", "application/json"); if (init.method && init.method !== "GET" && csrfToken) headers.set("X-CSRF-Token", csrfToken); const response = await fetch(`/api/v1${path}`, { ...init, credentials: "same-origin", headers }); csrfToken = response.headers.get("X-CSRF-Token") ?? csrfToken; const body = await response.json() as T & { error?: { code?: string; category?: string } }; if (!response.ok) { const code = body?.error?.code ?? "request_failed"; const error = new Error(code) as ResponseError; error.code = code; error.category = body?.error?.category; error.responseReceived = true; throw error; } return body; };
-const operation = async (name: string, expectedRevision: string, workflow: number, subjectId: string, payload: Record<string, unknown>, intentDigest?: string) => { const operationRequest = { contract_name: "editor_operation_request", contract_version: 1, request_id: `request_${crypto.randomUUID().replaceAll("-", "")}`, operation: name, idempotency_key: `idem_${crypto.randomUUID().replaceAll("-", "")}`, expected_revision: expectedRevision, expected_editor_workflow_version: workflow, subject_id: subjectId, ...(intentDigest ? { intent_digest: intentDigest } : {}) }; const body = { ...payload, operation_request: operationRequest }; return { ...body, operation_request: { ...operationRequest, payload_digest: await digest(operationPayload(body)) } }; };
+const operation = async (name: string, expectedRevision: string, workflow: number, subjectId: string, payload: Record<string, unknown>, intentDigest?: string, identity?: OperationIdentity) => { const operationRequest = { contract_name: "editor_operation_request", contract_version: 1, request_id: identity?.request_id ?? `request_${crypto.randomUUID().replaceAll("-", "")}`, operation: name, idempotency_key: identity?.idempotency_key ?? `idem_${crypto.randomUUID().replaceAll("-", "")}`, expected_revision: expectedRevision, expected_editor_workflow_version: workflow, subject_id: subjectId, ...(intentDigest ? { intent_digest: intentDigest } : {}) }; const body = { ...payload, operation_request: operationRequest }; return { ...body, operation_request: { ...operationRequest, payload_digest: await digest(operationPayload(body)) } }; };
 const pendingOperations = new Map<string, Promise<Record<string, unknown>>>();
-const mutation = async <T>(path: string, name: string, expectedRevision: string, workflow: number, subjectId: string, payload: Record<string, unknown>, intentDigest?: string): Promise<T> => { const retryKey = await digest({ path, name, expectedRevision, workflow, subjectId, payload, intentDigest: intentDigest ?? null }); let bodyPromise = pendingOperations.get(retryKey); if (!bodyPromise) { bodyPromise = operation(name, expectedRevision, workflow, subjectId, payload, intentDigest); pendingOperations.set(retryKey, bodyPromise); } let body: Record<string, unknown>; try { body = await bodyPromise; } catch (reason) { pendingOperations.delete(retryKey); throw reason; } try { const result = await request<T>(path, { method: "POST", body: JSON.stringify(body) }); pendingOperations.delete(retryKey); return result; } catch (reason) { const error = reason as ResponseError; if (error.responseReceived && error.code !== "operation_in_progress") pendingOperations.delete(retryKey); throw reason; } };
+const mutation = async <T>(path: string, name: string, expectedRevision: string, workflow: number, subjectId: string, payload: Record<string, unknown>, intentDigest?: string): Promise<T> => { const retryKey = await digest({ path, name, expectedRevision, workflow, subjectId, payload, intentDigest: intentDigest ?? null }); let bodyPromise = pendingOperations.get(retryKey); if (!bodyPromise) { const identities = readPersistedOperationIdentities(); const identity = identities[retryKey] ?? { request_id: `request_${crypto.randomUUID().replaceAll("-", "")}`, idempotency_key: `idem_${crypto.randomUUID().replaceAll("-", "")}` }; persistOperationIdentity(retryKey, identity); bodyPromise = operation(name, expectedRevision, workflow, subjectId, payload, intentDigest, identity); pendingOperations.set(retryKey, bodyPromise); } let body: Record<string, unknown>; try { body = await bodyPromise; } catch (reason) { pendingOperations.delete(retryKey); removePersistedOperationIdentity(retryKey); throw reason; } try { const result = await request<T>(path, { method: "POST", body: JSON.stringify(body) }); pendingOperations.delete(retryKey); removePersistedOperationIdentity(retryKey); return result; } catch (reason) { const error = reason as ResponseError; if (error.responseReceived && error.code !== "operation_in_progress") { pendingOperations.delete(retryKey); removePersistedOperationIdentity(retryKey); } throw reason; } };
 
 const proposalAction = async (proposal: EditorProposal, approve: boolean, reasonCode = "review_rejected", wardenConfirmed = false) => { if (approve && !wardenConfirmed) throw new Error("warden_confirmation_required"); const payload: Record<string, unknown> = { contract_name: approve ? "editor_proposal_approval_request" : "editor_proposal_rejection_request", contract_version: 1, proposal: { proposal_id: proposal.proposal_id, proposal_version: proposal.proposal_version }, proposal_status: (proposal.core_proposal as { proposal: { status: string } }).proposal.status, mutation_kind: proposal.mutation_kind, source_revision: proposal.source_revision, base_revision: proposal.base_revision, expected_campaign_head: proposal.expected_campaign_head, expected_editor_workflow_version: proposal.editor_workflow_version, proposal_payload_digest: proposal.proposal_payload_digest, diff_digest: proposal.diff.diff_digest, record_bindings: proposal.record_bindings, impact_digest: proposal.impact_digest, impact_binding: proposal.impact_binding, resolutions: proposal.resolutions, validation_status: proposal.validation.status, validation_digest: proposal.validation.validation_digest, authority_outcome: proposal.authority_outcome, visibility_outcome: proposal.visibility_outcome, warden_confirmed: approve ? wardenConfirmed : true }; if (approve) { payload.diff = proposal.diff; payload.affected_record_count = proposal.diff.affected_record_count; payload.confirmed_change_ids = proposal.diff.cards.map((card) => card.change_id); payload.confirmed_authority_change_ids = proposal.diff.authority_changes.map((change) => String(change.change_id)); payload.confirmed_visibility_change_ids = proposal.diff.visibility_changes.map((change) => String(change.change_id)); } else payload.reason_code = reasonCode; return mutation<Record<string, unknown>>(`/editor/proposals/${encodeURIComponent(proposal.proposal_id)}/versions/${proposal.proposal_version}/${approve ? "approval" : "rejection"}`, approve ? "editor_proposal_approve" : "editor_proposal_reject", revisionId(proposal.base_revision), proposal.editor_workflow_version, proposal.proposal_id, payload, proposal.diff.diff_digest); };
 

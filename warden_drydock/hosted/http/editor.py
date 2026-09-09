@@ -27,6 +27,7 @@ _CONNECTION_MARKER = re.compile(
     r"^\s*<!--\s*drydock:connection-id=(?P<id>[a-z][a-z0-9]*(?:_[a-z0-9]+)*)\s*-->\s*$"
 )
 _STATUSES = {"idea", "draft", "review", "canon", "revealed", "archived", "accepted"}
+_MAX_SAFE_INTEGER = 2**53 - 1
 _CONNECTION_LINE_BOUNDARIES = frozenset("\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029")
 
 
@@ -110,7 +111,11 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
         if not (
             scalar is None
             or isinstance(scalar, (str, bool))
-            or (isinstance(scalar, int) and not isinstance(scalar, bool))
+            or (
+                isinstance(scalar, int)
+                and not isinstance(scalar, bool)
+                and abs(scalar) <= _MAX_SAFE_INTEGER
+            )
             or (isinstance(scalar, float) and math.isfinite(scalar))
         ):
             raise ValueError("invalid_field_value")
@@ -383,6 +388,21 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
 
     sections = {item["section_id"]: item["body"] for item in new["sections"]}
     consumed: set[str] = set()
+    if not headings and "summary" in sections:
+        # With no headings, parse_document exposes the whole body as a
+        # synthetic summary. Keep that body unheaded instead of appending a
+        # second copy under a new heading during metadata-only edits.
+        old_body = next((item["body"] for item in old["sections"] if item["section_id"] == "summary"), None)
+        body_text = normalize_text(sections["summary"])
+        if old_body != body_text:
+            content_start = body_start
+            while content_start < len(lines) and not lines[content_start].strip():
+                content_start += 1
+            replacement = [] if body_text == "" else _split_lf_lines(body_text)
+            if replacement and not replacement[-1].endswith("\n"):
+                replacement[-1] += newline
+            lines[content_start:] = replacement
+        consumed.add("summary")
     # Replace from the end so offsets collected from the original source stay
     # valid while earlier sections are still waiting to be changed.
     for position, (heading_index, heading) in reversed(list(enumerate(headings))):
