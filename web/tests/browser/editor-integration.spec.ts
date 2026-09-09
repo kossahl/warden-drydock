@@ -33,10 +33,11 @@ test("editor publishes reviewed section corrections and resolves multiple refere
 
   async function approve() {
     await editor.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
+    const approvalDialog = page.getByRole("dialog", { name: "Approve exact proposal" });
     const pending = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/approval"));
-    await expect(page.getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
-    await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
-    await page.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
+    await expect(approvalDialog.getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
+    await approvalDialog.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
+    await approvalDialog.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
     const response = await pending;
     expect(response.status(), await response.text()).toBe(200);
     const result = await response.json() as { published_revision: { revision_id: string } };

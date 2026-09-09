@@ -12,6 +12,7 @@ class EditorReceiptRecoveryTests(unittest.TestCase):
     setUp = backend.EditorBackendTests.setUp
     _campaign = backend.EditorBackendTests._campaign
     _edit = backend.EditorBackendTests._edit
+    _create_record_proposal = backend.EditorBackendTests._create_record_proposal
     _create_record = backend.EditorBackendTests._create_record
     _approve_editor = backend.EditorBackendTests._approve_editor
     _editor_approval_payload = backend.EditorBackendTests._editor_approval_payload

@@ -61,6 +61,11 @@ python -m unittest discover -s tests -v
 python -m warden_drydock --help
 ```
 
+Before opening a PR, every agent and contributor must run
+`./scripts/review-check.sh`, the canonical local gate that mirrors CI in
+pinned containers. Focused tests are useful during iteration but do not
+replace this check.
+
 When generator, template, adapter, or portable maintenance behavior changes,
 generate a fresh campaign in a temporary sibling directory, inspect it, run its
 local validation/context commands, and verify that it does not import the

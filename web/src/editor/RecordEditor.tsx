@@ -181,7 +181,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       setDraft(isCreate ? newAdapterRecord() : clone(value.record));
     }).catch((reason: unknown) => {
       if (!isCurrentRequest()) return;
-      focusEditorError.current = !document.activeElement?.closest("#atlas-content"); setError(`Editor unavailable (${errorText(reason)}).`);
+      focusEditorError.current = !!document.activeElement?.closest(".editor"); setError(`Editor unavailable (${errorText(reason)}).`);
     });
   };
   useEffect(() => load(), [campaignId, revisionId, recordId]);
