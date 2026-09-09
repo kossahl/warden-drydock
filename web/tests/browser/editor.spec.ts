@@ -385,9 +385,36 @@ test("create validation carries the handout audience rule into the focused field
   expect(proposalPosts).toBe(0);
 });
 
+test("adapter required values block an invalid handout visibility before posting", async ({ page }) => {
+  await installAtlasApi(page);
+  let proposalPosts = 0;
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/campaign-main/editor")) {
+      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: editorRecord }) });
+    }
+    if (request.method() === "POST" && path.endsWith("/editor/records/proposals")) proposalPosts += 1;
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/__new__?revision=revision_two");
+  const editor = page.locator(".editor").filter({ hasText: "Create record" });
+  await editor.getByLabel("Record type").selectOption("handout");
+  await editor.getByLabel("audience", { exact: true }).fill("Players");
+  await editor.getByLabel("Visibility").selectOption("warden");
+  await editor.getByRole("button", { name: "Submit create proposal" }).click();
+
+  const visibility = editor.getByLabel("Visibility");
+  await expect(visibility).toHaveAttribute("aria-invalid", "true");
+  await expect(visibility).toBeFocused();
+  await expect(editor.getByText("This value must be players.")).toBeVisible();
+  expect(proposalPosts).toBe(0);
+});
+
 test("player-visible connections reject Warden-only targets before posting", async ({ page }) => {
   await installAtlasApi(page);
-  const playerRecord = { ...editorRecord, visibility: { audience: "players" as const, warden_only: false as const } };
+  const playerRecord = { ...editorRecord, record_type: "handout" as const, visibility: { audience: "players" as const, warden_only: false as const }, fields: [{ field_id: "ownership", value: "campaign" }, { field_id: "audience", value: "Players" }] };
   let targetReads = 0;
   let proposalPosts = 0;
   await page.route("**/api/v1/**", async (route) => {
@@ -415,6 +442,97 @@ test("player-visible connections reject Warden-only targets before posting", asy
   await editor.getByRole("button", { name: "Save as proposal" }).click();
 
   await expect(editor.getByRole("alert")).toHaveText("Player-visible records cannot connect to Warden-only targets.");
+  await expect(editor.locator("#connection-target-connection_1")).toBeFocused();
   expect(targetReads).toBe(1);
   expect(proposalPosts).toBe(0);
+});
+
+test("save does not post after target visibility completes on another route", async ({ page }) => {
+  await installAtlasApi(page);
+  const playerRecord = { ...editorRecord, record_type: "handout" as const, visibility: { audience: "players" as const, warden_only: false as const }, fields: [{ field_id: "ownership", value: "campaign" }, { field_id: "audience", value: "Players" }], connections: [{ connection_id: "connection_1", target_record_id: "record-two", relationship: "connected-to", state: "current", context: "The keeper relies on the ship." }] };
+  let releaseTargetRead!: () => void;
+  const targetReadReleased = new Promise<void>((resolve) => { releaseTargetRead = resolve; });
+  let targetReadStarted!: () => void;
+  const targetReadBegan = new Promise<void>((resolve) => { targetReadStarted = resolve; });
+  let targetReads = 0;
+  let proposalPosts = 0;
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      return route.fulfill({ headers: { "X-CSRF-Token": "browser-csrf" }, json: { contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: playerRecord } });
+    }
+    if (request.method() === "GET" && path.endsWith("/records/record-two/editor")) {
+      targetReads += 1;
+      if (targetReads === 1) {
+        targetReadStarted();
+        await targetReadReleased;
+      }
+      return route.fulfill({ headers: { "X-CSRF-Token": "browser-csrf" }, json: { contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: secondEditorRecord } });
+    }
+    if (request.method() === "POST" && path.endsWith("/proposals")) {
+      proposalPosts += 1;
+      return route.fulfill({ status: 201, json: proposal });
+    }
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const editor = page.locator(".editor").filter({ hasText: "Edit record" });
+  await editor.getByRole("button", { name: "Save as proposal" }).click();
+  await targetReadBegan;
+  await page.getByRole("link", { name: "Legacy Ship" }).first().click();
+  await expect(page).toHaveURL(/records\/record-two\?revision=revision_two$/);
+  await expect(page.locator(".editor").getByLabel("Record ID")).toHaveValue("record-two");
+  releaseTargetRead();
+  await expect.poll(() => proposalPosts).toBe(0);
+  expect(targetReads).toBe(2);
+});
+
+test("correction does not post after target visibility completes on another route", async ({ page }) => {
+  await installAtlasApi(page);
+  const playerRecord = { ...editorRecord, record_type: "handout" as const, visibility: { audience: "players" as const, warden_only: false as const }, fields: [{ field_id: "ownership", value: "campaign" }, { field_id: "audience", value: "Players" }], connections: [{ connection_id: "connection_1", target_record_id: "record-two", relationship: "connected-to", state: "current", context: "The keeper relies on the ship." }] };
+  const correctionProposal = { ...proposal, diff: { ...proposal.diff, cards: [{ ...proposal.diff.cards[0], after: { ...playerRecord, displayed_name: "Corrected keeper" } }] } };
+  let releaseTargetRead!: () => void;
+  const targetReadReleased = new Promise<void>((resolve) => { releaseTargetRead = resolve; });
+  let targetReadStarted!: () => void;
+  const targetReadBegan = new Promise<void>((resolve) => { targetReadStarted = resolve; });
+  let targetReads = 0;
+  let correctionPosts = 0;
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      return route.fulfill({ headers: { "X-CSRF-Token": "browser-csrf" }, json: { contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 2, historical: false, editable: true, record: playerRecord } });
+    }
+    if (request.method() === "GET" && path.endsWith("/records/record-two/editor")) {
+      targetReads += 1;
+      if (targetReads === 2) {
+        targetReadStarted();
+        await targetReadReleased;
+        return route.fulfill({ headers: { "X-CSRF-Token": "browser-csrf" }, json: { contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 2, historical: false, editable: true, record: secondEditorRecord } });
+      }
+      const targetRecord = targetReads === 1 ? { ...secondEditorRecord, visibility: { audience: "players" as const, warden_only: false as const } } : secondEditorRecord;
+      return route.fulfill({ headers: { "X-CSRF-Token": "browser-csrf" }, json: { contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 2, historical: false, editable: true, record: targetRecord } });
+    }
+    if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) return route.fulfill({ status: 201, json: correctionProposal });
+    if (request.method() === "POST" && path.endsWith("/corrections")) {
+      correctionPosts += 1;
+      return route.fulfill({ status: 201, json: correctionProposal });
+    }
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const editor = page.locator(".editor").filter({ hasText: "Edit record" });
+  await editor.getByRole("button", { name: "Save as proposal" }).click();
+  await editor.getByRole("button", { name: "Create correction/rebase" }).click();
+  await editor.getByRole("button", { name: "Submit correction/rebase" }).click();
+  await targetReadBegan;
+  await page.getByRole("link", { name: "Legacy Ship" }).first().click();
+  await expect(page).toHaveURL(/records\/record-two\?revision=revision_two$/);
+  await expect(page.locator(".editor").getByLabel("Record ID")).toHaveValue("record-two");
+  releaseTargetRead();
+  await expect.poll(() => correctionPosts).toBe(0);
+  expect(targetReads).toBe(3);
 });

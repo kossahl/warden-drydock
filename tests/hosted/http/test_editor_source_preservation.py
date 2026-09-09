@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.hosted.http import test_editor_backend as _editor_backend
 from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input
@@ -190,6 +191,61 @@ Keep this section.
         self.assertEqual(candidate["sections"], round_tripped["sections"])
         self.assertIn("Keep this record.\u2028## This resembles a heading\n", result)
         self.assertIn("This remains part of the summary.", result)
+
+    def test_duplicate_normalized_headings_have_unique_ids_and_keep_source_blocks(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Summary
+First authored block.
+
+## SUMMARY
+Second authored block.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+
+        self.assertEqual(["summary", "summary-2"], [item["section_id"] for item in candidate["sections"]])
+
+        candidate["displayed_name"] = "Updated Keeper"
+        candidate["sections"][1]["body"] = "Updated second authored block."
+        candidate["content_digest"] = document_digest(candidate)
+        result = mutate_document(source, candidate)
+
+        self.assertIn("## Summary\nFirst authored block.", result)
+        self.assertIn("## SUMMARY\nUpdated second authored block.", result)
+        self.assertEqual(candidate["sections"], parse_document(result, "record-main", "npc")["sections"])
+
+    def test_editor_record_read_accepts_duplicate_normalized_headings(self):
+        source = """---
+id: campaign-main
+type: campaign
+name: Editor
+status: draft
+visibility: warden
+---
+
+## Summary
+First authored block.
+
+## SUMMARY
+Second authored block.
+"""
+        revision = self.app.workflow.head("campaign_alpha")
+        record = {"content": source, "record_type": "campaign"}
+
+        with mock.patch.object(self.app, "_record", return_value=record):
+            status, response = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")
+
+        self.assertEqual(200, status)
+        self.assertEqual(
+            ["summary", "summary-2"],
+            [item["section_id"] for item in response["record"]["sections"]],
+        )
 
     def test_leading_blank_lines_survive_real_publication_readback(self):
         revision = self.app.workflow.head("campaign_alpha")

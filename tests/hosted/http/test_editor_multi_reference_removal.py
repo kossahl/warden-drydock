@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 from warden_drydock.hosted.http.application import HTTPFailure
 from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input
@@ -144,6 +145,38 @@ class MultiReferenceRemovalTests(unittest.TestCase):
         self.assertEqual(1, len(source["connections"]))
         self.assertEqual("record-replacement", source["connections"][0]["target_record_id"])
         self.assertEqual("Redirect this context.", source["connections"][0]["context"])
+
+    def test_removal_impact_accepts_duplicate_normalized_headings(self):
+        revision = self.backend._create_record("record-target")
+        source = """---
+id: record-target
+type: npc
+name: Target
+status: draft
+visibility: warden
+---
+
+## Summary
+First authored block.
+
+## SUMMARY
+Second authored block.
+"""
+        original_record = self.app._record
+
+        def record(campaign_id, revision_id, record_id):
+            if record_id == "record-target":
+                return {"content": source, "record_type": "npc"}
+            return original_record(campaign_id, revision_id, record_id)
+
+        with mock.patch.object(self.app, "_record", side_effect=record):
+            status, impact = self.app.editor_removal_impact("campaign_alpha", revision, "record-target")
+
+        self.assertEqual(200, status)
+        self.assertEqual(
+            ["summary", "summary-2"],
+            [item["section_id"] for item in impact["record"]["sections"]],
+        )
 
     def test_multiple_sources_stage_one_change_and_binding_per_source(self):
         self.backend._create_record("record-target")

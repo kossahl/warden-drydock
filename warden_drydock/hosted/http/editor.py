@@ -198,6 +198,29 @@ def _connection_marker_occurrences(content: str) -> dict[int, tuple[int, str]]:
     return markers
 
 
+def _heading_id(value: str) -> str:
+    return re.sub(r"[^a-z0-9-]+", "-", value.lower()).strip("-") or "summary"
+
+
+def _unique_section_id(heading: str, used: set[str]) -> str:
+    base = _heading_id(heading)
+    section_id = base
+    suffix = 2
+    while section_id in used:
+        section_id = f"{base}-{suffix}"
+        suffix += 1
+    used.add(section_id)
+    return section_id
+
+
+def _section_headings(headings: list[tuple[int, str]]) -> list[tuple[int, str, str | None]]:
+    used: set[str] = set()
+    return [
+        (index, heading, None if heading.casefold() == "connections" else _unique_section_id(heading, used))
+        for index, heading in headings
+    ]
+
+
 def parse_document(content: str, record_id: str, record_type: str | None = None) -> dict[str, Any]:
     normalized_content = content.replace("\r\n", "\n").replace("\r", "\n")
     metadata = frontmatter(normalized_content)
@@ -211,6 +234,7 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
     in_connections = False
     body_lines = body.split("\n")
     current_body: list[str] | None = None
+    used_section_ids: set[str] = set()
 
     def finish_section(*, at_eof: bool = False) -> None:
         if current is None or current_body is None:
@@ -231,7 +255,7 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
                 current = None
                 current_body = None
                 continue
-            current = {"section_id": re.sub(r"[^a-z0-9-]+", "-", heading.lower()).strip("-") or "summary", "body": ""}
+            current = {"section_id": _unique_section_id(heading, used_section_ids), "body": ""}
             sections.append(current)
             current_body = []
         elif current is not None and not in_connections:
@@ -284,10 +308,6 @@ def serialize_document(value: Mapping[str, Any]) -> str:
             lines.append(f"<!-- drydock:connection-id={item['connection_id']} -->")
             lines.append(f"- `{item['relationship']}` -> [[{item['target_record_id']}]] (`{item['state']}`) — {item['context']}")
     return normalize_text("\n".join(lines)) + "\n"
-
-
-def _heading_id(value: str) -> str:
-    return re.sub(r"[^a-z0-9-]+", "-", value.lower()).strip("-") or "summary"
 
 
 def _format_frontmatter_value(value: Any) -> str:
@@ -395,6 +415,7 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         match = re.match(r"^##\s+(.+?)\s*\n?$", lines[index])
         if match:
             headings.append((index, match.group(1).strip()))
+    section_headings = _section_headings(headings)
 
     sections = {item["section_id"]: item["body"] for item in new["sections"]}
     consumed: set[str] = set()
@@ -415,13 +436,12 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         consumed.add("summary")
     # Replace from the end so offsets collected from the original source stay
     # valid while earlier sections are still waiting to be changed.
-    for position, (heading_index, heading) in reversed(list(enumerate(headings))):
-        if heading.casefold() == "connections":
+    for position, (heading_index, heading, section_id) in reversed(list(enumerate(section_headings))):
+        if section_id is None:
             continue
-        section_id = _heading_id(heading)
         if section_id not in sections:
             continue
-        next_index = headings[position + 1][0] if position + 1 < len(headings) else len(lines)
+        next_index = section_headings[position + 1][0] if position + 1 < len(section_headings) else len(lines)
         body_text = normalize_text(sections[section_id])
         old_body = next((item["body"] for item in old["sections"] if item["section_id"] == section_id), None)
         if old_body == body_text:
@@ -446,10 +466,11 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         match = re.match(r"^##\s+(.+?)\s*\n?$", line)
         if match:
             current_headings.append((index, match.group(1).strip()))
-    for position, (heading_index, heading) in reversed(list(enumerate(current_headings))):
-        if heading.casefold() == "connections" or _heading_id(heading) in sections:
+    current_section_headings = _section_headings(current_headings)
+    for position, (heading_index, heading, section_id) in reversed(list(enumerate(current_section_headings))):
+        if section_id is None or section_id in sections:
             continue
-        next_index = current_headings[position + 1][0] if position + 1 < len(current_headings) else len(lines)
+        next_index = current_section_headings[position + 1][0] if position + 1 < len(current_section_headings) else len(lines)
         del lines[heading_index:next_index]
 
     # New sections are inserted before the typed Connections section, or at EOF.
