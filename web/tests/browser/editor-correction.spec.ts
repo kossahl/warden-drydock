@@ -378,6 +378,73 @@ test("restored removal proposals show correction resolutions and require valid i
   await expect(panel.getByText(/proposal_removal.*, version 2/)).toBeVisible();
 });
 
+test("removal redirects reject player-visible sources to Warden-only targets before posting", async ({ page }) => {
+  await installAtlasApi(page);
+  const impact = removalImpact(headRevision);
+  const sourceRecord = { ...originalRecord, record_id: "record-source", record_type: "handout", visibility: { audience: "players" as const, warden_only: false as const } };
+  const targetRecord = { ...originalRecord, record_id: "record-two" };
+  let proposalRequests = 0;
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) return json(route, view(headRevision, headRevision, originalRecord));
+    if (request.method() === "GET" && path.endsWith("/records/record-source/editor")) return json(route, view(headRevision, headRevision, sourceRecord));
+    if (request.method() === "GET" && path.endsWith("/records/record-two/editor")) return json(route, view(headRevision, headRevision, targetRecord));
+    if (request.method() === "GET" && path.endsWith("/records/record-one/removal-impact")) return json(route, impact);
+    if (request.method() === "POST" && path.endsWith("/removal-proposals")) { proposalRequests += 1; return json(route, removalProposal(headRevision), 201); }
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const panel = editor(page);
+  await panel.getByRole("button", { name: "Load removal impact" }).click();
+  await panel.getByLabel("Resolution for reference_1").selectOption("redirect");
+  await panel.getByRole("button", { name: "Replacement target for reference_1: choose existing record" }).click();
+  const targetDialog = page.getByRole("dialog");
+  await targetDialog.getByLabel("Search existing records").fill("record-two");
+  await targetDialog.getByRole("button", { name: "Search", exact: true }).click();
+  await targetDialog.getByRole("option", { name: /record-two/ }).click();
+  await panel.getByRole("button", { name: "Submit removal proposal" }).click();
+
+  await expect(panel.getByRole("alert")).toHaveText("Player-visible records cannot redirect to Warden-only targets.");
+  await expect(panel.getByLabel("Resolution for reference_1")).toBeFocused();
+  expect(proposalRequests).toBe(0);
+});
+
+test("removal corrections validate redirect visibility before posting", async ({ page }) => {
+  await installAtlasApi(page);
+  const impact = removalImpact(headRevision);
+  const sourceRecord = { ...originalRecord, record_id: "record-source", record_type: "handout", visibility: { audience: "players" as const, warden_only: false as const } };
+  const targetRecord = { ...originalRecord, record_id: "record-two" };
+  let correctionRequests = 0;
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) return json(route, view(headRevision, headRevision, originalRecord));
+    if (request.method() === "GET" && path.endsWith("/records/record-source/editor")) return json(route, view(headRevision, headRevision, sourceRecord));
+    if (request.method() === "GET" && path.endsWith("/records/record-two/editor")) return json(route, view(headRevision, headRevision, targetRecord));
+    if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_removal/versions/1")) return json(route, removalProposal(headRevision));
+    if (request.method() === "GET" && path.endsWith("/records/record-one/removal-impact")) return json(route, impact);
+    if (request.method() === "POST" && path.endsWith("/corrections")) { correctionRequests += 1; return json(route, removalProposal(headRevision, 2, [{ reference_id: "reference_1", action: "redirect", replacement_target_record_id: "record-two" }]), 201); }
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two&proposal=proposal_removal&version=1");
+  const panel = editor(page);
+  await panel.getByRole("button", { name: "Create correction/rebase" }).click();
+  await panel.getByLabel("Resolution for reference_1").selectOption("redirect");
+  await panel.getByRole("button", { name: "Replacement target for reference_1: choose existing record" }).click();
+  const targetDialog = page.getByRole("dialog");
+  await targetDialog.getByLabel("Search existing records").fill("record-two");
+  await targetDialog.getByRole("button", { name: "Search", exact: true }).click();
+  await targetDialog.getByRole("option", { name: /record-two/ }).click();
+  await panel.getByRole("button", { name: "Submit correction/rebase" }).click();
+
+  await expect(panel.getByRole("alert")).toHaveText("Player-visible records cannot redirect to Warden-only targets.");
+  await expect(panel.getByLabel("Resolution for reference_1")).toBeFocused();
+  expect(correctionRequests).toBe(0);
+});
+
 test("stale correction responses cannot install a proposal after SPA navigation", async ({ page }) => {
   await installAtlasApi(page);
   let releaseCorrection!: () => void;

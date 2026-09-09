@@ -255,7 +255,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   useEffect(() => {
     const first = Object.keys(fieldErrors)[0];
     if (!first) return;
-    const id = first === "record_id" ? "editor-record-id" : first === "displayed_name" ? "editor-name" : first === "visibility" ? "editor-visibility" : first.startsWith("field-") ? `editor-field-${first.slice(6)}` : first.startsWith("section-") ? `editor-section-${first.slice(8)}` : first.startsWith("connection-") ? first.endsWith("-context") ? `connection-context-${first.slice(11, -8)}` : `connection-target-${first.slice(11)}` : null;
+    const id = first === "record_id" ? "editor-record-id" : first === "displayed_name" ? "editor-name" : first === "visibility" ? "editor-visibility" : first.startsWith("field-") ? `editor-field-${first.slice(6)}` : first.startsWith("section-") ? `editor-section-${first.slice(8)}` : first.startsWith("connection-") ? first.endsWith("-context") ? `connection-context-${first.slice(11, -8)}` : `connection-target-${first.slice(11)}` : first.startsWith("resolution-") ? `resolution-${first.slice(11)}` : null;
     if (id) document.getElementById(id)?.focus();
   }, [fieldErrors]);
 
@@ -325,6 +325,34 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
     });
     return next;
   };
+  const removalResolutionVisibilityErrors = async (currentImpact: EditorRemovalImpact | null, currentResolutions: Array<Record<string, unknown>>, revision: RevisionRef): Promise<Record<string, string>> => {
+    if (!currentImpact) return {};
+    const redirects: Array<{ reference: EditorRemovalImpact["incoming_references"][number]; replacement: string }> = [];
+    currentImpact.incoming_references.forEach((reference) => {
+      const resolution = currentResolutions.find((item) => item.reference_id === reference.reference_id);
+      const replacement = resolution?.action === "redirect" ? resolution.replacement_target_record_id : undefined;
+      if (typeof replacement === "string" && replacement.length > 0) redirects.push({ reference, replacement });
+    });
+    const recordIds = new Set(redirects.flatMap(({ reference, replacement }) => [reference.source_record_id, replacement]));
+    const audiences = new Map<string, EditorRecord["visibility"]["audience"] | undefined>();
+    await Promise.all(Array.from(recordIds, async (recordId) => {
+      try {
+        const value = await httpEditorApi.read(campaignId, revision.revision_id, recordId);
+        audiences.set(recordId, value.record?.visibility?.audience);
+      } catch {
+        audiences.set(recordId, undefined);
+      }
+    }));
+    const next: Record<string, string> = {};
+    redirects.forEach(({ reference, replacement }) => {
+      const sourceAudience = audiences.get(reference.source_record_id);
+      const targetAudience = audiences.get(replacement);
+      const key = `resolution-${reference.reference_id}`;
+      if (sourceAudience === undefined || targetAudience === undefined) next[key] = "Source and replacement visibility could not be verified.";
+      else if (sourceAudience === "players" && targetAudience === "warden") next[key] = "Player-visible records cannot redirect to Warden-only targets.";
+    });
+    return next;
+  };
   const removalReady = !!impact && impact.incoming_references.every((reference) => {
     const resolution = resolutions.find((item) => item.reference_id === reference.reference_id);
     const replacement = resolution?.replacement_target_record_id;
@@ -361,13 +389,13 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
     const isCurrentRequest = () => proposalRequest.current === request.sequence && editorIdentityRef.current === request.editorIdentity;
     setBusy(true); setError(""); setMessage(""); setConflict(false);
     try {
-      if (mode !== "remove") {
-        const visibilityErrors = await targetVisibilityErrors();
-        if (!isCurrentRequest()) return;
-        if (Object.keys(visibilityErrors).length > 0) {
-          setFieldErrors(visibilityErrors);
-          return;
-        }
+      const visibilityErrors = mode === "remove"
+        ? await removalResolutionVisibilityErrors(impact, resolutions, view.head_revision)
+        : await targetVisibilityErrors();
+      if (!isCurrentRequest()) return;
+      if (Object.keys(visibilityErrors).length > 0) {
+        setFieldErrors(visibilityErrors);
+        return;
       }
       const value = await httpEditorApi.propose(isCreate ? "create" : mode, campaignId, view.head_revision, draft, view.editor_workflow_version, resolutions, impact ?? undefined);
       if (!isCurrentRequest()) return;
@@ -460,7 +488,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   };
   const submitCorrection = async () => {
     if (proposal?.mutation_kind === "remove" && !removalReady) return;
-    if (!proposal || !draft || !correctionMode || (proposal.mutation_kind !== "remove" && !validate())) return;
+    if (!proposal || !draft || !view || !correctionMode || (proposal.mutation_kind !== "remove" && !validate())) return;
     const request = {
       sequence: correctionRequest.current,
       editorIdentity,
@@ -471,13 +499,13 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       && proposalIdentityRef.current === request.proposalIdentity;
     setBusy(true); setError(""); setConflict(false);
     try {
-      if (proposal.mutation_kind !== "remove") {
-        const visibilityErrors = await targetVisibilityErrors();
-        if (!isCurrentRequest()) return;
-        if (Object.keys(visibilityErrors).length > 0) {
-          setFieldErrors(visibilityErrors);
-          return;
-        }
+      const visibilityErrors = proposal.mutation_kind === "remove"
+        ? await removalResolutionVisibilityErrors(correctionBase.current?.impact ?? impact, resolutions, correctionBase.current?.view.head_revision ?? view.head_revision)
+        : await targetVisibilityErrors();
+      if (!isCurrentRequest()) return;
+      if (Object.keys(visibilityErrors).length > 0) {
+        setFieldErrors(visibilityErrors);
+        return;
       }
       const proposalRecordId = proposal.record_bindings[0]?.record_id;
       const correctedDraft = proposal.mutation_kind === "create" && proposalRecordId
@@ -548,11 +576,11 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
     <fieldset disabled={locked}><legend>Fields</legend>{draft.fields.map((field, index) => <div key={field.field_id}><label htmlFor={`editor-field-${field.field_id}`}>{field.field_id}</label><input id={`editor-field-${field.field_id}`} value={String(field.value ?? "")} readOnly={!recordDefinitions[draft.record_type]?.fields.includes(field.field_id)} onChange={(event) => setField(index, { ...field, value: event.target.value })} aria-invalid={!!invalid(`field-${field.field_id}`)} aria-describedby={invalid(`field-${field.field_id}`) ? `editor-field-${field.field_id}-error` : undefined} />{invalid(`field-${field.field_id}`) && <span id={`editor-field-${field.field_id}-error`} className="error">{invalid(`field-${field.field_id}`)}</span>}</div>)}</fieldset>
     <fieldset disabled={locked}><legend>Content sections</legend>{draft.sections.map((section, index) => <div key={section.section_id}><label htmlFor={`editor-section-${section.section_id}`}>{section.section_id}</label><textarea id={`editor-section-${section.section_id}`} rows={5} readOnly={!recordDefinitions[draft.record_type]?.sections.some((item) => item.id === section.section_id)} value={section.body} onChange={(event) => setSection(index, { ...section, body: event.target.value })} aria-invalid={!!invalid(`section-${section.section_id}`)} />{invalid(`section-${section.section_id}`) && <span className="error">{invalid(`section-${section.section_id}`)}</span>}</div>)}</fieldset>
     <fieldset disabled={locked}><legend>Typed connections ({draft.connections.length})</legend>{draft.connections.map((connection, index) => <ConnectionEditor key={connection.connection_id} campaignId={campaignId} revision={view.head_revision} connection={connection} error={invalid(`connection-${connection.connection_id}`)} contextError={invalid(`connection-${connection.connection_id}-context`)} onChange={(next) => update({ connections: draft.connections.map((item, itemIndex) => itemIndex === index ? next : item) })} onRemove={() => update({ connections: draft.connections.filter((_, itemIndex) => itemIndex !== index) })} />)}<button type="button" onClick={() => update({ connections: [...draft.connections, { connection_id: nextConnectionId(draft.connections), target_record_id: "", relationship: "connected-to", state: "current", context: "Describe this connection." }] })}>Add typed connection</button></fieldset>
-    <div className="actions">{!proposal && !isCreate && mode !== "remove" && <button type="button" className="danger" disabled={locked} onClick={() => void startRemove()}>Load removal impact</button>}{!proposal && <button type="button" disabled={locked || mode === "remove"} onClick={() => { setMode("edit"); void save(); }}>{isCreate ? "Submit create proposal" : "Save as proposal"}</button>}{!proposal && mode === "remove" && <button type="button" disabled={busy} onClick={() => { setMode("edit"); setImpact(null); setResolutions([]); setMessage("Removal canceled."); }}>Cancel removal</button>}{!proposal && mode === "remove" && impact && <button type="button" disabled={locked || !removalReady} onClick={() => void save()}>Submit removal proposal</button>}{proposal && correctionMode && <><button type="button" disabled={busy || (proposal.mutation_kind === "remove" && !removalReady)} onClick={() => void submitCorrection()}>Submit correction/rebase</button><button type="button" disabled={busy} onClick={cancelCorrection}>Cancel correction</button></>}</div>{impact && mode === "remove" && <RemovalResolution campaignId={campaignId} revision={view.head_revision} impact={impact} resolutions={resolutions} setResolutions={setResolutions} disabled={locked} />}{proposal && <ProposalReview proposal={proposal} priorRevision={correctionParentRevision} decisionAvailable={proposalDecisionAvailable} approve={() => { approvalTrigger.current = document.activeElement as HTMLElement | null; setWardenConfirmed(false); setApprovalDialog("approve"); }} reject={() => { approvalTrigger.current = document.activeElement as HTMLElement | null; setApprovalDialog("reject"); }} startCorrection={startCorrection} correctionMode={correctionMode} busy={busy} />}</section>;
+    <div className="actions">{!proposal && !isCreate && mode !== "remove" && <button type="button" className="danger" disabled={locked} onClick={() => void startRemove()}>Load removal impact</button>}{!proposal && <button type="button" disabled={locked || mode === "remove"} onClick={() => { setMode("edit"); void save(); }}>{isCreate ? "Submit create proposal" : "Save as proposal"}</button>}{!proposal && mode === "remove" && <button type="button" disabled={busy} onClick={() => { setMode("edit"); setImpact(null); setResolutions([]); setMessage("Removal canceled."); }}>Cancel removal</button>}{!proposal && mode === "remove" && impact && <button type="button" disabled={locked || !removalReady} onClick={() => void save()}>Submit removal proposal</button>}{proposal && correctionMode && <><button type="button" disabled={busy || (proposal.mutation_kind === "remove" && !removalReady)} onClick={() => void submitCorrection()}>Submit correction/rebase</button><button type="button" disabled={busy} onClick={cancelCorrection}>Cancel correction</button></>}</div>{impact && mode === "remove" && <RemovalResolution campaignId={campaignId} revision={view.head_revision} impact={impact} resolutions={resolutions} setResolutions={setResolutions} errors={fieldErrors} disabled={locked} />}{proposal && <ProposalReview proposal={proposal} priorRevision={correctionParentRevision} decisionAvailable={proposalDecisionAvailable} approve={() => { approvalTrigger.current = document.activeElement as HTMLElement | null; setWardenConfirmed(false); setApprovalDialog("approve"); }} reject={() => { approvalTrigger.current = document.activeElement as HTMLElement | null; setApprovalDialog("reject"); }} startCorrection={startCorrection} correctionMode={correctionMode} busy={busy} />}</section>;
 }
 
 function ConnectionEditor({ campaignId, revision, connection, error, contextError, onChange, onRemove }: { campaignId: string; revision: RevisionRef; connection: EditorConnection; error?: string; contextError?: string; onChange: (connection: EditorConnection) => void; onRemove: () => void }) { return <div className="editor-connection"><RecordPicker campaignId={campaignId} revision={revision} label={`Target for ${connection.connection_id}`} triggerId={`connection-target-${connection.connection_id}`} value={connection.target_record_id} onChange={(target_record_id) => onChange({ ...connection, target_record_id })} error={error} /><label htmlFor={`connection-relationship-${connection.connection_id}`}>Relationship</label><select id={`connection-relationship-${connection.connection_id}`} value={connection.relationship} onChange={(event) => onChange({ ...connection, relationship: event.target.value })}>{!relationships.includes(connection.relationship) && <option value={connection.relationship} disabled>Unsupported: {connection.relationship}</option>}{relationships.map((value) => <option key={value} value={value}>{value}</option>)}</select><label htmlFor={`connection-state-${connection.connection_id}`}>State</label><select id={`connection-state-${connection.connection_id}`} value={connection.state} onChange={(event) => onChange({ ...connection, state: event.target.value })}>{!connectionStates.includes(connection.state) && <option value={connection.state} disabled>Unsupported: {connection.state}</option>}{connectionStates.map((value) => <option key={value} value={value}>{value}</option>)}</select><label htmlFor={`connection-context-${connection.connection_id}`}>Context</label><textarea id={`connection-context-${connection.connection_id}`} rows={2} value={connection.context} onChange={(event) => onChange({ ...connection, context: event.target.value })} aria-invalid={!!contextError} aria-describedby={contextError ? `connection-context-${connection.connection_id}-error` : undefined} />{contextError && <span id={`connection-context-${connection.connection_id}-error`} className="error" role="alert">{contextError}</span>}<button type="button" onClick={onRemove}>Remove connection {connection.connection_id}</button></div>; }
-function RemovalResolution({ campaignId, revision, impact, resolutions, setResolutions, disabled }: { campaignId: string; revision: RevisionRef; impact: EditorRemovalImpact; resolutions: Array<Record<string, unknown>>; setResolutions: (value: Array<Record<string, unknown>>) => void; disabled: boolean }) { return <section aria-labelledby="removal-impact-heading" className="editor-impact"><h3 id="removal-impact-heading">Removal impact and resolutions</h3><p>{impact.incoming_references.length} incoming typed connection(s) require a decision.</p>{impact.incoming_references.map((reference) => { const current = resolutions.find((item) => item.reference_id === reference.reference_id); const action = current?.action === "accept_unresolved" && !reference.permitted_unresolved ? "" : String(current?.action ?? ""); return <fieldset key={reference.reference_id} disabled={disabled}><legend>{reference.source_record_id} · {reference.relationship}</legend><label htmlFor={`resolution-${reference.reference_id}`}>Resolution for {reference.reference_id}</label><select id={`resolution-${reference.reference_id}`} required value={action} onChange={(event) => setResolutions(resolutions.map((item) => item.reference_id === reference.reference_id ? { reference_id: reference.reference_id, action: event.target.value, replacement_target_record_id: event.target.value === "redirect" ? "" : null } : item))}><option value="" disabled>Choose a resolution</option><option value="remove_reference">Remove reference</option><option value="redirect">Redirect reference</option>{reference.permitted_unresolved && <option value="accept_unresolved">Accept unresolved</option>}</select>{action === "redirect" && <RecordPicker campaignId={campaignId} revision={revision} label={`Replacement target for ${reference.reference_id}`} value={String(current?.replacement_target_record_id ?? "")} onChange={(target) => setResolutions(resolutions.map((item) => item.reference_id === reference.reference_id ? { ...item, replacement_target_record_id: target } : item))} />}</fieldset>; })}</section>; }
+function RemovalResolution({ campaignId, revision, impact, resolutions, setResolutions, errors, disabled }: { campaignId: string; revision: RevisionRef; impact: EditorRemovalImpact; resolutions: Array<Record<string, unknown>>; setResolutions: (value: Array<Record<string, unknown>>) => void; errors: Record<string, string>; disabled: boolean }) { return <section aria-labelledby="removal-impact-heading" className="editor-impact"><h3 id="removal-impact-heading">Removal impact and resolutions</h3><p>{impact.incoming_references.length} incoming typed connection(s) require a decision.</p>{impact.incoming_references.map((reference) => { const current = resolutions.find((item) => item.reference_id === reference.reference_id); const action = current?.action === "accept_unresolved" && !reference.permitted_unresolved ? "" : String(current?.action ?? ""); const error = errors[`resolution-${reference.reference_id}`]; return <fieldset key={reference.reference_id} disabled={disabled}><legend>{reference.source_record_id} · {reference.relationship}</legend><label htmlFor={`resolution-${reference.reference_id}`}>Resolution for {reference.reference_id}</label><select id={`resolution-${reference.reference_id}`} required value={action} aria-invalid={!!error} aria-describedby={error ? `resolution-${reference.reference_id}-error` : undefined} onChange={(event) => setResolutions(resolutions.map((item) => item.reference_id === reference.reference_id ? { reference_id: reference.reference_id, action: event.target.value, replacement_target_record_id: event.target.value === "redirect" ? "" : null } : item))}><option value="" disabled>Choose a resolution</option><option value="remove_reference">Remove reference</option><option value="redirect">Redirect reference</option>{reference.permitted_unresolved && <option value="accept_unresolved">Accept unresolved</option>}</select>{error && <span id={`resolution-${reference.reference_id}-error`} className="error" role="alert">{error}</span>}{action === "redirect" && <RecordPicker campaignId={campaignId} revision={revision} label={`Replacement target for ${reference.reference_id}`} value={String(current?.replacement_target_record_id ?? "")} onChange={(target) => setResolutions(resolutions.map((item) => item.reference_id === reference.reference_id ? { ...item, replacement_target_record_id: target } : item))} />}</fieldset>; })}</section>; }
 function ProposalReview({ proposal, priorRevision, decisionAvailable, approve, reject, startCorrection, correctionMode, busy }: { proposal: EditorProposal; priorRevision: RevisionRef | null; decisionAvailable: boolean; approve: () => void; reject: () => void; startCorrection: () => void; correctionMode: boolean; busy: boolean }) {
   const correctionOf = correctionReference(proposal);
   const status = (proposal.core_proposal as { proposal?: { status?: string } } | undefined)?.proposal?.status ?? "needs_review";
