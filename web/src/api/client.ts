@@ -1,4 +1,5 @@
 import type { CampaignRevisionView, ContractEnvelope, GenerationAction, GenerationContext, GenerationEvent, GenerationView, OperationRequest, ProposalApprovalResult, ProposalView, ProviderReadiness, RecordView } from "../contracts/v2";
+import { digest, sha256 } from "./digest";
 
 export const frontendCapabilities = ["provider_readiness", "campaign_list", "campaign_read", "atlas_read", "retrieval_preview", "draft_read", "live_observe", "proposal_read", "revision_read"] as const;
 export type FrontendCapability = (typeof frontendCapabilities)[number];
@@ -7,14 +8,22 @@ export class ContractClient { public constructor(private readonly transport: Con
 export class ApiError extends Error { public constructor(public readonly status: number, public readonly code: string) { super(code); } }
 export interface SliceApi { readiness(): Promise<ProviderReadiness>; consent(identityDigest: string, retryKey: string): Promise<ProviderReadiness>; createCampaign(name: string, campaignId: string, retryKey: string): Promise<CampaignRevisionView>; readRevision(campaignId: string, revisionId: string): Promise<CampaignRevisionView>; readRecord(campaignId: string, revisionId: string, recordId: string): Promise<RecordView>; startGeneration(campaignId: string, revisionId: string, action: GenerationAction, prompt: string, generationId: string, context: GenerationContext, sessionId?: string): Promise<GenerationView>; resumeGeneration(generationId: string, after: number): Promise<GenerationEvent[]>; readGeneration(generationId: string): Promise<GenerationView>; createProposal(generation: GenerationView, subjectId: string, proposalId: string, retryKey: string): Promise<ProposalView>; readProposal(proposalId: string, proposalVersion: number): Promise<ProposalView>; correctProposal(proposal: ProposalView, afterContent: string, retryKey: string): Promise<ProposalView>; rejectProposal(proposal: ProposalView, retryKey: string): Promise<ProposalView>; approveProposal(proposal: ProposalView, expectedHead: string, retryKey: string): Promise<ProposalApprovalResult>; }
 
-const canonical = (value: unknown): string => { if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`; if (value !== null && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`; return JSON.stringify(value); };
-async function sha256(value: string): Promise<string> { const bytes = new TextEncoder().encode(value); return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((part) => part.toString(16).padStart(2, "0")).join(""); }
-async function digest(value: unknown): Promise<string> { return sha256(canonical(value)); }
 export async function recordGenerationContext(record: RecordView): Promise<GenerationContext> { return { scope: "record", record_id: record.record_id, content_digest: await sha256(record.content.replace(/\r\n/g, "\n").replace(/\r/g, "\n")) }; }
 let nextId = 0;
 let csrfToken = "";
+let csrfBootstrap: Promise<void> | undefined;
+export async function ensureCsrfToken(): Promise<void> {
+  if (csrfToken) return;
+  csrfBootstrap ??= (async () => {
+    const response = await fetch("/api/v1/provider/readiness", { headers: { Accept: "application/json" } });
+    csrfToken = response.headers.get("X-CSRF-Token") ?? csrfToken;
+    await response.json().catch(() => null);
+    if (!response.ok) throw new ApiError(response.status, "csrf_bootstrap_failed");
+  })().finally(() => { csrfBootstrap = undefined; });
+  return csrfBootstrap;
+}
 export function browserId(prefix: string): string { nextId += 1; return `${prefix}_${Date.now().toString(36)}_${nextId}`; }
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> { const response = await fetch(`/api/v1${path}`, { ...init, headers: { Accept: "application/json", "Content-Type": "application/json", ...(init?.method === "POST" && csrfToken ? { "X-CSRF-Token": csrfToken } : {}), ...init?.headers } }); csrfToken = response.headers.get("X-CSRF-Token") ?? csrfToken; const body = await response.json().catch(() => null) as { error?: { code?: string } } | null; if (!response.ok) throw new ApiError(response.status, body?.error?.code ?? "request_failed"); return body as T; }
+export async function requestJson<T>(path: string, init?: RequestInit): Promise<T> { const response = await fetch(`/api/v1${path}`, { ...init, headers: { Accept: "application/json", "Content-Type": "application/json", ...(init?.method === "POST" && csrfToken ? { "X-CSRF-Token": csrfToken } : {}), ...init?.headers } }); csrfToken = response.headers.get("X-CSRF-Token") ?? csrfToken; const body = await response.json().catch(() => null) as { error?: { code?: string } } | null; if (!response.ok) throw new ApiError(response.status, body?.error?.code ?? "request_failed"); return body as T; }
 function operation(name: OperationRequest["operation"], retryKey: string, payloadDigest: string, expectedRevision: string | null, subjectId?: string, intentDigest?: string): OperationRequest { return { contract_name: "operation_request", contract_version: 2, request_id: browserId("request"), operation: name, idempotency_key: retryKey, payload_digest: payloadDigest, expected_revision: expectedRevision, expected_workflow_version: null, ...(subjectId ? { subject_id: subjectId } : {}), ...(intentDigest ? { intent_digest: intentDigest } : {}) }; }
 
 export const httpSliceApi: SliceApi = {
