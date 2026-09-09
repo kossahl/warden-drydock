@@ -58,9 +58,19 @@ export interface StoredEndIntent extends EndInput {
 
 export type CaptureOutcome = "accepted" | "exact_replay" | "digest_conflict";
 
+export interface CaptureSyncResponse {
+  outcome: CaptureOutcome;
+  workflowVersion: number;
+}
+
+export interface EndSyncResponse {
+  readyForProposal: boolean;
+  workflowVersion: number;
+}
+
 export interface CaptureSyncTransport {
-  sendCapture(capture: StoredCapture): Promise<CaptureOutcome>;
-  sendEnd(end: StoredEndIntent): Promise<{ readyForProposal: boolean }>;
+  sendCapture(capture: StoredCapture, workflowVersion: number): Promise<CaptureSyncResponse>;
+  sendEnd(end: StoredEndIntent, workflowVersion: number): Promise<EndSyncResponse>;
 }
 
 export interface CaptureStore {
@@ -523,11 +533,14 @@ export class CaptureQueue {
 
   public async sync(sessionId: PublicId): Promise<CaptureSyncResult> {
     let captures = await this.store.listCaptures(sessionId);
+    let workflowVersion: number | undefined;
     for (const capture of captures) {
       if (capture.state === "Synced" || capture.state === "Needs attention") continue;
       await this.store.updateCapture(capture.key, "Syncing", null);
       try {
-        const outcome = await this.transport.sendCapture(capture);
+        const response = await this.transport.sendCapture(capture, workflowVersion ?? capture.workflowVersion);
+        workflowVersion = response.workflowVersion;
+        const outcome = response.outcome;
         const state = outcome === "accepted" || outcome === "exact_replay" ? "Synced" : outcome === "digest_conflict" ? "Needs attention" : "Needs attention";
         await this.store.updateCapture(capture.key, state, state === "Needs attention" ? "capture_outcome_invalid" : null);
       } catch (error) {
@@ -538,14 +551,18 @@ export class CaptureQueue {
     const end = await this.store.getEnd(sessionId);
     if (end && end.state !== "Synced" && end.state !== "Needs attention") {
       const byIdentity = new Map(captures.map((capture) => [`${capture.deviceId}\u0000${capture.operationId}`, capture]));
-      const missing = end.requiredOperationIds.some((receipt) => !byIdentity.has(`${receipt.deviceId}\u0000${receipt.operationId}`));
-      const pending = end.requiredOperationIds.some((receipt) => byIdentity.get(`${receipt.deviceId}\u0000${receipt.operationId}`)?.state !== "Synced");
-      if (missing) await this.store.updateEnd(end.key, "Needs attention", "required_capture_missing");
+      const localDeviceId = await this.store.getDeviceId();
+      const missingLocal = end.requiredOperationIds.some((receipt) => receipt.deviceId === localDeviceId && !byIdentity.has(`${receipt.deviceId}\u0000${receipt.operationId}`));
+      const pending = end.requiredOperationIds.some((receipt) => {
+        const capture = byIdentity.get(`${receipt.deviceId}\u0000${receipt.operationId}`);
+        return capture !== undefined && capture.state !== "Synced";
+      });
+      if (missingLocal) await this.store.updateEnd(end.key, "Needs attention", "required_capture_missing");
       else if (pending) await this.store.updateEnd(end.key, "Saved on device", "captures_pending");
       else {
         await this.store.updateEnd(end.key, "Syncing", null);
         try {
-          const result = await this.transport.sendEnd(end);
+          const result = await this.transport.sendEnd(end, workflowVersion ?? end.workflowVersion);
           await this.store.updateEnd(end.key, result.readyForProposal ? "Synced" : "Saved on device", result.readyForProposal ? null : "live_barrier_pending");
         } catch (error) {
           await this.store.updateEnd(end.key, isRetryableCaptureError(error) ? "Saved on device" : "Needs attention", error instanceof Error ? error.message : "end_sync_failed");

@@ -22,12 +22,12 @@ describe("live capture HTTP transport", () => {
       ok: true,
       status: 200,
       headers: new Headers(),
-      json: async () => ({ outcome: "accepted" }),
+      json: async () => ({ outcome: "accepted", session: { workflow_version: 3 } }),
     }) as unknown as Response);
     vi.stubGlobal("fetch", fetchMock);
     try {
       const capture = await new MemoryCaptureStore("device_alpha").saveCapture(input);
-      await expect(httpCaptureTransport.sendCapture(capture)).resolves.toBe("accepted");
+      await expect(httpCaptureTransport.sendCapture(capture, capture.workflowVersion)).resolves.toEqual({ outcome: "accepted", workflowVersion: 3 });
       const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
       const body = JSON.parse(init.body as string) as Record<string, unknown>;
       const operationRequest = body.operation_request as Record<string, unknown>;
@@ -47,7 +47,8 @@ describe("live capture HTTP transport", () => {
       expect(url).toBe("/api/v1/campaigns/campaign_alpha/live/session/captures");
       expect(operationRequest.payload_digest).toBe(await digest(expectedInput));
       expect(body).toMatchObject({ contract_name: "live_capture_request", contract_version: 2, ...expectedInput });
-      expect(operationRequest).toMatchObject({ operation: "live_capture", idempotency_key: capture.operationId, expected_workflow_version: capture.workflowVersion });
+      expect(operationRequest).toMatchObject({ operation: "live_capture", expected_workflow_version: capture.workflowVersion });
+      expect(operationRequest.idempotency_key).toMatch(/^live_capture_[a-f0-9]{64}$/);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -58,7 +59,7 @@ describe("live capture HTTP transport", () => {
       ok: true,
       status: 200,
       headers: new Headers(),
-      json: async () => ({ end_barrier: { ready_for_proposal: true } }),
+      json: async () => ({ workflow_version: 3, end_barrier: { ready_for_proposal: true } }),
     }) as unknown as Response);
     vi.stubGlobal("fetch", fetchMock);
     try {
@@ -73,7 +74,7 @@ describe("live capture HTTP transport", () => {
         operationId: "operation_end",
         requiredOperationIds: [{ deviceId: "device_alpha", operationId: "operation_alpha" }],
       });
-      await expect(httpCaptureTransport.sendEnd(end)).resolves.toEqual({ readyForProposal: true });
+      await expect(httpCaptureTransport.sendEnd(end, end.workflowVersion)).resolves.toEqual({ readyForProposal: true, workflowVersion: 3 });
       const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
       const body = JSON.parse(init.body as string) as Record<string, unknown>;
       const operationRequest = body.operation_request as Record<string, unknown>;
@@ -89,6 +90,29 @@ describe("live capture HTTP transport", () => {
       expect(url).toBe("/api/v1/campaigns/campaign_alpha/live/session/end");
       expect(operationRequest.payload_digest).toBe(await digest(expectedInput));
       expect(body).toMatchObject({ contract_name: "live_end_request", contract_version: 2, ...expectedInput });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("scopes capture idempotency keys to session, device, and operation", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ outcome: "accepted", session: { workflow_version: 2 } }),
+    }) as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const first = await new MemoryCaptureStore("device_alpha").saveCapture(input);
+      const second = await new MemoryCaptureStore("device_beta").saveCapture(input);
+      await httpCaptureTransport.sendCapture(first, first.workflowVersion);
+      await httpCaptureTransport.sendCapture(second, second.workflowVersion);
+      const firstCall = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      const secondCall = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+      const firstBody = JSON.parse(firstCall[1].body as string) as { operation_request: { idempotency_key: string } };
+      const secondBody = JSON.parse(secondCall[1].body as string) as { operation_request: { idempotency_key: string } };
+      expect(firstBody.operation_request.idempotency_key).not.toBe(secondBody.operation_request.idempotency_key);
     } finally {
       vi.unstubAllGlobals();
     }

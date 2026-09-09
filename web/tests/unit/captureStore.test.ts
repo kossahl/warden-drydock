@@ -52,9 +52,9 @@ describe("durable live capture queue", () => {
       sendCapture: vi.fn(async () => {
         attempts += 1;
         if (attempts === 1) throw Object.assign(new Error("offline"), { retryable: true });
-        return "accepted" as const;
+        return { outcome: "accepted" as const, workflowVersion: 2 };
       }),
-      sendEnd: vi.fn(async () => ({ readyForProposal: true })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 2 })),
     };
     const queue = new CaptureQueue(store, transport);
     await queue.capture(input);
@@ -66,8 +66,8 @@ describe("durable live capture queue", () => {
   it("marks a digest conflict as needing attention without deleting the capture", async () => {
     const store = new MemoryCaptureStore();
     const transport: CaptureSyncTransport = {
-      sendCapture: vi.fn(async () => "digest_conflict" as const),
-      sendEnd: vi.fn(async () => ({ readyForProposal: true })),
+      sendCapture: vi.fn(async () => ({ outcome: "digest_conflict" as const, workflowVersion: 1 })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 2 })),
     };
     const queue = new CaptureQueue(store, transport);
     const saved = await queue.capture(input);
@@ -84,9 +84,9 @@ describe("durable live capture queue", () => {
       sendCapture: vi.fn(async () => {
         captureAttempts += 1;
         if (captureAttempts === 1) throw Object.assign(new Error("offline"), { retryable: true });
-        return "exact_replay" as const;
+        return { outcome: "exact_replay" as const, workflowVersion: 2 };
       }),
-      sendEnd: vi.fn(async () => ({ readyForProposal: true })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 3 })),
     };
     const queue = new CaptureQueue(store, transport);
     const saved = await queue.capture(input);
@@ -94,6 +94,47 @@ describe("durable live capture queue", () => {
     expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Saved on device" });
     expect(transport.sendEnd).not.toHaveBeenCalled();
     expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Synced" });
+    expect(transport.sendEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("carries the returned workflow version through queued captures and the end barrier", async () => {
+    const store = new MemoryCaptureStore();
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async (_capture, workflowVersion) => ({
+        outcome: "accepted" as const,
+        workflowVersion: workflowVersion + 1,
+      })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 4 })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const first = await queue.capture(input);
+    const second = await queue.capture({ ...input, eventId: "event_beta", operationId: "operation_beta", text: "The lights failed." });
+    await queue.end({ ...input, operationId: undefined, requiredOperationIds: [
+      { deviceId: first.deviceId, operationId: first.operationId },
+      { deviceId: second.deviceId, operationId: second.operationId },
+    ] });
+
+    await queue.sync(input.sessionId);
+
+    expect(transport.sendCapture).toHaveBeenNthCalledWith(1, expect.objectContaining({ operationId: "operation_alpha" }), 1);
+    expect(transport.sendCapture).toHaveBeenNthCalledWith(2, expect.objectContaining({ operationId: "operation_beta" }), 2);
+    expect(transport.sendEnd).toHaveBeenCalledWith(expect.anything(), 3);
+  });
+
+  it("allows required acknowledgements from other devices through the end barrier", async () => {
+    const store = new MemoryCaptureStore("device_alpha");
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 2 })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 3 })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [
+      { deviceId: "device_remote", operationId: "operation_remote" },
+    ] });
+
+    const result = await queue.sync(input.sessionId);
+
+    expect(result.end).toEqual({ key: end.key, state: "Synced" });
     expect(transport.sendEnd).toHaveBeenCalledTimes(1);
   });
 

@@ -1,7 +1,7 @@
 import { digest } from "./digest";
 import { browserId, requestJson } from "./client";
 import type { LiveCaptureResult, LiveSessionView, OperationRequest } from "../contracts/v2";
-import type { CaptureOutcome, CaptureSyncTransport, StoredCapture, StoredEndIntent } from "../live/captureStore";
+import type { CaptureSyncTransport, StoredCapture, StoredEndIntent } from "../live/captureStore";
 
 function operation(operationName: OperationRequest["operation"], idempotencyKey: string, payloadDigest: string, workflowVersion: number): OperationRequest {
   return {
@@ -20,8 +20,13 @@ function path(campaignId: string, suffix: string): string {
   return `/campaigns/${encodeURIComponent(campaignId)}/live/session${suffix}`;
 }
 
+async function liveIdempotencyKey(kind: "capture" | "end", sessionId: string, deviceId: string, operationId: string): Promise<string> {
+  const identityDigest = await digest({ session_id: sessionId, device_id: deviceId, operation_id: operationId });
+  return `live_${kind}_${identityDigest}`;
+}
+
 export const httpCaptureTransport: CaptureSyncTransport = {
-  async sendCapture(capture: StoredCapture): Promise<CaptureOutcome> {
+  async sendCapture(capture: StoredCapture, workflowVersion: number) {
     const input = {
       campaign_id: capture.campaignId,
       session_id: capture.sessionId,
@@ -35,18 +40,19 @@ export const httpCaptureTransport: CaptureSyncTransport = {
       text: capture.text,
       record_id: capture.recordId,
     };
-    return (await requestJson<LiveCaptureResult>(path(capture.campaignId, "/captures"), {
+    const result = await requestJson<LiveCaptureResult>(path(capture.campaignId, "/captures"), {
       method: "POST",
       body: JSON.stringify({
         contract_name: "live_capture_request",
         contract_version: 2,
-        operation_request: operation("live_capture", capture.operationId, await digest(input), capture.workflowVersion),
+        operation_request: operation("live_capture", await liveIdempotencyKey("capture", capture.sessionId, capture.deviceId, capture.operationId), await digest(input), workflowVersion),
         ...input,
       }),
-    })).outcome;
+    });
+    return { outcome: result.outcome, workflowVersion: result.session.workflow_version };
   },
 
-  async sendEnd(end: StoredEndIntent): Promise<{ readyForProposal: boolean }> {
+  async sendEnd(end: StoredEndIntent, workflowVersion: number) {
     const input = {
       campaign_id: end.campaignId,
       session_id: end.sessionId,
@@ -61,10 +67,10 @@ export const httpCaptureTransport: CaptureSyncTransport = {
       body: JSON.stringify({
         contract_name: "live_end_request",
         contract_version: 2,
-        operation_request: operation("live_end", end.operationId, await digest(input), end.workflowVersion),
+        operation_request: operation("live_end", await liveIdempotencyKey("end", end.sessionId, end.deviceId, end.operationId), await digest(input), workflowVersion),
         ...input,
       }),
     });
-    return { readyForProposal: result.end_barrier?.ready_for_proposal === true };
+    return { readyForProposal: result.end_barrier?.ready_for_proposal === true, workflowVersion: result.workflow_version };
   },
 };
