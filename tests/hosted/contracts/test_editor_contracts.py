@@ -55,6 +55,13 @@ def _operation_digest(payload: dict) -> str:
     return canonical_digest({key: value for key, value in payload.items() if key not in excluded})
 
 
+def _diff_digest(payload: dict) -> str:
+    keys = ("cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest")
+    if "source_changes" in payload["diff"]:
+        keys += ("source_changes",)
+    return canonical_digest({key: payload["diff"][key] for key in keys})
+
+
 def _require_equal(left: object, right: object, category: str, path: str) -> None:
     if left != right:
         raise EditorSemanticError(category, path)
@@ -465,7 +472,7 @@ def _validate_proposal_equality(payload: dict, *, impact: dict | None = None) ->
         raise EditorSemanticError("unsafe_binding", "expected_campaign_head")
     if core["proposal_id"] != payload["proposal_id"] or core["proposal_version"] != payload["proposal_version"] or core["campaign_id"] != payload["campaign_id"]:
         raise EditorSemanticError("unsafe_binding", "proposal identity binding")
-    if payload["diff"]["diff_digest"] != canonical_digest({key: payload["diff"][key] for key in ("cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest")}):
+    if payload["diff"]["diff_digest"] != _diff_digest(payload):
         raise EditorSemanticError("idempotency_digest_conflict", "diff.diff_digest")
     if core["diff_digest"] != payload["diff"]["diff_digest"]:
         raise EditorSemanticError("unsafe_binding", "core_proposal.diff_digest")
@@ -722,6 +729,16 @@ class EditorContractTests(unittest.TestCase):
         transport_schema = json.loads((HTTP_ROOT / "v2" / "http.schema.json").read_text())
         self.assertEqual(transport_schema["$defs"]["error"], self.schema["$defs"]["error"])
         self.assertEqual(transport_schema["$defs"]["error_response"], self.schema["$defs"]["error_response"])
+        self.assertTrue(self.index["mutates_campaign_content"])
+        self.assertTrue(self.index["publishes_revisions"])
+        routes = json.loads((EDITOR_ROOT / "routes.json").read_text())["routes"]
+        workflow_conflict_routes = {
+            "editor_record_create", "editor_record_edit", "editor_record_remove",
+            "editor_proposal_correct", "editor_proposal_reject", "editor_proposal_approve",
+        }
+        for route in routes:
+            if route["id"] in workflow_conflict_routes:
+                self.assertIn("unsafe_binding", route["error_status"]["409"])
         for item in aggregate["packages"]:
             package_index = json.loads((HTTP_ROOT / item["index"]).read_text())
             for key in ("schema", "routes", "examples", "semantic_invariants"):
@@ -895,6 +912,25 @@ class EditorContractTests(unittest.TestCase):
         self.assertEqual(rejection["proposal"], approval["proposal"])
         self.assertEqual(self.by_name["approval_replay_response"], approval)
 
+    def test_live_shaped_source_changes_are_bound_into_diff_digest(self):
+        proposal = deepcopy(self.by_name["editor_proposal_view"])
+        card = proposal["diff"]["cards"][0]
+        proposal["diff"]["source_changes"] = [{
+            "change_id": card["change_id"],
+            "subject_record_id": card["subject_record_id"],
+            "change_type": "update",
+            "before_source": "before source",
+            "after_source": "after source",
+        }]
+        proposal["diff"]["diff_digest"] = _diff_digest(proposal)
+        proposal["core_proposal"]["proposal"]["diff_digest"] = proposal["diff"]["diff_digest"]
+        proposal["proposal_payload_digest"] = canonical_digest(
+            {key: value for key, value in proposal.items() if key != "proposal_payload_digest"}
+        )
+
+        self.assertFalse(list(Draft202012Validator(self.schema).iter_errors(proposal)))
+        validate_editor_semantics(proposal)
+
     def test_record_member_ids_are_unique_by_identifier_not_whole_object(self):
         for collection, identifier in (("fields", "field_id"), ("sections", "section_id"), ("connections", "connection_id")):
             value = deepcopy(self.by_name["edit_record_with_connections_request"])
@@ -956,7 +992,7 @@ class EditorContractTests(unittest.TestCase):
             {"change_id": removed["change_id"], "subject_id": "record-company", "change_type": "remove", "from_authority": "canon", "to_authority": "absent", "content_digest": removed["before"]["content_digest"]},
             {"change_id": resolved["change_id"], "subject_id": "record-station", "change_type": "update", "from_authority": "preparation", "to_authority": "preparation", "content_digest": "f" * 64},
         ]
-        proposal["diff"]["diff_digest"] = canonical_digest({key: proposal["diff"][key] for key in ("cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest")})
+        proposal["diff"]["diff_digest"] = _diff_digest(proposal)
         proposal["core_proposal"]["proposal"]["diff_digest"] = proposal["diff"]["diff_digest"]
         proposal["proposal_payload_digest"] = canonical_digest({key: value for key, value in proposal.items() if key != "proposal_payload_digest"})
         validate_editor_semantics(proposal, impact=impact)
@@ -976,7 +1012,7 @@ class EditorContractTests(unittest.TestCase):
 
         invalid_proposal = deepcopy(proposal)
         invalid_proposal["diff"]["cards"][1]["derived_backlinks"] = []
-        invalid_proposal["diff"]["diff_digest"] = canonical_digest({key: invalid_proposal["diff"][key] for key in ("cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest")})
+        invalid_proposal["diff"]["diff_digest"] = _diff_digest(invalid_proposal)
         invalid_proposal["core_proposal"]["proposal"]["diff_digest"] = invalid_proposal["diff"]["diff_digest"]
         invalid_proposal["proposal_payload_digest"] = canonical_digest({key: value for key, value in invalid_proposal.items() if key != "proposal_payload_digest"})
         with self.assertRaises(EditorSemanticError) as caught:
@@ -1006,7 +1042,7 @@ class EditorContractTests(unittest.TestCase):
 
         value = deepcopy(self.by_name["editor_proposal_view"])
         value["diff"]["cards"][1]["derived_backlinks"] = []
-        value["diff"]["diff_digest"] = canonical_digest({key: value["diff"][key] for key in ("cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest")})
+        value["diff"]["diff_digest"] = _diff_digest(value)
         value["core_proposal"]["proposal"]["diff_digest"] = value["diff"]["diff_digest"]
         value["proposal_payload_digest"] = canonical_digest({key: item for key, item in value.items() if key != "proposal_payload_digest"})
         with self.assertRaises(EditorSemanticError) as caught:
@@ -1038,7 +1074,7 @@ class EditorContractTests(unittest.TestCase):
             if payload.get("contract_name") == "editor_removal_impact":
                 self.assertEqual(payload["impact_digest"], canonical_digest({key:payload[key] for key in ("record", "outgoing_connections", "incoming_references")}))
             if "diff" in payload:
-                self.assertEqual(payload["diff"]["diff_digest"], canonical_digest({key:payload["diff"][key] for key in ("cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest")}))
+                self.assertEqual(payload["diff"]["diff_digest"], _diff_digest(payload))
             if payload.get("contract_name") == "editor_proposal_view":
                 self.assertEqual(payload["proposal_payload_digest"], canonical_digest({key:value for key,value in payload.items() if key != "proposal_payload_digest"}))
 
@@ -1302,7 +1338,7 @@ class EditorContractTests(unittest.TestCase):
         proposal = deepcopy(self.by_name["editor_proposal_view"])
         proposal["diff"]["cards"][0]["after"]["authority"] = "preparation"
         proposal["diff"]["cards"][0]["after"]["content_digest"] = content_digest(proposal["diff"]["cards"][0]["after"])
-        proposal["diff"]["diff_digest"] = canonical_digest({key: proposal["diff"][key] for key in ("cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest")})
+        proposal["diff"]["diff_digest"] = _diff_digest(proposal)
         proposal["core_proposal"]["proposal"]["diff_digest"] = proposal["diff"]["diff_digest"]
         proposal["proposal_payload_digest"] = canonical_digest({key: item for key, item in proposal.items() if key != "proposal_payload_digest"})
         with self.assertRaises(EditorSemanticError) as caught:

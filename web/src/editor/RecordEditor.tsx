@@ -150,6 +150,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   const proposalRequest = useRef(0);
   const impactRequest = useRef(0);
   const proposalRestoreIdentity = useRef<string | null>(null);
+  const proposalAwaitingBoundView = useRef(false);
   const proposalUrlIdentity = useRef<string | null>(null);
   const errorHeading = useRef<HTMLHeadingElement>(null);
   const dialogHeading = useRef<HTMLHeadingElement>(null);
@@ -176,7 +177,13 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       && proposal?.proposal_id === proposalId
       && proposal.proposal_version === proposalVersion;
     if (retryingUrlProposal) setProposalLoadNonce((current) => current + 1);
-    if (!preserveProposal) { proposalRestoreIdentity.current = null; setProposal(null); }
+    if (!preserveProposal) {
+      proposalRestoreIdentity.current = null;
+      proposalAwaitingBoundView.current = false;
+      setProposal(null);
+    } else {
+      proposalAwaitingBoundView.current = true;
+    }
     setView(null); setDraft(null);
     setBusy(false); setError(""); setMessage(""); setConflict(false); setImpact(null); setCorrectionMode(false); setCorrectionParentRevision(null); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
     const sourceRecordId = isCreate ? "campaign-main" : recordId;
@@ -225,7 +232,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       return;
     }
     setProposalLoading(true);
-    setProposal(null); proposalRestoreIdentity.current = null; setCorrectionMode(false); setMode("edit"); setImpact(null); setResolutions([]);
+    setProposal(null); proposalRestoreIdentity.current = null; proposalAwaitingBoundView.current = false; setCorrectionMode(false); setMode("edit"); setImpact(null); setResolutions([]);
     let active = true;
     void httpEditorApi.proposal(proposalId, proposalVersion).then((value) => {
       if (!active) return;
@@ -237,7 +244,10 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       if (!matchesEditor) throw new Error("proposal_binding_mismatch");
       proposalRestoreIdentity.current = editorIdentity;
       const candidate = reviewedProposalCandidate(value);
-      if (candidate) setDraft((current) => completeRecord(candidate, definitionSet(view)));
+      if (candidate) {
+        if (view) setDraft((current) => completeRecord(candidate, definitionSet(view)));
+        else proposalAwaitingBoundView.current = true;
+      }
       setProposal(value);
       setProposalLoading(false);
       setMessage("Submitted proposal restored for review.");
@@ -248,6 +258,16 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
     });
     return () => { active = false; };
   }, [campaignId, editorIdentity, isCreate, proposalId, proposalVersion, proposalLoadNonce, recordId, revisionId]);
+  useEffect(() => {
+    if (!view || !proposal || !proposalAwaitingBoundView.current) return;
+    const candidate = reviewedProposalCandidate(proposal);
+    if (!candidate) {
+      proposalAwaitingBoundView.current = false;
+      return;
+    }
+    proposalAwaitingBoundView.current = false;
+    setDraft(completeRecord(candidate, definitionSet(view)));
+  }, [editorIdentity, proposal, view]);
   const correctionOf = proposal ? correctionReference(proposal) : null;
   useEffect(() => {
     setCorrectionParentRevision(null);

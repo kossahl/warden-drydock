@@ -70,7 +70,9 @@ class Connection:
 
 
 def _section_lines(text: str, heading: str) -> list[tuple[int, str]]:
-    lines = text.split("\n")
+    # Normalize every line terminator before parsing. CRLF still represents one
+    # logical line, while a bare CR is an actual line boundary for legacy files.
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     start = None
     for index, line in enumerate(lines):
         if line.strip().casefold() == f"## {heading}".casefold():

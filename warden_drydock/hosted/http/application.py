@@ -1793,9 +1793,8 @@ class SliceApplication:
             raise HTTPFailure(409, "proposal_approval_conflict", "record_already_exists", "editor_proposal", self._request_id(payload))
 
         change_id = self._id("change", campaign_id, revision_id, record_id or candidate["record_id"], kind)
-        section_labels = None
-        if kind == "create":
-            section_labels = self._editor_definition(campaign_id, revision_id)["records"][candidate["record_type"]]["section_labels"]
+        editor_definition = self._editor_definition(campaign_id, revision_id)
+        section_labels = None if kind == "remove" else editor_definition["records"][candidate["record_type"]]["section_labels"]
         change = change_for(
             before, candidate, change_id,
             ChangeKind.DELETE if kind == "remove" else (ChangeKind.CREATE if before is None else ChangeKind.UPDATE),
@@ -1841,7 +1840,8 @@ class SliceApplication:
                     source["connections"] = [item for item in source["connections"] if item["connection_id"] != reference["connection_id"]]
                 source["content_digest"] = document_digest(source)
             for source_record_id, (source, source_content, first_connection_id) in source_mutations.items():
-                source_change = change_for(source_content, source, self._id("change", campaign_id, revision_id, source_record_id, first_connection_id), ChangeKind.UPDATE)
+                source_labels = editor_definition["records"][source["record_type"]]["section_labels"]
+                source_change = change_for(source_content, source, self._id("change", campaign_id, revision_id, source_record_id, first_connection_id), ChangeKind.UPDATE, section_labels=source_labels)
                 changes.append(source_change)
                 source_before[source_change.change_id] = source_content
 

@@ -19,6 +19,6 @@
     "http_transport": "../../v2/index.json",
     "compatibility_mode": "versioned_additive_extension"
   },
-  "mutates_campaign_content": false,
-  "publishes_revisions": false
+  "mutates_campaign_content": true,
+  "publishes_revisions": true
 }

@@ -176,6 +176,7 @@ def _connection_markers(content: str) -> dict[int, str]:
 def _connection_marker_occurrences(content: str) -> dict[int, tuple[int, str]]:
     """Map each typed connection line to its associated marker line and ID."""
     markers: dict[int, tuple[int, str]] = {}
+    used_ids: set[str] = set()
     in_connections = False
     pending: tuple[int, str] | None = None
     for line_number, line in enumerate(content.split("\n"), 1):
@@ -194,7 +195,8 @@ def _connection_marker_occurrences(content: str) -> dict[int, tuple[int, str]]:
             continue
         if line.lstrip().startswith("-"):
             if pending is not None:
-                markers[line_number] = pending
+                marker_line, marker_id = pending
+                markers[line_number] = (marker_line, _unique_public_id(marker_id, used_ids))
             pending = None
         elif line.strip() and not line.lstrip().startswith("<!--"):
             pending = None
@@ -205,12 +207,27 @@ def _heading_id(value: str) -> str:
     return re.sub(r"[^a-z0-9-]+", "-", value.lower()).strip("-") or "summary"
 
 
+def _unique_public_id(base: str, used: set[str]) -> str:
+    candidate = base
+    suffix = 2
+    while candidate in used:
+        suffix_text = f"_{suffix}"
+        candidate = f"{base[:80 - len(suffix_text)].rstrip('_')}{suffix_text}"
+        suffix += 1
+    used.add(candidate)
+    return candidate
+
+
 def _unique_section_id(heading: str, used: set[str]) -> str:
     base = _heading_id(heading)
+    if len(base) > 80:
+        digest = hashlib.sha256(heading.encode("utf-8")).hexdigest()[:12]
+        base = f"{base[:67].rstrip('-')}-{digest}"
     section_id = base
     suffix = 2
     while section_id in used:
-        section_id = f"{base}-{suffix}"
+        suffix_text = f"-{suffix}"
+        section_id = f"{base[:80 - len(suffix_text)].rstrip('-')}{suffix_text}"
         suffix += 1
     used.add(section_id)
     return section_id
@@ -271,7 +288,10 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
     connections, _ = parse_connections(normalized_content, source_id=record_id, path=None)  # type: ignore[arg-type]
     conn = []
     for index, item in enumerate(connections, 1):
-        connection_id = connection_markers.get(item.line, f"connection_{index}")
+        connection_id = _unique_public_id(
+            connection_markers.get(item.line, f"connection_{index}"),
+            {item["connection_id"] for item in conn},
+        )
         _id(connection_id, public=True)
         conn.append({"connection_id": connection_id, "target_record_id": item.target_id,
                      "relationship": item.relationship, "state": item.state,
@@ -342,7 +362,11 @@ def _connection_line(connection: Mapping[str, Any]) -> str:
     )
 
 
-def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
+def mutate_document(
+    before: str,
+    candidate: Mapping[str, Any],
+    section_labels: Mapping[str, str] | None = None,
+) -> str:
     """Apply a typed candidate while retaining the source document's layout.
 
     The editor never treats Markdown as an input patch. It uses the parsed
@@ -350,6 +374,7 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
     values. Comments, heading spelling, section order, and unrelated bytes stay
     in place. A no-op returns the original bytes exactly.
     """
+    labels = section_labels or {}
     old = parse_document(before, candidate["record_id"], candidate.get("record_type"))
     new = _document(candidate)
     old_section_ids = [item["section_id"] for item in old["sections"]]
@@ -376,10 +401,10 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
     source = before.replace("\r\n", "\n").replace("\r", "\n")
     lines = _split_lf_lines(source)
     if not lines or not source.startswith("---\n"):
-        return serialize_document(new).replace("\n", newline)
+        return serialize_document(new, labels).replace("\n", newline)
     end = next((index for index, line in enumerate(lines[1:], 1) if line.rstrip("\n") == "---"), None)
     if end is None:
-        return serialize_document(new).replace("\n", newline)
+        return serialize_document(new, labels).replace("\n", newline)
 
     metadata_keys = {
         "id": new["record_id"], "type": new["record_type"],
@@ -497,7 +522,7 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         connection_index = next((i for i, line in enumerate(lines) if line.strip().casefold() == "## connections"), len(lines))
         inserted: list[str] = []
         for item in missing:
-            inserted.extend([f"## {item['section_id']}{newline}"])
+            inserted.extend([f"## {labels.get(item['section_id'], item['section_id'])}{newline}"])
             if item["body"]:
                 inserted.extend(_split_lf_lines(normalize_text(item["body"])))
                 if not inserted[-1].endswith("\n"):
@@ -608,7 +633,7 @@ def change_for(
 ) -> ExactTextChange:
     value = _document(candidate)
     replacement = "" if kind is ChangeKind.DELETE else (
-        mutate_document(before, value) if before is not None else serialize_document(value, section_labels)
+        mutate_document(before, value, section_labels) if before is not None else serialize_document(value, section_labels)
     )
     return ExactTextChange(change_id, value["record_id"], text_digest(before) if before is not None else None, replacement, kind, value["record_type"])
 

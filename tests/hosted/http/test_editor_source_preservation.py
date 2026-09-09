@@ -610,6 +610,21 @@ Keep this record.
         with self.assertRaisesRegex(ValueError, "invalid_connection_context"):
             serialize_document(candidate)
 
+    def test_parse_connections_normalizes_crlf_and_bare_cr_line_terminators(self):
+        source = (
+            "## Connections\r\n\r\n"
+            "- `guards` -> [[record-gate]] (`current`) — Watches the gate.\r"
+            "- `supports` -> [[record-hall]] (`current`) — Checks the hall.\r\n"
+        )
+
+        connections, errors = parse_connections(
+            source, source_id="record-main", path=Path("record-main.md")
+        )
+
+        self.assertEqual([], errors)
+        self.assertEqual(["record-gate", "record-hall"], [item.target_id for item in connections])
+        self.assertEqual([3, 4], [item.line for item in connections])
+
     def test_public_connection_ids_require_three_characters(self):
         candidate = {
             "record_id": "record-main",
@@ -734,6 +749,57 @@ Keep this record.
 
         self.assertEqual(candidate["sections"], parse_document(serialized, "record-main", "npc")["sections"])
 
+    def test_missing_sections_use_bound_adapter_labels_during_source_mutation(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Summary
+Keep this record.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["sections"].append({"section_id": "current-state", "body": "Ready for review.\n"})
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(
+            source,
+            candidate,
+            {"current-state": "Current state"},
+        )
+
+        self.assertIn("## Current state\nReady for review.\n", result)
+        self.assertNotIn("## current-state", result)
+        self.assertEqual(candidate["sections"], parse_document(result, "record-main", "npc")["sections"])
+
+    def test_long_authored_headings_use_stable_bounded_section_ids(self):
+        heading = "A " + ("very long authored heading " * 5)
+        source = f"""---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## {heading}
+Keep this record.
+"""
+        first = parse_document(source, "record-main", "npc")
+        second = parse_document(source, "record-main", "npc")
+
+        self.assertEqual(first["sections"], second["sections"])
+        self.assertLessEqual(len(first["sections"][0]["section_id"]), 80)
+        self.assertNotEqual(heading.lower().replace(" ", "-"), first["sections"][0]["section_id"])
+
+        first["sections"][0]["body"] = "Updated record."
+        first["content_digest"] = document_digest(first)
+        result = mutate_document(source, first)
+        self.assertEqual(first["sections"], parse_document(result, "record-main", "npc")["sections"])
+
     def test_new_connections_section_preserves_occurrence_ids(self):
         source = """---
 id: record-main
@@ -761,6 +827,37 @@ Keep this record.
 
         self.assertIn("<!-- drydock:connection-id=custom_occurrence -->", result)
         self.assertEqual(candidate["connections"], round_tripped["connections"])
+
+    def test_duplicate_connection_markers_get_unique_occurrence_ids(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Connections
+
+<!-- drydock:connection-id=duplicate_marker -->
+- `guards` -> [[record-gate]] (`current`) — Watches the gate.
+<!-- drydock:connection-id=duplicate_marker -->
+- `supports` -> [[record-hall]] (`current`) — Checks the hall.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+
+        self.assertEqual(
+            ["duplicate_marker", "duplicate_marker_2"],
+            [item["connection_id"] for item in candidate["connections"]],
+        )
+
+        candidate["connections"][1]["context"] = "Checks the hall carefully."
+        candidate["content_digest"] = document_digest(candidate)
+        result = mutate_document(source, candidate)
+
+        self.assertIn("<!-- drydock:connection-id=duplicate_marker -->", result)
+        self.assertIn("<!-- drydock:connection-id=duplicate_marker_2 -->", result)
+        self.assertEqual(candidate["connections"], parse_document(result, "record-main", "npc")["connections"])
 
     def test_mutating_connection_preserves_unrelated_markdown_bullets(self):
         source = """---
