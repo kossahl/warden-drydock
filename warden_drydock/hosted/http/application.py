@@ -1583,6 +1583,8 @@ class SliceApplication:
     @staticmethod
     def _editor_transition_changes(before: dict | None, after: dict | None, change_id: str) -> tuple[list[dict], list[dict]]:
         if after is None:
+            if before is not None and before["authority"] in {"canon", "revealed"}:
+                return ([{"change_id": change_id, "record_id": before["record_id"], "from": before["authority"], "to": "absent", "explicit_in_diff": True, "warden_approval_required": True}], [])
             return [], []
         authority = []
         visibility = []
@@ -1791,7 +1793,14 @@ class SliceApplication:
             raise HTTPFailure(409, "proposal_approval_conflict", "record_already_exists", "editor_proposal", self._request_id(payload))
 
         change_id = self._id("change", campaign_id, revision_id, record_id or candidate["record_id"], kind)
-        change = change_for(before, candidate, change_id, ChangeKind.DELETE if kind == "remove" else (ChangeKind.CREATE if before is None else ChangeKind.UPDATE))
+        section_labels = None
+        if kind == "create":
+            section_labels = self._editor_definition(campaign_id, revision_id)["records"][candidate["record_type"]]["section_labels"]
+        change = change_for(
+            before, candidate, change_id,
+            ChangeKind.DELETE if kind == "remove" else (ChangeKind.CREATE if before is None else ChangeKind.UPDATE),
+            section_labels=section_labels,
+        )
         changes = [change]
         source_before = {change.change_id: before}
         removal_impact = None
@@ -2002,7 +2011,7 @@ class SliceApplication:
         campaign, manifest = self._campaign_revision(campaign_id, revision_id)
         removed = parse_document(self._record(campaign_id, revision_id, record_id)["content"], record_id)
         incoming = []
-        for source_record_id in self._editor_record_ids(campaign_id, revision_id):
+        for source_record_id in sorted(self._editor_record_ids(campaign_id, revision_id)):
             if source_record_id == record_id:
                 continue
             source = self._record(campaign_id, revision_id, source_record_id)

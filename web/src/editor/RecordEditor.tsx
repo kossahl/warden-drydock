@@ -304,7 +304,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
 
   const update = (next: Partial<EditorRecord>) => setDraft((current) => current ? { ...current, ...next } : current);
   const definitions = definitionSet(view);
-  const validate = () => {
+  const validate = (rejectNoop = false) => {
     if (!draft) return false;
     const next: Record<string, string> = {};
     const definition = definitions.recordDefinitions[draft.record_type];
@@ -320,6 +320,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       return fieldValues.get(field);
     };
     if (!/^[a-z0-9][a-z0-9-]*$/.test(draft.record_id)) next.record_id = "Use lowercase letters, numbers, and hyphens.";
+    else if (draft.record_id.length > 80) next.record_id = "Record ID must be 80 characters or fewer.";
     if (!draft.displayed_name.trim()) next.displayed_name = "Displayed name is required.";
     else if (draft.displayed_name.length > 200) next.displayed_name = "Displayed name must be 200 characters or fewer.";
     Object.entries(definition?.requiredValues ?? {}).forEach(([field, requiredValue]) => {
@@ -347,9 +348,18 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       if (!definitions.connectionStates.includes(connection.state)) next[connectionKey] = "This connection state is not supported by the bound adapter.";
       if (!connection.context.trim()) next[`${connectionKey}-context`] = "Connection context is required.";
       else if (/[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029]/u.test(connection.context)) next[`${connectionKey}-context`] = "Connection context must be a single line.";
-      else if (connection.context.length > 2000) next[`${connectionKey}-context`] = "Connection context must be 2,000 characters or fewer.";
+      else if (connection.context.length > 200) next[`${connectionKey}-context`] = "Connection context must be 200 characters or fewer.";
       else if (connection.context !== connection.context.trim()) next[`${connectionKey}-context`] = "Connection context must not have leading or trailing whitespace.";
     });
+    if (rejectNoop && mode === "edit" && !isCreate && view && Object.keys(next).length === 0) {
+      const original = completeRecord(clone(view.record), definitions);
+      const withoutDigest = (record: EditorRecord) => ({ ...record, content_digest: null });
+      if (JSON.stringify(withoutDigest(draft)) === JSON.stringify(withoutDigest(original))) {
+        setMessage("No changes to submit.");
+        setFieldErrors(next);
+        return false;
+      }
+    }
     setFieldErrors(next); return Object.keys(next).length === 0;
   };
   const targetVisibilityErrors = async (): Promise<Record<string, string>> => {
@@ -436,7 +446,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   };
   const save = async () => {
     if (mode === "remove" && !removalReady) return;
-    if (!view || !draft || !view.editable || !validate()) return;
+    if (!view || !draft || !view.editable || !validate(true)) return;
     const request = { sequence: proposalRequest.current + 1, editorIdentity };
     proposalRequest.current = request.sequence;
     const isCurrentRequest = () => proposalRequest.current === request.sequence && editorIdentityRef.current === request.editorIdentity;

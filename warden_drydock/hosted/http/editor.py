@@ -288,8 +288,9 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
     return _document(value)
 
 
-def serialize_document(value: Mapping[str, Any]) -> str:
+def serialize_document(value: Mapping[str, Any], section_labels: Mapping[str, str] | None = None) -> str:
     value = _document(value)
+    labels = section_labels or {}
     lines = [
         "---",
         f"id: {_format_frontmatter_value(value['record_id'])}",
@@ -306,7 +307,7 @@ def serialize_document(value: Mapping[str, Any]) -> str:
         lines.append(f"{field['field_id']}: {_format_frontmatter_value(scalar)}")
     lines += ["---", ""]
     for section in value["sections"]:
-        lines += [f"## {section['section_id']}", normalize_text(section["body"])]
+        lines += [f"## {labels.get(section['section_id'], section['section_id'])}", normalize_text(section["body"])]
     if value["connections"]:
         lines += ["## Connections", ""]
         for item in value["connections"]:
@@ -357,6 +358,18 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
     new_common = [section_id for section_id in new_section_ids if section_id in old_section_ids]
     if old_common != new_common:
         raise ValueError("editor_section_reordering_not_allowed")
+    old_field_ids = [item["field_id"] for item in old["fields"]]
+    new_field_ids = [item["field_id"] for item in new["fields"]]
+    expected_field_ids = [field_id for field_id in old_field_ids if field_id in new_field_ids]
+    expected_field_ids += [field_id for field_id in new_field_ids if field_id not in old_field_ids]
+    if new_field_ids != expected_field_ids:
+        raise ValueError("editor_field_reordering_not_allowed")
+    old_connection_ids = [item["connection_id"] for item in old["connections"]]
+    new_connection_ids = [item["connection_id"] for item in new["connections"]]
+    expected_connection_ids = [connection_id for connection_id in old_connection_ids if connection_id in new_connection_ids]
+    expected_connection_ids += [connection_id for connection_id in new_connection_ids if connection_id not in old_connection_ids]
+    if new_connection_ids != expected_connection_ids:
+        raise ValueError("editor_connection_reordering_not_allowed")
     if _typed_equal(old, new):
         return before
     newline = "\r\n" if "\r\n" in before else "\n"
@@ -585,10 +598,17 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
     return result.replace("\n", newline) if newline != "\n" else result
 
 
-def change_for(before: str | None, candidate: Mapping[str, Any], change_id: str, kind: ChangeKind) -> ExactTextChange:
+def change_for(
+    before: str | None,
+    candidate: Mapping[str, Any],
+    change_id: str,
+    kind: ChangeKind,
+    *,
+    section_labels: Mapping[str, str] | None = None,
+) -> ExactTextChange:
     value = _document(candidate)
     replacement = "" if kind is ChangeKind.DELETE else (
-        mutate_document(before, value) if before is not None else serialize_document(value)
+        mutate_document(before, value) if before is not None else serialize_document(value, section_labels)
     )
     return ExactTextChange(change_id, value["record_id"], text_digest(before) if before is not None else None, replacement, kind, value["record_type"])
 
@@ -689,6 +709,18 @@ def validate_adapter_document(candidate: dict, definition: dict, before: dict | 
         new_common = [section_id for section_id in new_section_ids if section_id in old_section_ids]
         if old_common != new_common:
             raise ValueError("editor_section_reordering_not_allowed")
+        old_field_ids = [item["field_id"] for item in before["fields"]]
+        new_field_ids = [item["field_id"] for item in candidate["fields"]]
+        expected_field_ids = [field_id for field_id in old_field_ids if field_id in new_field_ids]
+        expected_field_ids += [field_id for field_id in new_field_ids if field_id not in old_field_ids]
+        if new_field_ids != expected_field_ids:
+            raise ValueError("editor_field_reordering_not_allowed")
+        old_connection_ids = [item["connection_id"] for item in before["connections"]]
+        new_connection_ids = [item["connection_id"] for item in candidate["connections"]]
+        expected_connection_ids = [connection_id for connection_id in old_connection_ids if connection_id in new_connection_ids]
+        expected_connection_ids += [connection_id for connection_id in new_connection_ids if connection_id not in old_connection_ids]
+        if new_connection_ids != expected_connection_ids:
+            raise ValueError("editor_connection_reordering_not_allowed")
     for collection, key in (("fields", "field_id"), ("sections", "section_id")):
         old = {item[key]: item for item in before[collection]} if before else {}
         new = {item[key]: item for item in candidate[collection]}

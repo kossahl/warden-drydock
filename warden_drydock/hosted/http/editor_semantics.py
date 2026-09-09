@@ -211,6 +211,10 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
                 actual_authority.add((card["change_id"], card["subject_record_id"], before_authority, after["authority"]))
             if isinstance(before, dict) and before["visibility"] != after["visibility"]:
                 actual_visibility.add((card["change_id"], card["subject_record_id"], json.dumps(before["visibility"], sort_keys=True), json.dumps(after["visibility"], sort_keys=True)))
+        elif card["kind"] == "record_removed" and isinstance(card.get("before"), dict):
+            before = card["before"]
+            if before["authority"] in {"canon", "revealed"}:
+                actual_authority.add((card["change_id"], card["subject_record_id"], before["authority"], "absent"))
     declared_authority = {(x["change_id"], x["record_id"], x["from"], x["to"]) for x in value["diff"]["authority_changes"]}
     declared_visibility = {(x["change_id"], x["record_id"], json.dumps(x["before"], sort_keys=True), json.dumps(x["after"], sort_keys=True)) for x in value["diff"]["visibility_changes"]}
     _equal(actual_authority, declared_authority, "proposal_validation_failure", "authority_changes")
@@ -221,7 +225,8 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
         card = next((card for card in cards if card["change_id"] == change["change_id"]), None)
         before_authority = card["before"]["authority"] if isinstance(card, dict) and isinstance(card.get("before"), dict) else "absent"
         after = card.get("after") if isinstance(card, dict) else None
-        if card is None or not isinstance(after, dict) or (change["record_id"], change["from"], change["to"]) != (card["subject_record_id"], before_authority, after["authority"]):
+        after_authority = "absent" if isinstance(card, dict) and card.get("kind") == "record_removed" and after is None else after.get("authority") if isinstance(after, dict) else None
+        if card is None or after_authority is None or (change["record_id"], change["from"], change["to"]) != (card["subject_record_id"], before_authority, after_authority):
             _fail("unsafe_binding", "authority change card")
     for change in value["diff"]["visibility_changes"]:
         card = next((card for card in cards if card["change_id"] == change["change_id"]), None)

@@ -995,6 +995,55 @@ Second body.
         with self.assertRaisesRegex(ValueError, "editor_section_reordering_not_allowed"):
             mutate_document(source, candidate)
 
+    def test_field_reordering_is_rejected(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+alpha: first
+beta: second
+---
+
+## Summary
+Keep this record.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["fields"] = list(reversed(candidate["fields"]))
+        candidate["displayed_name"] = "Updated Keeper"
+        candidate["content_digest"] = document_digest(candidate)
+
+        with self.assertRaisesRegex(ValueError, "editor_field_reordering_not_allowed"):
+            mutate_document(source, candidate)
+
+    def test_connection_reordering_is_rejected(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Summary
+Keep this record.
+
+## Connections
+
+<!-- drydock:connection-id=connection_alpha -->
+- `connected-to` -> [[record-gate]] (`current`) — Watches the gate.
+<!-- drydock:connection-id=connection_beta -->
+- `connected-to` -> [[record-port]] (`current`) — Watches the port.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["connections"] = list(reversed(candidate["connections"]))
+        candidate["displayed_name"] = "Updated Keeper"
+        candidate["content_digest"] = document_digest(candidate)
+
+        with self.assertRaisesRegex(ValueError, "editor_connection_reordering_not_allowed"):
+            mutate_document(source, candidate)
+
     def test_section_reordering_with_new_section_is_rejected(self):
         source = """---
 id: record-main
@@ -1071,6 +1120,25 @@ Keep this record.
 
         self.assertEqual(candidate["displayed_name"], round_tripped["displayed_name"])
         self.assertEqual(candidate["connections"], round_tripped["connections"])
+
+    def test_serialized_sections_use_bound_authored_labels(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Current state
+Keep this record.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+
+        serialized = serialize_document(candidate, {"current-state": "Current state"})
+
+        self.assertIn("## Current state\n", serialized)
+        self.assertNotIn("## current-state\n", serialized)
 
     def test_removed_connection_keeps_surviving_occurrence_id(self):
         source = """---

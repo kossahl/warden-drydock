@@ -178,6 +178,35 @@ class EditorBackendTests(unittest.TestCase):
         core_change = proposal["core_proposal"]["proposal"]["changes"][0]
         self.assertEqual(("absent", "preparation"), (core_change["from_authority"], core_change["to_authority"]))
 
+    def test_canon_removal_reports_authority_loss_through_approval(self):
+        revision = self._create_record("record-canon", authority="canon")
+        _, impact = self.app.editor_removal_impact("campaign_alpha", revision, "record-canon")
+        workflow = self.app._editor_version("campaign_alpha")
+        operation = {
+            "contract_name": "editor_operation_request", "contract_version": 1,
+            "request_id": "request_remove_canon", "operation": "editor_record_remove",
+            "idempotency_key": "idem_remove_canon", "payload_digest": "0" * 64,
+            "expected_revision": revision, "expected_editor_workflow_version": workflow,
+            "subject_id": "record-canon",
+        }
+        payload = {
+            "contract_name": "editor_record_remove_request", "contract_version": 1,
+            "operation_request": operation, "binding": impact["binding"],
+            "impact_digest": impact["impact_digest"],
+            "impact_binding": {"binding": impact["binding"], "impact_digest": impact["impact_digest"]},
+            "resolutions": [],
+        }
+        operation["payload_digest"] = canonical_digest(request_digest_input(payload))
+
+        _, proposal = self.app.editor_record_remove("campaign_alpha", revision, "record-canon", payload)
+
+        self.assertEqual(1, len(proposal["diff"]["authority_changes"]))
+        self.assertEqual(("canon", "absent"), (
+            proposal["diff"]["authority_changes"][0]["from"],
+            proposal["diff"]["authority_changes"][0]["to"],
+        ))
+        self._approve_editor(proposal)
+
     def test_stale_record_digest_fails_before_mutation(self):
         revision = self.app.workflow.head("campaign_alpha")
         view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
