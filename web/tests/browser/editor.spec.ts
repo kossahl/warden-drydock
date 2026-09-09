@@ -183,6 +183,7 @@ test("approval conflicts close the dialog and focus the editor error", async ({ 
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   const editor = page.locator(".editor");
+  await editor.getByLabel("Displayed name").fill("Edited before approval");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   await editor.locator(".editor-review").getByRole("button", { name: "Approve and publish exact proposal" }).click();
   await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
@@ -211,6 +212,7 @@ test("rejection transport errors close the dialog and focus the editor error", a
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   const editor = page.locator(".editor");
+  await editor.getByLabel("Displayed name").fill("Edited before rejection");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   await editor.locator(".editor-review").getByRole("button", { name: "Reject exact proposal" }).click();
   const rejectionButton = page.getByRole("dialog").getByRole("button", { name: "Reject exact proposal" });
@@ -245,10 +247,12 @@ test("same-head workflow conflict reloads the editor before retrying", async ({ 
   });
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   const editor = page.locator(".editor");
+  await editor.getByLabel("Displayed name").fill("Edited before reload");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   await editor.getByRole("button", { name: "Reload current head" }).click();
   await expect(editor.getByRole("status")).toHaveText("Head · workflow 2");
   await expect(page).toHaveURL(/records\/record-one\?revision=revision_two$/);
+  await editor.getByLabel("Displayed name").fill("Edited after reload");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   await expect(editor.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
   expect(editorReads).toBe(2);
@@ -288,6 +292,7 @@ test("editor action errors focus the editor error without reducing accessibility
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
   await expect(editor.getByRole("heading", { name: "Edit record" })).toBeVisible();
+  await editor.getByLabel("Displayed name").fill("Edited before failure");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   const errorHeading = editor.getByRole("heading", { name: "Editor error" });
   await expect(errorHeading).toBeVisible();
@@ -479,6 +484,7 @@ test("save does not post after target visibility completes on another route", as
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
+  await editor.getByLabel("Displayed name").fill("Edited before visibility lookup");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   await targetReadBegan;
   await page.getByRole("link", { name: "Legacy Ship" }).first().click();
@@ -525,6 +531,7 @@ test("correction does not post after target visibility completes on another rout
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
+  await editor.getByLabel("Displayed name").fill("Edited before correction");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   await editor.getByRole("button", { name: "Create correction/rebase" }).click();
   await editor.getByRole("button", { name: "Submit correction/rebase" }).click();

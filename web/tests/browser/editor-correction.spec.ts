@@ -111,6 +111,7 @@ test("correction validation failure preserves entered content and blocks approva
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   const panel = editor(page);
+  await panel.getByLabel("Displayed name").fill("Edited before correction");
   await panel.getByRole("button", { name: "Save as proposal" }).click();
   await panel.getByRole("button", { name: "Create correction/rebase" }).click();
   await panel.getByLabel("Displayed name").fill("Entered correction survives validation");
@@ -145,6 +146,7 @@ test("stale correction reads cannot overwrite a record after SPA navigation", as
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   const panel = editor(page);
+  await panel.getByLabel("Displayed name").fill("Edited before correction");
   await panel.getByRole("button", { name: "Save as proposal" }).click();
   const correctionReadStarted = page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname.endsWith("/records/record-one/editor"));
   await panel.getByRole("button", { name: "Create correction/rebase" }).click();
@@ -256,6 +258,7 @@ test("stale decision responses cannot change a different SPA record", async ({ p
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   const panel = editor(page);
+  await panel.getByLabel("Displayed name").fill("Edited before approval");
   await panel.getByRole("button", { name: "Save as proposal" }).click();
   await panel.getByRole("button", { name: "Approve and publish exact proposal" }).click();
   await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
@@ -467,6 +470,7 @@ test("stale correction responses cannot install a proposal after SPA navigation"
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   const panel = editor(page);
+  await panel.getByLabel("Displayed name").fill("Edited before correction");
   await panel.getByRole("button", { name: "Save as proposal" }).click();
   await panel.getByRole("button", { name: "Create correction/rebase" }).click();
   await panel.getByLabel("Displayed name").fill("Pending correction");
@@ -618,6 +622,7 @@ test("stale correction binds to the loaded head even if a later head appears bef
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   const panel = editor(page);
+  await panel.getByLabel("Displayed name").fill("Edited before correction");
   await panel.getByRole("button", { name: "Save as proposal" }).click();
   await panel.getByRole("button", { name: "Create correction/rebase" }).click();
   await expect(panel.getByLabel("Displayed name")).toHaveValue("Current Head Keeper");
