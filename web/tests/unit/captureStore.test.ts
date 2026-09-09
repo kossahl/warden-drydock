@@ -3,7 +3,9 @@ import {
   CaptureQueue,
   CaptureStorageError,
   MemoryCaptureStore,
+  captureDigest,
   createIndexedDbCaptureStore,
+  endDigest,
   type CaptureInput,
   type CaptureSyncTransport,
 } from "../../src/live/captureStore";
@@ -121,9 +123,9 @@ describe("durable live capture queue", () => {
         reads += 1;
         const capture = (await store.listCaptures(input.sessionId))[0];
         return {
-          workflowVersion: reads,
+          workflowVersion: reads === 1 ? 2 : 3,
           acknowledgedOperationIds: capture && reads > 1 ? [{ deviceId: capture.deviceId, operationId: capture.operationId }] : [],
-          acknowledgements: capture && reads > 1 ? [{ deviceId: capture.deviceId, operationId: capture.operationId, payloadDigest: capture.payloadDigest, outcome: "accepted" as const }] : [],
+          acknowledgements: capture && reads > 1 ? [{ deviceId: capture.deviceId, operationId: capture.operationId, payloadDigest: await captureDigest({ ...capture, workflowVersion: 2 }), outcome: "accepted" as const }] : [],
         };
       }),
     };
@@ -132,6 +134,32 @@ describe("durable live capture queue", () => {
 
     expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Saved on device");
     expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Synced");
+    expect(attempts).toBe(1);
+  });
+
+  it("reconciles an end intent when its response was lost", async () => {
+    const store = new MemoryCaptureStore();
+    let reads = 0;
+    let attempts = 0;
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 2 })),
+      sendEnd: vi.fn(async () => {
+        attempts += 1;
+        throw Object.assign(new Error("response lost"), { retryable: true });
+      }),
+      readSession: vi.fn(async () => {
+        reads += 1;
+        const end = await store.getEnd(input.sessionId);
+        const acknowledged = end && reads > 2 ? [{ deviceId: end.deviceId, operationId: end.operationId }] : [];
+        const acknowledgements = end && reads > 2 ? [{ deviceId: end.deviceId, operationId: end.operationId, payloadDigest: await endDigest({ ...end, workflowVersion: 2 }), outcome: "accepted" as const }] : [];
+        return { workflowVersion: 2, acknowledgedOperationIds: acknowledged, acknowledgements, mode: reads > 2 ? "ended_review_pending" as const : "active" as const };
+      }),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [] });
+
+    expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Saved on device" });
+    expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Synced" });
     expect(attempts).toBe(1);
   });
 
