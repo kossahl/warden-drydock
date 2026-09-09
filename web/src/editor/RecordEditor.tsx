@@ -1,4 +1,4 @@
-import { recordTypes, recordDefinitions, newAdapterRecord, relationships, connectionStates } from "./adapterDefinition";
+import { adapterDefinitionFromWire, defaultAdapterDefinition, recordTypes, newAdapterRecord, type AdapterDefinition } from "./adapterDefinition";
 import { httpAtlasApi } from "../api/atlasClient";
 import type { AtlasRecordSummary } from "../contracts/v2";
 import { useEffect, useRef, useState } from "react";
@@ -48,6 +48,18 @@ const proposalMatchesEditorView = (proposal: EditorProposal, view: EditorRecordV
     && proposal.editor_workflow_version === view.editor_workflow_version
     && binding.expected_editor_workflow_version === proposal.editor_workflow_version;
 };
+const completeRecord = (record: EditorRecord, definitions: AdapterDefinition): EditorRecord => {
+  const definition = definitions.recordDefinitions[record.record_type];
+  if (!definition) return record;
+  const fields = new Set(record.fields.map((item) => item.field_id));
+  const sections = new Set(record.sections.map((item) => item.section_id));
+  return {
+    ...record,
+    fields: [...record.fields, ...definition.fields.filter((field) => !fields.has(field)).map((field) => ({ field_id: field, value: definition.fieldDefaults[field] ?? null }))],
+    sections: [...record.sections, ...definition.sections.filter((section) => !sections.has(section.id)).map((section) => ({ section_id: section.id, body: "" }))],
+  };
+};
+const definitionSet = (view: EditorRecordView | null): AdapterDefinition => view?.adapter_definition ? adapterDefinitionFromWire(view.adapter_definition) : defaultAdapterDefinition;
 
 function RecordPicker({ campaignId, revision, label, value, onChange, error, triggerId }: { campaignId: string; revision: RevisionRef; label: string; value: string; onChange: (recordId: string) => void; error?: string; triggerId?: string }) {
   const [open, setOpen] = useState(false);
@@ -122,6 +134,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [approvalDialog, setApprovalDialog] = useState<"approve" | "reject" | null>(null);
+  const [proposalLoading, setProposalLoading] = useState(proposalId !== null && proposalId !== undefined && proposalVersion !== null && proposalVersion !== undefined);
   const [wardenConfirmed, setWardenConfirmed] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("review_rejected");
   const [conflict, setConflict] = useState(false);
@@ -137,6 +150,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   const proposalRequest = useRef(0);
   const impactRequest = useRef(0);
   const proposalRestoreIdentity = useRef<string | null>(null);
+  const proposalUrlIdentity = useRef<string | null>(null);
   const errorHeading = useRef<HTMLHeadingElement>(null);
   const dialogHeading = useRef<HTMLHeadingElement>(null);
   const approvalDialogRef = useRef<HTMLDialogElement>(null);
@@ -156,11 +170,12 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
     proposalRequest.current += 1;
     impactRequest.current += 1;
     const hasUrlProposal = !!proposalId && proposalVersion !== null && proposalVersion !== undefined;
-    const preserveProposal = hasUrlProposal
+    const retryingUrlProposal = hasUrlProposal && loadRequest.current !== null;
+    const preserveProposal = hasUrlProposal && !retryingUrlProposal
       && proposalRestoreIdentity.current === editorIdentity
       && proposal?.proposal_id === proposalId
       && proposal.proposal_version === proposalVersion;
-    if (hasUrlProposal && loadRequest.current !== null) setProposalLoadNonce((current) => current + 1);
+    if (retryingUrlProposal) setProposalLoadNonce((current) => current + 1);
     if (!preserveProposal) { proposalRestoreIdentity.current = null; setProposal(null); }
     setView(null); setDraft(null);
     setBusy(false); setError(""); setMessage(""); setConflict(false); setImpact(null); setCorrectionMode(false); setCorrectionParentRevision(null); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
@@ -178,7 +193,11 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
     void httpEditorApi.read(campaignId, sourceRevisionId, sourceRecordId).then((value) => {
       if (!isCurrentRequest()) return;
       setView(value);
-      setDraft(isCreate ? newAdapterRecord() : clone(value.record));
+      const definitions = adapterDefinitionFromWire(value.adapter_definition);
+      const nextDraft = isCreate
+        ? newAdapterRecord(definitions.recordTypes.includes("npc") ? "npc" : definitions.recordTypes[0] ?? recordTypes[0], "new-record", "New record", definitions.recordDefinitions)
+        : completeRecord(clone(value.record), definitions);
+      setDraft((current) => proposalRestoreIdentity.current === editorIdentity && current ? current : nextDraft);
     }).catch((reason: unknown) => {
       if (!isCurrentRequest()) return;
       focusEditorError.current = !!document.activeElement?.closest(".editor"); setError(`Editor unavailable (${errorText(reason)}).`);
@@ -186,7 +205,27 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   };
   useEffect(() => load(), [campaignId, revisionId, recordId]);
   useEffect(() => {
-    if (!proposalId || !proposalVersion) return;
+    const hasUrlProposal = !!proposalId && proposalVersion !== null && proposalVersion !== undefined;
+    if (!hasUrlProposal) {
+      const hadUrlProposal = proposalUrlIdentity.current !== null;
+      proposalUrlIdentity.current = null;
+      if (!hadUrlProposal) return;
+      proposalRequest.current += 1;
+      proposalRestoreIdentity.current = null;
+      setProposalLoading(false);
+      setProposal(null); setCorrectionMode(false); setMode("edit"); setImpact(null); setResolutions([]);
+      correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
+      return;
+    }
+    proposalUrlIdentity.current = `${proposalId}\u0000${proposalVersion}`;
+    if (proposalRestoreIdentity.current === editorIdentity
+      && proposal?.proposal_id === proposalId
+      && proposal.proposal_version === proposalVersion) {
+      setProposalLoading(false);
+      return;
+    }
+    setProposalLoading(true);
+    setProposal(null); proposalRestoreIdentity.current = null; setCorrectionMode(false); setMode("edit"); setImpact(null); setResolutions([]);
     let active = true;
     void httpEditorApi.proposal(proposalId, proposalVersion).then((value) => {
       if (!active) return;
@@ -197,14 +236,18 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
         && (isCreate ? value.mutation_kind === "create" : binding?.record_id === recordId);
       if (!matchesEditor) throw new Error("proposal_binding_mismatch");
       proposalRestoreIdentity.current = editorIdentity;
+      const candidate = reviewedProposalCandidate(value);
+      if (candidate) setDraft((current) => completeRecord(candidate, definitionSet(view)));
       setProposal(value);
+      setProposalLoading(false);
       setMessage("Submitted proposal restored for review.");
     }).catch((reason: unknown) => {
       if (!active) return;
+      setProposalLoading(false);
       setError(`Submitted proposal could not be restored (${errorText(reason)}).`);
     });
     return () => { active = false; };
-  }, [campaignId, isCreate, proposalId, proposalVersion, proposalLoadNonce, recordId, revisionId]);
+  }, [campaignId, editorIdentity, isCreate, proposalId, proposalVersion, proposalLoadNonce, recordId, revisionId]);
   const correctionOf = proposal ? correctionReference(proposal) : null;
   useEffect(() => {
     setCorrectionParentRevision(null);
@@ -260,10 +303,11 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   }, [fieldErrors]);
 
   const update = (next: Partial<EditorRecord>) => setDraft((current) => current ? { ...current, ...next } : current);
+  const definitions = definitionSet(view);
   const validate = () => {
     if (!draft) return false;
     const next: Record<string, string> = {};
-    const definition = recordDefinitions[draft.record_type];
+    const definition = definitions.recordDefinitions[draft.record_type];
     const nonemptyFields = new Set(definition?.nonemptyFields ?? []);
     const fieldValues = new Map(draft.fields.map((field) => [field.field_id, field.value]));
     const adapterValue = (field: string) => {
@@ -277,6 +321,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
     };
     if (!/^[a-z0-9][a-z0-9-]*$/.test(draft.record_id)) next.record_id = "Use lowercase letters, numbers, and hyphens.";
     if (!draft.displayed_name.trim()) next.displayed_name = "Displayed name is required.";
+    else if (draft.displayed_name.length > 200) next.displayed_name = "Displayed name must be 200 characters or fewer.";
     Object.entries(definition?.requiredValues ?? {}).forEach(([field, requiredValue]) => {
       if (String(adapterValue(field) ?? "") === requiredValue) return;
       const key = field === "id" ? "record_id" : field === "name" ? "displayed_name" : field === "visibility" || field === "warden_only" ? "visibility" : `field-${field}`;
@@ -286,7 +331,11 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       if (!/^[a-z0-9][a-z0-9_-]*$/.test(field.field_id)) next[`field-${field.field_id}`] = "Field ID is invalid.";
       else if (nonemptyFields.has(field.field_id) && (field.value === null || field.value === undefined || (typeof field.value === "string" && !field.value.trim()))) next[`field-${field.field_id}`] = "This field is required.";
     });
-    draft.sections.forEach((section) => { if (!/^[a-z0-9][a-z0-9-]*$/.test(section.section_id)) next[`section-${section.section_id}`] = "Section ID is invalid."; });
+    draft.sections.forEach((section) => {
+      if (!/^[a-z0-9][a-z0-9-]*$/.test(section.section_id)) next[`section-${section.section_id}`] = "Section ID is invalid.";
+      else if (/^##\s/m.test(section.body)) next[`section-${section.section_id}`] = "Section content cannot contain Markdown headings.";
+      else if (definition?.forbiddenHeadings?.some((heading) => section.section_id === heading.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, ""))) next[`section-${section.section_id}`] = "This section is not permitted for the selected record type.";
+    });
     const connectionIds = new Set<string>();
     draft.connections.forEach((connection) => {
       if (connection.connection_id.length < 3 || !publicId.test(connection.connection_id)) next[`connection-${connection.connection_id}`] = "Connection ID must use lowercase public ID syntax.";
@@ -296,6 +345,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       if (!connection.target_record_id.trim()) next[connectionKey] = "A connection target is required.";
       if (!connection.context.trim()) next[`${connectionKey}-context`] = "Connection context is required.";
       else if (/[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029]/u.test(connection.context)) next[`${connectionKey}-context`] = "Connection context must be a single line.";
+      else if (connection.context.length > 2000) next[`${connectionKey}-context`] = "Connection context must be 2,000 characters or fewer.";
       else if (connection.context !== connection.context.trim()) next[`${connectionKey}-context`] = "Connection context must not have leading or trailing whitespace.";
     });
     setFieldErrors(next); return Object.keys(next).length === 0;
@@ -348,7 +398,8 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       const sourceAudience = audiences.get(reference.source_record_id);
       const targetAudience = audiences.get(replacement);
       const key = `resolution-${reference.reference_id}`;
-      if (sourceAudience === undefined || targetAudience === undefined) next[key] = "Source and replacement visibility could not be verified.";
+      if (replacement === currentImpact.record.record_id || replacement === reference.source_record_id) next[key] = "A redirect cannot target the removed record or its source record.";
+      else if (sourceAudience === undefined || targetAudience === undefined) next[key] = "Source and replacement visibility could not be verified.";
       else if (sourceAudience === "players" && targetAudience === "warden") next[key] = "Player-visible records cannot redirect to Warden-only targets.";
     });
     return next;
@@ -570,16 +621,16 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   const invalid = (key: string) => fieldErrors[key];
   const setField = (index: number, field: EditorField) => update({ fields: draft.fields.map((item, itemIndex) => itemIndex === index ? field : item) });
   const setSection = (index: number, section: EditorSection) => update({ sections: draft.sections.map((item, itemIndex) => itemIndex === index ? section : item) });
-  const locked = busy || (!!proposal && !correctionMode) || !view.editable;
+  const locked = busy || proposalLoading || (!!proposal && !correctionMode) || !view.editable;
   return <section className="card editor" aria-labelledby="editor-heading">{approvalDialogView}<div className="section-title"><h2 id="editor-heading">{isCreate ? "Create record" : "Edit record"}</h2><span role="status">Head · workflow {view.editor_workflow_version}</span></div><p>Changes create a typed proposal. Approval is required before the campaign head changes.</p>{error && <div className="error editor-error" role="alert" aria-labelledby="editor-error-heading"><h3 id="editor-error-heading" ref={errorHeading} tabIndex={-1}>Editor error</h3><p>{error}</p></div>}{message && <p role="status" aria-live="polite">{message}</p>}{conflict && <aside className="editor-conflict" role="alert" aria-labelledby="editor-conflict-heading"><h3 id="editor-conflict-heading">Head changed; rebase required</h3><p>This proposal is bound to an older revision or workflow. Reload the current head before retrying.</p>{navigate && <button type="button" onClick={openCurrentHead}>Reload current head</button>}</aside>}
-    <fieldset disabled={locked}><legend>Record details</legend><label htmlFor="editor-record-id">Record ID</label><input id="editor-record-id" value={draft.record_id} readOnly={!isCreate || (!!proposal && correctionMode)} onChange={(event) => update({ record_id: event.target.value })} aria-invalid={!!invalid("record_id")} aria-describedby={invalid("record_id") ? "editor-record-id-error" : undefined} />{invalid("record_id") && <span id="editor-record-id-error" className="error">{invalid("record_id")}</span>}<label htmlFor="editor-name">Displayed name</label><input id="editor-name" value={draft.displayed_name} onChange={(event) => update({ displayed_name: event.target.value })} aria-invalid={!!invalid("displayed_name")} aria-describedby={invalid("displayed_name") ? "editor-name-error" : undefined} />{invalid("displayed_name") && <span id="editor-name-error" className="error">{invalid("displayed_name")}</span>}<label htmlFor="editor-type">Record type</label><select id="editor-type" value={draft.record_type} disabled={!isCreate || !!proposal} onChange={(event) => setDraft(newAdapterRecord(event.target.value, draft.record_id, draft.displayed_name))}>{(isCreate ? recordTypes : [draft.record_type]).map((type) => <option key={type} value={type}>{type}</option>)}</select><label htmlFor="editor-status">Status</label><select id="editor-status" value={draft.status} onChange={(event) => update({ status: event.target.value, authority: authority(event.target.value) as EditorRecord["authority"] })}>{statuses.map((value) => <option key={value} value={value}>{value}</option>)}</select><p>Authority: <strong>{authority(draft.status)}</strong> (derived from status)</p><label htmlFor="editor-visibility">Visibility</label><select id="editor-visibility" value={draft.visibility.audience} onChange={(event) => update({ visibility: event.target.value === "warden" ? { audience: "warden", warden_only: true } : { audience: event.target.value as "players" | "shared", warden_only: false } })} aria-invalid={!!invalid("visibility")} aria-describedby={invalid("visibility") ? "editor-visibility-error" : undefined}><option value="warden">Warden only</option><option value="shared">Shared</option><option value="players">Players</option></select>{invalid("visibility") && <span id="editor-visibility-error" className="error" role="alert">{invalid("visibility")}</span>}</fieldset>
-    <fieldset disabled={locked}><legend>Fields</legend>{draft.fields.map((field, index) => <div key={field.field_id}><label htmlFor={`editor-field-${field.field_id}`}>{field.field_id}</label><input id={`editor-field-${field.field_id}`} value={String(field.value ?? "")} readOnly={!recordDefinitions[draft.record_type]?.fields.includes(field.field_id)} onChange={(event) => setField(index, { ...field, value: event.target.value })} aria-invalid={!!invalid(`field-${field.field_id}`)} aria-describedby={invalid(`field-${field.field_id}`) ? `editor-field-${field.field_id}-error` : undefined} />{invalid(`field-${field.field_id}`) && <span id={`editor-field-${field.field_id}-error`} className="error">{invalid(`field-${field.field_id}`)}</span>}</div>)}</fieldset>
-    <fieldset disabled={locked}><legend>Content sections</legend>{draft.sections.map((section, index) => <div key={section.section_id}><label htmlFor={`editor-section-${section.section_id}`}>{section.section_id}</label><textarea id={`editor-section-${section.section_id}`} rows={5} readOnly={!recordDefinitions[draft.record_type]?.sections.some((item) => item.id === section.section_id)} value={section.body} onChange={(event) => setSection(index, { ...section, body: event.target.value })} aria-invalid={!!invalid(`section-${section.section_id}`)} />{invalid(`section-${section.section_id}`) && <span className="error">{invalid(`section-${section.section_id}`)}</span>}</div>)}</fieldset>
-    <fieldset disabled={locked}><legend>Typed connections ({draft.connections.length})</legend>{draft.connections.map((connection, index) => <ConnectionEditor key={connection.connection_id} campaignId={campaignId} revision={view.head_revision} connection={connection} error={invalid(`connection-${connection.connection_id}`)} contextError={invalid(`connection-${connection.connection_id}-context`)} onChange={(next) => update({ connections: draft.connections.map((item, itemIndex) => itemIndex === index ? next : item) })} onRemove={() => update({ connections: draft.connections.filter((_, itemIndex) => itemIndex !== index) })} />)}<button type="button" onClick={() => update({ connections: [...draft.connections, { connection_id: nextConnectionId(draft.connections), target_record_id: "", relationship: "connected-to", state: "current", context: "Describe this connection." }] })}>Add typed connection</button></fieldset>
+    <fieldset disabled={locked}><legend>Record details</legend><label htmlFor="editor-record-id">Record ID</label><input id="editor-record-id" value={draft.record_id} readOnly={!isCreate || (!!proposal && correctionMode)} onChange={(event) => update({ record_id: event.target.value })} aria-invalid={!!invalid("record_id")} aria-describedby={invalid("record_id") ? "editor-record-id-error" : undefined} />{invalid("record_id") && <span id="editor-record-id-error" className="error">{invalid("record_id")}</span>}<label htmlFor="editor-name">Displayed name</label><input id="editor-name" value={draft.displayed_name} onChange={(event) => update({ displayed_name: event.target.value })} aria-invalid={!!invalid("displayed_name")} aria-describedby={invalid("displayed_name") ? "editor-name-error" : undefined} />{invalid("displayed_name") && <span id="editor-name-error" className="error">{invalid("displayed_name")}</span>}<label htmlFor="editor-type">Record type</label><select id="editor-type" value={draft.record_type} disabled={!isCreate || !!proposal} onChange={(event) => setDraft(newAdapterRecord(event.target.value, draft.record_id, draft.displayed_name, definitions.recordDefinitions))}>{(isCreate ? definitions.recordTypes : [draft.record_type]).map((type) => <option key={type} value={type}>{type}</option>)}</select><label htmlFor="editor-status">Status</label><select id="editor-status" value={draft.status} onChange={(event) => update({ status: event.target.value, authority: authority(event.target.value) as EditorRecord["authority"] })}>{statuses.map((value) => <option key={value} value={value}>{value}</option>)}</select><p>Authority: <strong>{authority(draft.status)}</strong> (derived from status)</p><label htmlFor="editor-visibility">Visibility</label><select id="editor-visibility" value={draft.visibility.audience} onChange={(event) => update({ visibility: event.target.value === "warden" ? { audience: "warden", warden_only: true } : { audience: event.target.value as "players" | "shared", warden_only: false } })} aria-invalid={!!invalid("visibility")} aria-describedby={invalid("visibility") ? "editor-visibility-error" : undefined}><option value="warden">Warden only</option><option value="shared">Shared</option><option value="players">Players</option></select>{invalid("visibility") && <span id="editor-visibility-error" className="error" role="alert">{invalid("visibility")}</span>}</fieldset>
+    <fieldset disabled={locked}><legend>Fields</legend>{draft.fields.map((field, index) => <div key={field.field_id}><label htmlFor={`editor-field-${field.field_id}`}>{field.field_id}</label><input id={`editor-field-${field.field_id}`} value={String(field.value ?? "")} readOnly={!definitions.recordDefinitions[draft.record_type]?.fields.includes(field.field_id)} onChange={(event) => setField(index, { ...field, value: event.target.value })} aria-invalid={!!invalid(`field-${field.field_id}`)} aria-describedby={invalid(`field-${field.field_id}`) ? `editor-field-${field.field_id}-error` : undefined} />{invalid(`field-${field.field_id}`) && <span id={`editor-field-${field.field_id}-error`} className="error">{invalid(`field-${field.field_id}`)}</span>}</div>)}</fieldset>
+    <fieldset disabled={locked}><legend>Content sections</legend>{draft.sections.map((section, index) => <div key={section.section_id}><label htmlFor={`editor-section-${section.section_id}`}>{section.section_id}</label><textarea id={`editor-section-${section.section_id}`} rows={5} readOnly={!definitions.recordDefinitions[draft.record_type]?.sections.some((item) => item.id === section.section_id)} value={section.body} onChange={(event) => setSection(index, { ...section, body: event.target.value })} aria-invalid={!!invalid(`section-${section.section_id}`)} />{invalid(`section-${section.section_id}`) && <span className="error">{invalid(`section-${section.section_id}`)}</span>}</div>)}</fieldset>
+    <fieldset disabled={locked}><legend>Typed connections ({draft.connections.length})</legend>{draft.connections.map((connection, index) => <ConnectionEditor key={connection.connection_id} campaignId={campaignId} revision={view.head_revision} relationships={definitions.relationships} connectionStates={definitions.connectionStates} connection={connection} error={invalid(`connection-${connection.connection_id}`)} contextError={invalid(`connection-${connection.connection_id}-context`)} onChange={(next) => update({ connections: draft.connections.map((item, itemIndex) => itemIndex === index ? next : item) })} onRemove={() => update({ connections: draft.connections.filter((_, itemIndex) => itemIndex !== index) })} />)}<button type="button" onClick={() => update({ connections: [...draft.connections, { connection_id: nextConnectionId(draft.connections), target_record_id: "", relationship: definitions.relationships[0] ?? "connected-to", state: definitions.connectionStates[0] ?? "current", context: "Describe this connection." }] })}>Add typed connection</button></fieldset>
     <div className="actions">{!proposal && !isCreate && mode !== "remove" && <button type="button" className="danger" disabled={locked} onClick={() => void startRemove()}>Load removal impact</button>}{!proposal && <button type="button" disabled={locked || mode === "remove"} onClick={() => { setMode("edit"); void save(); }}>{isCreate ? "Submit create proposal" : "Save as proposal"}</button>}{!proposal && mode === "remove" && <button type="button" disabled={busy} onClick={() => { setMode("edit"); setImpact(null); setResolutions([]); setMessage("Removal canceled."); }}>Cancel removal</button>}{!proposal && mode === "remove" && impact && <button type="button" disabled={locked || !removalReady} onClick={() => void save()}>Submit removal proposal</button>}{proposal && correctionMode && <><button type="button" disabled={busy || (proposal.mutation_kind === "remove" && !removalReady)} onClick={() => void submitCorrection()}>Submit correction/rebase</button><button type="button" disabled={busy} onClick={cancelCorrection}>Cancel correction</button></>}</div>{impact && mode === "remove" && <RemovalResolution campaignId={campaignId} revision={view.head_revision} impact={impact} resolutions={resolutions} setResolutions={setResolutions} errors={fieldErrors} disabled={locked} />}{proposal && <ProposalReview proposal={proposal} priorRevision={correctionParentRevision} decisionAvailable={proposalDecisionAvailable} approve={() => { approvalTrigger.current = document.activeElement as HTMLElement | null; setWardenConfirmed(false); setApprovalDialog("approve"); }} reject={() => { approvalTrigger.current = document.activeElement as HTMLElement | null; setApprovalDialog("reject"); }} startCorrection={startCorrection} correctionMode={correctionMode} busy={busy} />}</section>;
 }
 
-function ConnectionEditor({ campaignId, revision, connection, error, contextError, onChange, onRemove }: { campaignId: string; revision: RevisionRef; connection: EditorConnection; error?: string; contextError?: string; onChange: (connection: EditorConnection) => void; onRemove: () => void }) { return <div className="editor-connection"><RecordPicker campaignId={campaignId} revision={revision} label={`Target for ${connection.connection_id}`} triggerId={`connection-target-${connection.connection_id}`} value={connection.target_record_id} onChange={(target_record_id) => onChange({ ...connection, target_record_id })} error={error} /><label htmlFor={`connection-relationship-${connection.connection_id}`}>Relationship</label><select id={`connection-relationship-${connection.connection_id}`} value={connection.relationship} onChange={(event) => onChange({ ...connection, relationship: event.target.value })}>{!relationships.includes(connection.relationship) && <option value={connection.relationship} disabled>Unsupported: {connection.relationship}</option>}{relationships.map((value) => <option key={value} value={value}>{value}</option>)}</select><label htmlFor={`connection-state-${connection.connection_id}`}>State</label><select id={`connection-state-${connection.connection_id}`} value={connection.state} onChange={(event) => onChange({ ...connection, state: event.target.value })}>{!connectionStates.includes(connection.state) && <option value={connection.state} disabled>Unsupported: {connection.state}</option>}{connectionStates.map((value) => <option key={value} value={value}>{value}</option>)}</select><label htmlFor={`connection-context-${connection.connection_id}`}>Context</label><textarea id={`connection-context-${connection.connection_id}`} rows={2} value={connection.context} onChange={(event) => onChange({ ...connection, context: event.target.value })} aria-invalid={!!contextError} aria-describedby={contextError ? `connection-context-${connection.connection_id}-error` : undefined} />{contextError && <span id={`connection-context-${connection.connection_id}-error`} className="error" role="alert">{contextError}</span>}<button type="button" onClick={onRemove}>Remove connection {connection.connection_id}</button></div>; }
+function ConnectionEditor({ campaignId, revision, relationships, connectionStates, connection, error, contextError, onChange, onRemove }: { campaignId: string; revision: RevisionRef; relationships: string[]; connectionStates: string[]; connection: EditorConnection; error?: string; contextError?: string; onChange: (connection: EditorConnection) => void; onRemove: () => void }) { return <div className="editor-connection"><RecordPicker campaignId={campaignId} revision={revision} label={`Target for ${connection.connection_id}`} triggerId={`connection-target-${connection.connection_id}`} value={connection.target_record_id} onChange={(target_record_id) => onChange({ ...connection, target_record_id })} error={error} /><label htmlFor={`connection-relationship-${connection.connection_id}`}>Relationship</label><select id={`connection-relationship-${connection.connection_id}`} value={connection.relationship} onChange={(event) => onChange({ ...connection, relationship: event.target.value })}>{!relationships.includes(connection.relationship) && <option value={connection.relationship} disabled>Unsupported: {connection.relationship}</option>}{relationships.map((value) => <option key={value} value={value}>{value}</option>)}</select><label htmlFor={`connection-state-${connection.connection_id}`}>State</label><select id={`connection-state-${connection.connection_id}`} value={connection.state} onChange={(event) => onChange({ ...connection, state: event.target.value })}>{!connectionStates.includes(connection.state) && <option value={connection.state} disabled>Unsupported: {connection.state}</option>}{connectionStates.map((value) => <option key={value} value={value}>{value}</option>)}</select><label htmlFor={`connection-context-${connection.connection_id}`}>Context</label><textarea id={`connection-context-${connection.connection_id}`} rows={2} value={connection.context} onChange={(event) => onChange({ ...connection, context: event.target.value })} aria-invalid={!!contextError} aria-describedby={contextError ? `connection-context-${connection.connection_id}-error` : undefined} />{contextError && <span id={`connection-context-${connection.connection_id}-error`} className="error" role="alert">{contextError}</span>}<button type="button" onClick={onRemove}>Remove connection {connection.connection_id}</button></div>; }
 function RemovalResolution({ campaignId, revision, impact, resolutions, setResolutions, errors, disabled }: { campaignId: string; revision: RevisionRef; impact: EditorRemovalImpact; resolutions: Array<Record<string, unknown>>; setResolutions: (value: Array<Record<string, unknown>>) => void; errors: Record<string, string>; disabled: boolean }) { return <section aria-labelledby="removal-impact-heading" className="editor-impact"><h3 id="removal-impact-heading">Removal impact and resolutions</h3><p>{impact.incoming_references.length} incoming typed connection(s) require a decision.</p>{impact.incoming_references.map((reference) => { const current = resolutions.find((item) => item.reference_id === reference.reference_id); const action = current?.action === "accept_unresolved" && !reference.permitted_unresolved ? "" : String(current?.action ?? ""); const error = errors[`resolution-${reference.reference_id}`]; return <fieldset key={reference.reference_id} disabled={disabled}><legend>{reference.source_record_id} · {reference.relationship}</legend><label htmlFor={`resolution-${reference.reference_id}`}>Resolution for {reference.reference_id}</label><select id={`resolution-${reference.reference_id}`} required value={action} aria-invalid={!!error} aria-describedby={error ? `resolution-${reference.reference_id}-error` : undefined} onChange={(event) => setResolutions(resolutions.map((item) => item.reference_id === reference.reference_id ? { reference_id: reference.reference_id, action: event.target.value, replacement_target_record_id: event.target.value === "redirect" ? "" : null } : item))}><option value="" disabled>Choose a resolution</option><option value="remove_reference">Remove reference</option><option value="redirect">Redirect reference</option>{reference.permitted_unresolved && <option value="accept_unresolved">Accept unresolved</option>}</select>{error && <span id={`resolution-${reference.reference_id}-error`} className="error" role="alert">{error}</span>}{action === "redirect" && <RecordPicker campaignId={campaignId} revision={revision} label={`Replacement target for ${reference.reference_id}`} value={String(current?.replacement_target_record_id ?? "")} onChange={(target) => setResolutions(resolutions.map((item) => item.reference_id === reference.reference_id ? { ...item, replacement_target_record_id: target } : item))} />}</fieldset>; })}</section>; }
 function ProposalReview({ proposal, priorRevision, decisionAvailable, approve, reject, startCorrection, correctionMode, busy }: { proposal: EditorProposal; priorRevision: RevisionRef | null; decisionAvailable: boolean; approve: () => void; reject: () => void; startCorrection: () => void; correctionMode: boolean; busy: boolean }) {
   const correctionOf = correctionReference(proposal);

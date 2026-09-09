@@ -111,7 +111,7 @@ def _collect_entities(root: Path) -> tuple[dict[str, Entity], list[str]]:
         relative = path.relative_to(root)
         if relative.parts[0] in {"templates", "docs"} or relative.as_posix().startswith("00-drydock/"):
             continue
-        text = path.read_text(encoding="utf-8")
+        text = path.read_bytes().decode("utf-8")
         metadata = frontmatter(text)
         entity_id = metadata.get("id")
         if entity_id:

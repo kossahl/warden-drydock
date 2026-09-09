@@ -48,7 +48,18 @@ from .contracts import (
     text_digest, validate_http_semantics,
 )
 from .repository import InMemoryHTTPRepository, ReceiptConflict
-from .editor import change_for, diff_digest as editor_diff_digest, parse_document, serialize_document, document_digest, _document, _typed_equal, adapter_editor_definition, validate_adapter_document
+from .editor import (
+    adapter_editor_contract,
+    adapter_editor_definition,
+    change_for,
+    diff_digest as editor_diff_digest,
+    document_digest,
+    parse_document,
+    serialize_document,
+    validate_adapter_document,
+    _document,
+    _typed_equal,
+)
 from .editor_semantics import EditorSemanticError, validate_editor_semantics
 
 
@@ -1422,6 +1433,10 @@ class SliceApplication:
                 "name": record.name, "authority": self._authority(record.status),
                 "content": record.content}
 
+    def _editor_definition(self, campaign_id: str, revision_id: str) -> dict:
+        root = self.registry._resolve(self._workspace_for_revision(campaign_id, revision_id))
+        return adapter_editor_definition(self.campaigns[campaign_id].adapter_id, root)
+
     def record_view(self, campaign_id: str, revision_id: str, record_id: str) -> tuple[int, dict]:
         return 200, self._record(campaign_id, revision_id, record_id)
 
@@ -1476,7 +1491,7 @@ class SliceApplication:
         if before is not None and document["record_type"] != before["record_type"]:
             raise HTTPFailure(422, "unsafe_binding", "record_type_mismatch", "editor_proposal")
         try:
-            validate_adapter_document(document, adapter_editor_definition(self.campaigns[campaign_id].adapter_id), before)
+            validate_adapter_document(document, self._editor_definition(campaign_id, revision_id), before)
         except ValueError as exc:
             raise HTTPFailure(422, "proposal_validation_failure", str(exc), "editor_proposal") from exc
         record_ids = self._editor_record_ids(campaign_id, revision_id)
@@ -1636,6 +1651,7 @@ class SliceApplication:
                      "editor_workflow_version": self._editor_version(campaign_id),
                      "historical": manifest.revision_id != head.revision_id,
                      "editable": manifest.revision_id == head.revision_id,
+                     "adapter_definition": adapter_editor_contract(self._editor_definition(campaign_id, revision_id)),
                      "record": document}
         self._editor_semantic(response, stage="editor_record_read")
         return 200, response
@@ -1787,7 +1803,13 @@ class SliceApplication:
             expected_refs = {item["reference_id"] for item in removal_impact["incoming_references"]}
             if {item.get("reference_id") for item in resolutions} != expected_refs or len(resolutions) != len(expected_refs):
                 raise HTTPFailure(422, "proposal_validation_failure", "incomplete_removal_resolution", "editor_proposal", self._request_id(payload))
-            documents = {record.record_id: (parse_document(record.content, record.record_id, record.record_type), record.content) for record in self.atlas_repository.get(campaign_id, revision_id).records}
+            documents = {
+                record_id: (
+                    parse_document((record := self._record(campaign_id, revision_id, record_id))["content"], record_id, record["record_type"]),
+                    record["content"],
+                )
+                for record_id in self._editor_record_ids(campaign_id, revision_id)
+            }
             source_mutations = {}
             for reference in removal_impact["incoming_references"]:
                 resolution = next(item for item in resolutions if item.get("reference_id") == reference["reference_id"])
@@ -1979,16 +2001,16 @@ class SliceApplication:
             )
         campaign, manifest = self._campaign_revision(campaign_id, revision_id)
         removed = parse_document(self._record(campaign_id, revision_id, record_id)["content"], record_id)
-        bundle = self.atlas_repository.get(campaign_id, revision_id)
         incoming = []
-        for record in bundle.records:
-            if record.record_id == record_id:
+        for source_record_id in self._editor_record_ids(campaign_id, revision_id):
+            if source_record_id == record_id:
                 continue
-            document = parse_document(record.content, record.record_id, record.record_type)
+            source = self._record(campaign_id, revision_id, source_record_id)
+            document = parse_document(source["content"], source_record_id, source["record_type"])
             for connection in document["connections"]:
                 if connection["target_record_id"] == record_id:
-                    incoming.append({"reference_id": self._id("reference", campaign_id, revision_id, record.record_id, connection["connection_id"]),
-                                     "connection_id": connection["connection_id"], "source_record_id": record.record_id,
+                    incoming.append({"reference_id": self._id("reference", campaign_id, revision_id, source_record_id, connection["connection_id"]),
+                                     "connection_id": connection["connection_id"], "source_record_id": source_record_id,
                                      "target_record_id": record_id, "relationship": connection["relationship"],
                                      "state": connection["state"], "context": connection["context"],
                                      "resolution_required": True, "permitted_unresolved": False})

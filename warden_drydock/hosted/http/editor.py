@@ -13,6 +13,7 @@ from warden_drydock.core.generator import DATA
 import hashlib
 import json
 import math
+from pathlib import Path
 import re
 from typing import Any, Mapping
 
@@ -96,6 +97,7 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
     if (
         not isinstance(value["displayed_name"], str)
         or not 1 <= len(value["displayed_name"]) <= 200
+        or not value["displayed_name"].strip()
         or "\n" in value["displayed_name"]
         or "\r" in value["displayed_name"]
     ):
@@ -610,25 +612,74 @@ class EditorDraft:
 
 
 @lru_cache(maxsize=None)
-def adapter_editor_definition(adapter_id: str) -> dict:
-    """Use shipped adapter definitions, never a client-supplied schema."""
-    root = DATA / "adapters" / _id(adapter_id)
-    config = json.loads((root / "00-drydock/adapter.json").read_text())
+def adapter_editor_definition(adapter_id: str, revision_root: Path | None = None) -> dict:
+    """Read the adapter definition bound to the revision being edited."""
+    root = revision_root or DATA / "adapters" / _id(adapter_id)
+    config = json.loads((root / "00-drydock/adapter.json").read_text(encoding="utf-8"))
     definitions = {}
-    sources = [(kind, (root / spec["template"]).read_text()) for kind, spec in config["entity_types"].items()]
+    sources = [
+        (kind, (root / spec["template"]).read_text(encoding="utf-8"), spec)
+        for kind, spec in config["entity_types"].items()
+    ]
     for path in (DATA / "project_template").rglob("*.md"):
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         kind = frontmatter(source).get("type")
         if kind and kind not in config["entity_types"]:
-            sources.append((kind, source))
-    for kind, source in sources:
+            sources.append((kind, source, {}))
+    for kind, source, rules in sources:
+        metadata = frontmatter(source)
+        section_order = []
+        section_labels = {}
+        for heading in re.findall(r"^## (.+)$", source, re.M):
+            if heading.casefold() == "connections":
+                continue
+            section_id = _heading_id(heading)
+            if section_id not in section_labels:
+                section_order.append(section_id)
+                section_labels[section_id] = heading
         definitions[kind] = {
-            "fields": set(frontmatter(source)) - {"id", "type", "name", "status", "visibility", "warden_only"},
-            "sections": {_heading_id(heading) for heading in re.findall(r"^## (.+)$", source, re.M) if heading.casefold() != "connections"},
+            "metadata": metadata,
+            "fields": set(metadata) - {"id", "type", "name", "status", "visibility", "warden_only"},
+            "field_defaults": {
+                field: metadata[field]
+                for field in set(metadata) - {"id", "type", "name", "status", "visibility", "warden_only"}
+            },
+            "sections": set(section_order),
+            "section_order": tuple(section_order),
+            "section_labels": section_labels,
+            "required_fields": set(rules.get("required_fields", [])),
+            "nonempty_fields": set(rules.get("nonempty_fields", [])),
+            "required_values": dict(rules.get("required_values", {})),
+            "forbidden_headings": set(rules.get("forbidden_headings", [])),
         }
     return {"records": definitions, "creatable": set(config["entity_types"]),
             "relationships": set(config["connections"]["relationships"]),
             "states": set(config["connections"]["states"])}
+
+
+def adapter_editor_contract(definition: dict) -> dict:
+    """Return the JSON-safe definition used by the bound editor client."""
+    return {
+        "record_types": sorted(definition["creatable"]),
+        "relationships": sorted(definition["relationships"]),
+        "connection_states": sorted(definition["states"]),
+        "record_definitions": {
+            kind: {
+                "metadata": spec["metadata"],
+                "fields": sorted(spec["fields"]),
+                "field_defaults": spec["field_defaults"],
+                "sections": [
+                    {"id": section_id, "label": spec["section_labels"][section_id]}
+                    for section_id in spec["section_order"]
+                ],
+                "required_fields": sorted(spec["required_fields"]),
+                "nonempty_fields": sorted(spec["nonempty_fields"]),
+                "required_values": spec["required_values"],
+                "forbidden_headings": sorted(spec["forbidden_headings"]),
+            }
+            for kind, spec in sorted(definition["records"].items())
+        },
+    }
 
 
 def validate_adapter_document(candidate: dict, definition: dict, before: dict | None) -> None:
@@ -656,6 +707,28 @@ def validate_adapter_document(candidate: dict, definition: dict, before: dict | 
             text = item.get("body", item.get("value"))
             if isinstance(text, str) and (re.search(r"^##\s", text, re.M) if collection == "sections" else "\n" in text or "\r" in text):
                 raise ValueError("invalid_editor_member_content")
+    values = {
+        "id": candidate["record_id"],
+        "type": candidate["record_type"],
+        "name": candidate["displayed_name"],
+        "status": candidate["status"],
+        "visibility": candidate["visibility"]["audience"],
+        "warden_only": str(candidate["visibility"]["warden_only"]).lower(),
+        **{item["field_id"]: item["value"] for item in candidate["fields"]},
+    }
+    missing = [field for field in spec["required_fields"] if field not in values]
+    if missing:
+        raise ValueError("missing_required_adapter_field")
+    for field in spec["nonempty_fields"]:
+        value = values.get(field)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise ValueError("empty_required_adapter_field")
+    for field, required_value in spec["required_values"].items():
+        if str(values.get(field, "")).lower() != str(required_value).lower():
+            raise ValueError("adapter_required_value")
+    forbidden = {_heading_id(heading) for heading in spec["forbidden_headings"]}
+    if any(section["section_id"] in forbidden for section in candidate["sections"]):
+        raise ValueError("forbidden_editor_heading")
     for connection in candidate["connections"]:
         if connection["relationship"] not in definition["relationships"]:
             raise ValueError("unsupported_connection_relationship")

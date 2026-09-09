@@ -231,7 +231,7 @@ class DeterministicEngine:
                 if entity is None:
                     return self._failure(request.command_id, "proposal_stage", request.workspace_handle, input_digest, Stage.STAGE, "subject_unknown", Status.INVALID)
                 target = source_root / entity.path
-                if content_digest(target.read_text(encoding="utf-8")) != change.expected_content_digest:
+                if content_digest(target.read_bytes().decode("utf-8")) != change.expected_content_digest:
                     return self._failure(request.command_id, "proposal_stage", request.workspace_handle, input_digest, Stage.STAGE, "content_digest_mismatch", Status.INVALID)
                 if change.change_kind is ChangeKind.DELETE and change.replacement:
                     return self._failure(request.command_id, "proposal_stage", request.workspace_handle, input_digest, Stage.STAGE, "change_binding_mismatch", Status.INVALID)

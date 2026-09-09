@@ -1,3 +1,5 @@
+import type { AdapterDefinitionWire } from "./adapterDefinition";
+
 export type EditorVisibility = { audience: "warden"; warden_only: true } | { audience: "players" | "shared"; warden_only: false };
 export type RevisionRef = { revision_id: string; ordinal: number; tree_digest: string };
 export type ImmutableRevisionRef = RevisionRef & { immutable: true };
@@ -17,7 +19,7 @@ export const nextConnectionId = (connections: EditorConnection[]) => {
 };
 export interface EditorRecord { record_id: string; record_type: string; displayed_name: string; status: string; authority: "preparation" | "canon" | "revealed"; visibility: EditorVisibility; fields: EditorField[]; sections: EditorSection[]; connections: EditorConnection[]; content_digest: string; }
 export interface EditorBinding { campaign_id: string; base_revision: RevisionRef; record_id: string; record_digest: string | null; expected_editor_workflow_version: number; }
-export interface EditorRecordView { contract_name: "editor_record_view"; contract_version: 1; campaign_id: string; viewed_revision: RevisionRef; head_revision: RevisionRef; editor_workflow_version: number; historical: boolean; editable: boolean; record: EditorRecord; }
+export interface EditorRecordView { contract_name: "editor_record_view"; contract_version: 1; campaign_id: string; viewed_revision: RevisionRef; head_revision: RevisionRef; editor_workflow_version: number; historical: boolean; editable: boolean; adapter_definition?: AdapterDefinitionWire; record: EditorRecord; }
 export interface EditorFinding { finding_id: string; code: string; severity: "error" | "warning"; location: string; retryable: boolean; }
 export interface EditorCard { change_id: string; kind: string; subject_record_id: string; [key: string]: unknown; }
 export interface EditorSourceChange { change_id: string; subject_record_id: string; change_type: string; before_source: string | null; after_source: string | null; }
