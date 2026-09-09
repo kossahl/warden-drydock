@@ -828,6 +828,75 @@ Keep this section.
         self.assertEqual(["record-gate"], [item.target_id for item in connections])
         self.assertEqual([], errors)
 
+    def test_duplicate_connections_heading_preserves_paragraph_content(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Connections
+
+- `guards` -> [[record-gate]] (`current`) — Watches the gate.
+
+## Connections
+
+Authored paragraph stays here.
+It remains a paragraph under the duplicate heading.
+
+## Notes
+Keep this section.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["displayed_name"] = "Keeper Updated"
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+
+        self.assertEqual(2, result.count("## Connections"))
+        self.assertIn(
+            "## Connections\n\nAuthored paragraph stays here.\n"
+            "It remains a paragraph under the duplicate heading.",
+            result,
+        )
+
+    def test_first_connection_is_inserted_after_authored_paragraph(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Connections
+
+Authored paragraph stays intact.
+Its second line remains together.
+
+## Notes
+Keep this section.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["connections"] = [{
+            "connection_id": "connection_one",
+            "target_record_id": "record-gate",
+            "relationship": "connected-to",
+            "state": "current",
+            "context": "Watches the gate.",
+        }]
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+
+        paragraph = "Authored paragraph stays intact.\nIts second line remains together."
+        marker = "<!-- drydock:connection-id=connection_one -->"
+        self.assertIn(paragraph, result)
+        self.assertLess(result.index(paragraph), result.index(marker))
+        self.assertEqual(candidate["connections"], parse_document(result, "record-main", "npc")["connections"])
+
     def test_interleaved_non_typed_content_keeps_original_position(self):
         source = """---
 id: record-main

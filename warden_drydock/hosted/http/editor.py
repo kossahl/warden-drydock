@@ -492,8 +492,6 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
             inserted.append(newline)
         lines[connection_index:connection_index] = inserted
 
-    connection_headers = [i for i, line in enumerate(lines) if line.strip().casefold() == "## connections"]
-
     def typed_connection_slots(heading_index: int, next_heading: int) -> list[tuple[int, int | None, str]]:
         """Return parser-identified rows and their associated editor markers."""
         segment = lines[heading_index + 1:next_heading]
@@ -510,10 +508,6 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
             )
             for index, connection in enumerate(typed_connections, 1)
         ]
-
-    def typed_connection_indexes(heading_index: int, next_heading: int) -> tuple[set[int], set[int]]:
-        slots = typed_connection_slots(heading_index, next_heading)
-        return {line for line, _, _ in slots}, {marker for _, marker, _ in slots if marker is not None}
 
     # Duplicate Connections headings are authored source boundaries. The
     # standalone parser reads only the first block, so preserve every later
@@ -566,7 +560,15 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
                     rewritten[insert_at:insert_at] = added_lines
                 lines[connection_index + 1:next_heading] = rewritten
             else:
-                lines[connection_index + 1:next_heading] = segment[:1] + connection_lines + segment[1:]
+                insert_at = len(segment)
+                while insert_at > 0 and not segment[insert_at - 1].strip():
+                    insert_at -= 1
+                rewritten = segment[:insert_at]
+                if rewritten and rewritten[-1].strip():
+                    rewritten.append(newline)
+                rewritten.extend(connection_lines)
+                rewritten.extend(segment[insert_at:])
+                lines[connection_index + 1:next_heading] = rewritten
     elif new["connections"]:
         if lines and lines[-1].strip():
             lines.append(newline)
