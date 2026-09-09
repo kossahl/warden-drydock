@@ -162,15 +162,14 @@ system and carry exact file:line spans, kept in sync with the code through git.
 For ANY task here — understanding how something works, finding where code lives,
 or scoping a change — get context from the graph before grepping or opening
 source files. Re-ask freely (it's cheap) and reuse literal identifiers you
-already have (symbol, error string, file name) as the query. New to this repo?
-Run `graft map` first — a token-budgeted orientation (dir clusters, hubs,
-hotspots), no LLM, no key.
-
-On a fresh clone, run `graft build` if `graft/` is absent before using the
-queries below. In a reused worktree, run `graft check` after a checkout, pull,
-or rebase and run `graft build` if it reports stale. If the optional `graft`
-CLI is unavailable, continue with the normal repository tools and treat graph
-context as unavailable rather than blocking the task.
+already have (symbol, error string, file name) as the query. Before using the
+graph at the start of every task, and after editing indexed source, run
+`graft check` when `graft/` exists. If `graft/` is absent or the check reports
+stale, run `graft build`. If the optional `graft` CLI is unavailable, continue
+with the normal repository tools and treat graph context as unavailable rather
+than blocking the task. New to this repo? Run `graft map` after that check or
+build — a token-budgeted orientation (dir clusters, hubs, hotspots), no LLM,
+no key.
 
 - Run `graft ask "<your question>" --source` → ranked nodes with the relevant
   code spans inlined (each hit's ≤8-line crux by default; `--full` for whole
@@ -197,6 +196,4 @@ range before finalizing. Only open source files when a node genuinely lacks a
 needed detail, and then at the exact file:line the node points to — never
 re-read whole files.
 
-After big code changes, refresh the graph with `graft build` (deterministic,
-no API key, $0).
 <!-- graft:end -->
