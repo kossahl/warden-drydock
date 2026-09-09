@@ -358,3 +358,29 @@ test("create correction uses the candidate ID, reads campaign context, and opens
   await page.getByRole("dialog").getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-created\?revision=revision_three$/);
 });
+
+test("create validation carries the handout audience rule into the focused field error", async ({ page }) => {
+  await installAtlasApi(page);
+  let proposalPosts = 0;
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/campaign-main/editor")) {
+      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: editorRecord }) });
+    }
+    if (request.method() === "POST" && path.endsWith("/editor/records/proposals")) proposalPosts += 1;
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/__new__?revision=revision_two");
+  const editor = page.locator(".editor").filter({ hasText: "Create record" });
+  await editor.getByLabel("Record type").selectOption("handout");
+  const audience = editor.getByLabel("audience", { exact: true });
+  await editor.getByRole("button", { name: "Submit create proposal" }).click();
+
+  await expect(audience).toHaveAttribute("aria-invalid", "true");
+  await expect(audience).toHaveValue("");
+  await expect(audience).toBeFocused();
+  await expect(editor.getByText("This field is required.")).toBeVisible();
+  expect(proposalPosts).toBe(0);
+});

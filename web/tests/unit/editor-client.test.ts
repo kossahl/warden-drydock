@@ -1,4 +1,5 @@
 import { digest, httpEditorApi, nextConnectionId, recomputeRecordDigest, type EditorRecord } from "../../src/editor/editorClient";
+import { newAdapterRecord, recordDefinitions } from "../../src/editor/adapterDefinition";
 
 const record = (): EditorRecord => ({
   record_id: "record-one", record_type: "npc", displayed_name: "One", status: "draft", authority: "preparation",
@@ -7,6 +8,11 @@ const record = (): EditorRecord => ({
 });
 
 describe("record editor client bindings", () => {
+  it("keeps adapter field validation rules with each record definition", () => {
+    expect(recordDefinitions.handout.nonemptyFields).toEqual(["audience"]);
+    expect(newAdapterRecord("handout").fields.find((field) => field.field_id === "audience")?.value).toBe("");
+  });
+
   it("recomputes the typed record digest without trusting the wire digest", async () => {
     const first = await recomputeRecordDigest(record());
     const changed = record(); changed.content_digest = "f".repeat(64); changed.displayed_name = "Changed";
@@ -125,6 +131,44 @@ describe("record editor client bindings", () => {
     const firstBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     const retryBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
     expect(retryBody).toEqual(firstBody);
+  });
+
+  it("retains the exact operation identity after a retryable service-unavailable response", async () => {
+    const response = { contract_name: "editor_proposal_view", contract_version: 1 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false, headers: new Headers(), json: async () => ({ error: { code: "editor_unavailable", category: "service_unavailable", retryable: true } }),
+        status: 503, statusText: "Service Unavailable", redirected: false, type: "basic", url: "",
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true, headers: new Headers(), json: async () => response,
+        status: 201, statusText: "Created", redirected: false, type: "basic", url: "",
+      } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.clear();
+    const revision = { revision_id: "revision_service_unavailable", ordinal: 1, tree_digest: "0".repeat(64) };
+
+    await expect(httpEditorApi.propose("edit", "campaign_service_unavailable", revision, record(), 7)).rejects.toThrow("editor_unavailable");
+    expect(localStorage.length).toBe(1);
+    await httpEditorApi.propose("edit", "campaign_service_unavailable", revision, record(), 7);
+
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const retryBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(retryBody).toEqual(firstBody);
+    expect(localStorage.length).toBe(0);
+  });
+
+  it("clears the operation identity after a definitive client response", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
+      ok: false, headers: new Headers(), json: async () => ({ error: { code: "workflow_conflict", category: "stale_revision", retryable: false } }),
+      status: 409, statusText: "Conflict", redirected: false, type: "basic", url: "",
+    }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.clear();
+    const revision = { revision_id: "revision_definitive", ordinal: 1, tree_digest: "1".repeat(64) };
+
+    await expect(httpEditorApi.propose("edit", "campaign_definitive", revision, record(), 7)).rejects.toThrow("workflow_conflict");
+    expect(localStorage.length).toBe(0);
   });
 
   it("reserves one operation identity for identical concurrent mutations", async () => {

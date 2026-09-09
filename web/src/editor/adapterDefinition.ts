@@ -15,18 +15,20 @@ function definition(source: string) {
     if (match) metadata[match[1]] = match[2].replace(/^"|"$/g, "");
   }
   return { metadata, fields: Object.keys(metadata).filter((key) => !basics.has(key)),
-    sections: Array.from(source.matchAll(/^## (.+)$/gm), (match) => ({ id: headingId(match[1]), label: match[1] })).filter((section) => section.id !== "connections") };
+    sections: Array.from(source.matchAll(/^## (.+)$/gm), (match) => ({ id: headingId(match[1]), label: match[1] })).filter((section) => section.id !== "connections"),
+    requiredFields: [] as string[], nonemptyFields: [] as string[], requiredValues: {} as Record<string, string>, forbiddenHeadings: [] as string[] };
 }
 export const recordTypes = Object.keys(adapter.entity_types);
 export const relationships = Object.keys(adapter.connections.relationships);
 export const connectionStates = adapter.connections.states;
-type RecordDefinition = { metadata: Record<string, string>; fields: string[]; sections: { id: string; label: string }[] };
+type RecordDefinition = { metadata: Record<string, string>; fields: string[]; sections: { id: string; label: string }[]; requiredFields: string[]; nonemptyFields: string[]; requiredValues: Record<string, string>; forbiddenHeadings: string[] };
 export const recordDefinitions = Object.fromEntries([
   ...Object.values(projectTemplates).map(definition).filter((item) => item.metadata.type),
   ...Object.entries(adapter.entity_types).map(([type, spec]) => {
     const source = Object.entries(templates).find(([path]) => path.endsWith(`/${spec.template}`))?.[1];
     if (!source) throw new Error(`Missing adapter template for ${type}`);
-    return { ...definition(source), metadata: { ...definition(source).metadata, type } };
+    const rules = spec as { required_fields?: string[]; nonempty_fields?: string[]; required_values?: Record<string, string>; forbidden_headings?: string[] };
+    return { ...definition(source), metadata: { ...definition(source).metadata, type }, requiredFields: rules.required_fields ?? [], nonemptyFields: rules.nonempty_fields ?? [], requiredValues: rules.required_values ?? {}, forbiddenHeadings: rules.forbidden_headings ?? [] };
   }),
 ].map((item) => [item.metadata.type, item])) as Record<string, RecordDefinition>;
 export function newAdapterRecord(type = "npc", recordId = "new-record", name = "New record"): EditorRecord {

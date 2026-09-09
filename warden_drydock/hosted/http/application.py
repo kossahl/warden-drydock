@@ -1567,10 +1567,14 @@ class SliceApplication:
 
     @staticmethod
     def _editor_transition_changes(before: dict | None, after: dict | None, change_id: str) -> tuple[list[dict], list[dict]]:
-        if before is None or after is None:
+        if after is None:
             return [], []
         authority = []
         visibility = []
+        if before is None:
+            if after["authority"] in {"canon", "revealed"}:
+                authority.append({"change_id": change_id, "record_id": after["record_id"], "from": "absent", "to": after["authority"], "explicit_in_diff": True, "warden_approval_required": True})
+            return authority, visibility
         if before["authority"] != after["authority"]:
             authority.append({"change_id": change_id, "record_id": after["record_id"], "from": before["authority"], "to": after["authority"], "explicit_in_diff": True, "warden_approval_required": True})
         if before["visibility"] != after["visibility"]:
@@ -1854,7 +1858,9 @@ class SliceApplication:
         core_changes = []
         for card in cards:
             document = card.get("after") if isinstance(card.get("after"), dict) and "content_digest" in card["after"] else card.get("before")
-            core_changes.append({"change_id": card["change_id"], "subject_id": card["subject_record_id"], "change_type": "add" if card["kind"] == "record_created" else ("remove" if card["kind"] == "record_removed" else "update"), "from_authority": document.get("authority", "absent") if isinstance(document, dict) else "preparation", "to_authority": (card["after"].get("authority") if isinstance(card.get("after"), dict) and "authority" in card["after"] else ("absent" if card["kind"] == "record_removed" else document.get("authority", "preparation") if isinstance(document, dict) else "preparation")), "content_digest": document.get("content_digest", text_digest(json.dumps(card.get("connection"), sort_keys=True))) if isinstance(document, dict) else text_digest(json.dumps(card.get("connection"), sort_keys=True))})
+            from_authority = "absent" if card["kind"] == "record_created" else (document.get("authority", "absent") if isinstance(document, dict) else "preparation")
+            to_authority = (card["after"].get("authority") if isinstance(card.get("after"), dict) and "authority" in card["after"] else ("absent" if card["kind"] == "record_removed" else document.get("authority", "preparation") if isinstance(document, dict) else "preparation"))
+            core_changes.append({"change_id": card["change_id"], "subject_id": card["subject_record_id"], "change_type": "add" if card["kind"] == "record_created" else ("remove" if card["kind"] == "record_removed" else "update"), "from_authority": from_authority, "to_authority": to_authority, "content_digest": document.get("content_digest", text_digest(json.dumps(card.get("connection"), sort_keys=True))) if isinstance(document, dict) else text_digest(json.dumps(card.get("connection"), sort_keys=True))})
         proposal_binding = dict(binding, expected_editor_workflow_version=current + 1)
         value = {"contract_name": "editor_proposal_view", "contract_version": 1, "proposal_id": proposal_id, "proposal_version": version, "campaign_id": campaign_id, "source_revision": self._editor_revision_ref(self.campaigns[campaign_id].revisions[revision_id]), "base_revision": self._editor_revision_ref(self.campaigns[campaign_id].revisions[revision_id]), "expected_campaign_head": self._editor_revision_ref(self.campaigns[campaign_id].revisions[revision_id]), "editor_workflow_version": current + 1, "proposal_payload_digest": "0" * 64, "mutation_kind": kind, "record_bindings": [proposal_binding], "core_proposal": {"contract_name": "canon_proposal", "contract_version": 2, "draft": {"draft_id": proposal_id, "authority": "draft", "source_set_digest": text_digest(change.replacement), "content_digest": text_digest(change.replacement)}, "proposal": {"proposal_id": proposal_id, "proposal_version": version, "status": "needs_review", "campaign_id": campaign_id, "base_revision": revision_id, "source_revision": revision_id, "expected_campaign_head": revision_id, "expected_editor_workflow_version": current + 1, "diff_digest": digest, "authority_change_ids": [item["change_id"] for item in authority_changes], "visibility_change_ids": [item["change_id"] for item in visibility_changes], "changes": core_changes}, "validation": {"status": "passed", "validation_digest": validation_digest, "error_count": 0}, "approval_binding": None}, "diff": {"diff_digest": digest, "cards": cards, "affected_record_count": affected_record_count, "authority_changes": authority_changes, "visibility_changes": visibility_changes, "unresolved_reference_count": diff_projection["unresolved_reference_count"], "impact_digest": removal_impact["impact_digest"] if removal_impact else None, "source_changes": source_changes, "summary": kind}, "impact_digest": removal_impact["impact_digest"] if removal_impact else None, "impact_binding": {"binding": binding, "impact_digest": removal_impact["impact_digest"]} if removal_impact else None, "resolutions": resolutions if kind == "remove" else [], "validation": validation, "authority_outcome": authority_changes, "visibility_outcome": visibility_changes, "publication": {"status": "not_published", "published_revision": None}}
         if correction_of is not None:

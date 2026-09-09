@@ -200,11 +200,16 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
         for key in ("before", "after"):
             if isinstance(card.get(key), dict) and "content_digest" in card[key]:
                 _record(card[key], f"card.{card['change_id']}.{key}")
-        if card["kind"] in {"record_created", "record_updated"} and card.get("before") is not None and card.get("after") is not None:
-            before, after = card["before"], card["after"]
-            if before["authority"] != after["authority"]:
-                actual_authority.add((card["change_id"], card["subject_record_id"], before["authority"], after["authority"]))
-            if before["visibility"] != after["visibility"]:
+        if card["kind"] in {"record_created", "record_updated"} and isinstance(card.get("after"), dict):
+            before, after = card.get("before"), card["after"]
+            before_authority = before["authority"] if isinstance(before, dict) else "absent"
+            if before is None:
+                authority_transition = after["authority"] in {"canon", "revealed"}
+            else:
+                authority_transition = before_authority != after["authority"]
+            if authority_transition:
+                actual_authority.add((card["change_id"], card["subject_record_id"], before_authority, after["authority"]))
+            if isinstance(before, dict) and before["visibility"] != after["visibility"]:
                 actual_visibility.add((card["change_id"], card["subject_record_id"], json.dumps(before["visibility"], sort_keys=True), json.dumps(after["visibility"], sort_keys=True)))
     declared_authority = {(x["change_id"], x["record_id"], x["from"], x["to"]) for x in value["diff"]["authority_changes"]}
     declared_visibility = {(x["change_id"], x["record_id"], json.dumps(x["before"], sort_keys=True), json.dumps(x["after"], sort_keys=True)) for x in value["diff"]["visibility_changes"]}
@@ -214,7 +219,9 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
     _equal(value["visibility_outcome"], value["diff"]["visibility_changes"], "unsafe_binding", "visibility_outcome")
     for change in value["diff"]["authority_changes"]:
         card = next((card for card in cards if card["change_id"] == change["change_id"]), None)
-        if card is None or card.get("before") is None or card.get("after") is None or (change["record_id"], change["from"], change["to"]) != (card["subject_record_id"], card["before"]["authority"], card["after"]["authority"]):
+        before_authority = card["before"]["authority"] if isinstance(card, dict) and isinstance(card.get("before"), dict) else "absent"
+        after = card.get("after") if isinstance(card, dict) else None
+        if card is None or not isinstance(after, dict) or (change["record_id"], change["from"], change["to"]) != (card["subject_record_id"], before_authority, after["authority"]):
             _fail("unsafe_binding", "authority change card")
     for change in value["diff"]["visibility_changes"]:
         card = next((card for card in cards if card["change_id"] == change["change_id"]), None)

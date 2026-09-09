@@ -6,6 +6,7 @@ import unittest
 from tests.hosted.http import test_editor_backend as _editor_backend
 from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input
 from warden_drydock.hosted.http.editor import (
+    adapter_editor_definition,
     document_digest,
     mutate_document,
     parse_document,
@@ -50,6 +51,28 @@ class EditorSourcePreservationTests(unittest.TestCase):
         return revision, candidate, self.app.editor_record_edit(
             "campaign_alpha", revision, "campaign-main", payload,
         )
+
+    def test_section_reordering_is_rejected_before_source_mutation(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Summary
+Keep this record.
+
+## Wants
+Keep these wants.
+"""
+        before = parse_document(source, "record-main", "npc")
+        candidate = deepcopy(before)
+        candidate["sections"] = [candidate["sections"][1], candidate["sections"][0]]
+
+        with self.assertRaisesRegex(ValueError, "editor_section_reordering_not_allowed"):
+            validate_adapter_document(candidate, adapter_editor_definition("mothership"), before)
 
     def test_multiple_section_edits_publish_reviewed_candidate_and_keep_history(self):
         revision = self.app.workflow.head("campaign_alpha")
@@ -752,6 +775,55 @@ Preserve this unrelated section.
         self.assertIn("## Notes\nPreserve this unrelated section.", result)
         self.assertIn("## Connections", result)
         self.assertNotIn("## Third", result)
+
+    def test_section_reordering_is_rejected(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## First
+First body.
+
+## Second
+Second body.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["sections"] = list(reversed(candidate["sections"]))
+        candidate["displayed_name"] = "Updated Keeper"
+        candidate["content_digest"] = document_digest(candidate)
+
+        with self.assertRaisesRegex(ValueError, "editor_section_reordering_not_allowed"):
+            mutate_document(source, candidate)
+
+    def test_section_reordering_with_new_section_is_rejected(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## First
+First body.
+
+## Second
+Second body.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["sections"] = [
+            candidate["sections"][1],
+            {"section_id": "inserted", "body": "Inserted body."},
+            candidate["sections"][0],
+        ]
+        candidate["content_digest"] = document_digest(candidate)
+
+        with self.assertRaisesRegex(ValueError, "editor_section_reordering_not_allowed"):
+            mutate_document(source, candidate)
 
     def test_crlf_multiple_section_edits_restore_source_newline_convention(self):
         source = (

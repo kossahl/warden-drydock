@@ -99,13 +99,13 @@ class EditorBackendTests(unittest.TestCase):
             self._editor_approval_payload(proposal),
         )
 
-    def _create_record(self, record_id, *, record_type="npc", connections=None):
+    def _create_record_proposal(self, record_id, *, record_type="npc", authority="preparation", connections=None):
         revision = self.app.workflow.head("campaign_alpha")
         workflow = self.app._editor_version("campaign_alpha")
         view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
         candidate = {
             "record_id": record_id, "record_type": record_type, "displayed_name": record_id,
-            "status": "draft", "authority": "preparation",
+            "status": authority if authority in {"canon", "revealed"} else "draft", "authority": authority,
             "visibility": {"audience": "warden", "warden_only": True},
             "fields": [{"field_id": "ownership", "value": "campaign"}],
             "sections": [{"section_id": "summary", "body": "Synthetic record."}],
@@ -129,6 +129,10 @@ class EditorBackendTests(unittest.TestCase):
         }
         operation["payload_digest"] = canonical_digest(request_digest_input(payload))
         _, proposal = self.app.editor_record_create("campaign_alpha", revision, payload)
+        return proposal
+
+    def _create_record(self, record_id, *, record_type="npc", authority="preparation", connections=None):
+        proposal = self._create_record_proposal(record_id, record_type=record_type, authority=authority, connections=connections)
         self._approve_editor(proposal)
         return self.app.workflow.head("campaign_alpha")
 
@@ -145,6 +149,32 @@ class EditorBackendTests(unittest.TestCase):
         status, view = self.app.editor_record_read("campaign_alpha", revision, "x")
         self.assertEqual(200, status)
         self.assertEqual("x", view["record"]["record_id"])
+
+    def test_canon_creation_reports_absent_authority_transition_through_approval(self):
+        proposal = self._create_record_proposal("record-canon", authority="canon")
+
+        self.assertEqual(("absent", "canon"), (
+            proposal["diff"]["authority_changes"][0]["from"],
+            proposal["diff"]["authority_changes"][0]["to"],
+        ))
+        self.assertEqual(proposal["diff"]["authority_changes"], proposal["authority_outcome"])
+        core_change = proposal["core_proposal"]["proposal"]["changes"][0]
+        self.assertEqual(("absent", "canon"), (core_change["from_authority"], core_change["to_authority"]))
+
+        status, result = self._approve_editor(proposal)
+        self.assertEqual((200, "published"), (status, result["outcome"]))
+        published = self.app.editor_record_read(
+            "campaign_alpha", result["published_revision"]["revision_id"], "record-canon",
+        )[1]["record"]
+        self.assertEqual("canon", published["authority"])
+
+    def test_preparation_creation_has_no_authority_transition(self):
+        proposal = self._create_record_proposal("record-preparation")
+
+        self.assertEqual([], proposal["diff"]["authority_changes"])
+        self.assertEqual([], proposal["authority_outcome"])
+        core_change = proposal["core_proposal"]["proposal"]["changes"][0]
+        self.assertEqual(("absent", "preparation"), (core_change["from_authority"], core_change["to_authority"]))
 
     def test_stale_record_digest_fails_before_mutation(self):
         revision = self.app.workflow.head("campaign_alpha")

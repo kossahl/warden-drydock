@@ -322,6 +322,12 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
     """
     old = parse_document(before, candidate["record_id"], candidate.get("record_type"))
     new = _document(candidate)
+    old_section_ids = [item["section_id"] for item in old["sections"]]
+    new_section_ids = [item["section_id"] for item in new["sections"]]
+    old_common = [section_id for section_id in old_section_ids if section_id in new_section_ids]
+    new_common = [section_id for section_id in new_section_ids if section_id in old_section_ids]
+    if old_common != new_common:
+        raise ValueError("editor_section_reordering_not_allowed")
     duplicate_connections = len(re.findall(r"(?im)^##\s+connections\s*$", normalize_text(before))) > 1
     if _typed_equal(old, new) and not duplicate_connections:
         return before
@@ -599,6 +605,13 @@ def validate_adapter_document(candidate: dict, definition: dict, before: dict | 
     spec = definition["records"].get(candidate["record_type"])
     if spec is None or (before is None and candidate["record_type"] not in definition["creatable"]):
         raise ValueError("record_type_unknown")
+    if before is not None:
+        old_section_ids = [item["section_id"] for item in before["sections"]]
+        new_section_ids = [item["section_id"] for item in candidate["sections"]]
+        old_common = [section_id for section_id in old_section_ids if section_id in new_section_ids]
+        new_common = [section_id for section_id in new_section_ids if section_id in old_section_ids]
+        if old_common != new_common:
+            raise ValueError("editor_section_reordering_not_allowed")
     for collection, key in (("fields", "field_id"), ("sections", "section_id")):
         old = {item[key]: item for item in before[collection]} if before else {}
         new = {item[key]: item for item in candidate[collection]}
