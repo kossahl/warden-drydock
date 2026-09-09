@@ -501,7 +501,7 @@ class EditorBackendTests(unittest.TestCase):
 
         self.assertEqual((422, "required_record_removal"), (caught.exception.status, caught.exception.payload["error"]["code"]))
 
-    def test_mutation_preserves_source_sections_comments_and_single_connections_heading(self):
+    def test_mutation_preserves_source_sections_comments_and_duplicate_connections_heading(self):
         source = """---
 id: record-main
 type: npc
@@ -531,11 +531,11 @@ Preserve this unrelated section.
 
         result = mutate_document(source, candidate)
 
-        self.assertEqual(1, result.count("## Connections"))
+        self.assertEqual(2, result.count("## Connections"))
         self.assertIn("<!-- Preserve this source comment. -->", result)
         self.assertIn("## Notes\nPreserve this unrelated section.", result)
         self.assertIn("warden_only: false", result)
-        self.assertNotIn("visits", result)
+        self.assertIn("- `visits` -> [[record-gate]] (`current`) — Checks in.", result)
 
     def test_mutation_preserves_crlf_without_doubled_carriage_returns(self):
         source = "---\r\nid: record-main\r\ntype: npc\r\nname: Keeper\r\nstatus: draft\r\nvisibility: warden\r\n---\r\n\r\n## Summary\r\nKeep this section.\r\n"

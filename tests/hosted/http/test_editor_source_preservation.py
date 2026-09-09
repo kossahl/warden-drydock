@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import shutil
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests.hosted.http import test_editor_backend as _editor_backend
 from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input
+from warden_drydock.core.generator import DATA
 from warden_drydock.hosted.http.editor import (
     adapter_editor_definition,
     document_digest,
@@ -415,7 +417,7 @@ type: npc
 name: Keeper
 status: draft
 visibility: warden
-score: 1.0
+score: 1.5
 enabled: true
 ratio: 1.5
 ---
@@ -435,11 +437,11 @@ Keep this record.
             parse_document(source, "record-main", "npc"), candidate,
         )
         self.assertIn(
-            {"property": "fields.score", "before": 1.0, "after": 1},
+            {"property": "fields.score", "before": 1.5, "after": 1},
             property_changes,
         )
         self.assertIn(
-            {"property": "fields.score", "before": 1.0, "after": 1},
+            {"property": "fields.score", "before": 1.5, "after": 1},
             _property_changes(parse_document(source, "record-main", "npc"), candidate),
         )
 
@@ -502,7 +504,7 @@ type: npc
 name: Keeper
 status: draft
 visibility: warden
-count: 9007199254740992.0
+count: 1.0
 ---
 
 ## Summary
@@ -511,6 +513,51 @@ Keep this record.
 
         with self.assertRaisesRegex(ValueError, "invalid_field_value"):
             parse_document(source, "record-main", "npc")
+
+    def test_custom_frontmatter_keys_survive_typed_mutation(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+Custom Note: Keep this authored metadata.
+---
+
+## Summary
+Keep this record.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        self.assertNotIn("Custom Note", {field["field_id"] for field in candidate["fields"]})
+        candidate["displayed_name"] = "Updated Keeper"
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+
+        self.assertIn("Custom Note: Keep this authored metadata.\n", result)
+        self.assertEqual("Updated Keeper", parse_document(result, "record-main", "npc")["displayed_name"])
+
+    def test_project_definitions_are_loaded_from_bound_revision(self):
+        revision_root = Path(self.backend.tmp.name) / "revision"
+        shutil.copytree(DATA / "adapters" / "mothership", revision_root)
+        project_template = revision_root / "01-campaign" / "campaign-overview.md"
+        project_template.parent.mkdir(parents=True, exist_ok=True)
+        project_template.write_text("""---
+id: campaign-main
+type: campaign
+status: draft
+ownership: campaign
+name: \"{{campaign_name}}\"
+bound_revision_field: \"from revision\"
+---
+
+## Bound section
+""", encoding="utf-8")
+
+        definition = adapter_editor_definition("mothership", revision_root)
+
+        self.assertIn("bound_revision_field", definition["records"]["campaign"]["fields"])
+        self.assertNotIn("system", definition["records"]["campaign"]["fields"])
 
     def test_unsupported_adapter_fields_use_typed_equality(self):
         before = {
@@ -773,7 +820,7 @@ Keep this section.
         self.assertIn("Duplicate prose stays here.", result)
         self.assertIn("<!-- Preserve this duplicate comment. -->", result)
         self.assertIn("- An ordinary duplicate bullet stays here.", result)
-        self.assertNotIn("visits", result)
+        self.assertIn("- `visits` -> [[record-hall]] (`current`) — Checks in.", result)
         self.assertIn("## Notes\nKeep this section.", result)
         connections, errors = parse_connections(
             result, source_id="record-main", path=Path("record-main.md")

@@ -24,6 +24,7 @@ from .contracts import canonical_digest, normalize_text, text_digest
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _PUBLIC = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+_FIELD_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,79}$")
 _CONNECTION_MARKER = re.compile(
     r"^\s*<!--\s*drydock:connection-id=(?P<id>[a-z][a-z0-9]*(?:_[a-z0-9]+)*)\s*-->\s*$"
 )
@@ -121,7 +122,7 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
             or (
                 isinstance(scalar, float)
                 and math.isfinite(scalar)
-                and (not scalar.is_integer() or abs(scalar) <= _MAX_SAFE_INTEGER)
+                and not scalar.is_integer()
             )
         ):
             raise ValueError("invalid_field_value")
@@ -275,7 +276,9 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
         conn.append({"connection_id": connection_id, "target_record_id": item.target_id,
                      "relationship": item.relationship, "state": item.state,
                      "context": item.context.rstrip()})
-    fields = [{"field_id": key, "value": value} for key, value in metadata.items() if key not in {"id", "type", "name", "status", "visibility", "warden_only"}]
+    fields = [{"field_id": key, "value": value} for key, value in metadata.items()
+              if key not in {"id", "type", "name", "status", "visibility", "warden_only"}
+              and _FIELD_ID.fullmatch(key)]
     audience = metadata.get("visibility", "warden")
     raw_warden_only = metadata.get("warden_only")
     warden_only = (raw_warden_only.lower() == "true") if isinstance(raw_warden_only, str) else (raw_warden_only if isinstance(raw_warden_only, bool) else audience == "warden")
@@ -354,8 +357,7 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
     new_common = [section_id for section_id in new_section_ids if section_id in old_section_ids]
     if old_common != new_common:
         raise ValueError("editor_section_reordering_not_allowed")
-    duplicate_connections = len(re.findall(r"(?im)^##\s+connections\s*$", normalize_text(before))) > 1
-    if _typed_equal(old, new) and not duplicate_connections:
+    if _typed_equal(old, new):
         return before
     newline = "\r\n" if "\r\n" in before else "\n"
     source = before.replace("\r\n", "\n").replace("\r", "\n")
@@ -404,7 +406,8 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         if key not in original_keys:
             lines.insert(insert_at, f"{key}: {_format_frontmatter_value(value)}{newline}")
             insert_at += 1
-    removed_keys = original_keys - set(all_values)
+    managed_keys = set(metadata_keys) | set(old_field_values)
+    removed_keys = (original_keys & managed_keys) - set(all_values)
     if removed_keys:
         lines[1:end] = [line for line in lines[1:end] if not (
             (match := re.match(r"^([^:#\s][^:]*):", line)) and match.group(1).strip() in removed_keys
@@ -512,23 +515,10 @@ def mutate_document(before: str, candidate: Mapping[str, Any]) -> str:
         slots = typed_connection_slots(heading_index, next_heading)
         return {line for line, _, _ in slots}, {marker for _, marker, _ in slots if marker is not None}
 
-    # A source document may have acquired duplicate typed connection headings
-    # outside the editor. Remove typed rows and markers, but keep a duplicate
-    # heading as a boundary when authored bullets remain in its block.
-    for duplicate_index in reversed(connection_headers[1:]):
-        next_heading = next((i for i in range(duplicate_index + 1, len(lines)) if re.match(r"^##\s+", lines[i])), len(lines))
-        typed_indexes, marker_indexes = typed_connection_indexes(duplicate_index, next_heading)
-        remaining = [
-            line
-            for index, line in enumerate(lines[duplicate_index + 1:next_heading], duplicate_index + 1)
-            if index not in typed_indexes and index not in marker_indexes
-        ]
-        lines[duplicate_index + 1:next_heading] = remaining
-        # Keep the duplicate as a parser boundary when authored bullets remain;
-        # otherwise they would become malformed rows in the first block.
-        if any(line.lstrip().startswith("-") for line in remaining):
-            continue
-        del lines[duplicate_index]
+    # Duplicate Connections headings are authored source boundaries. The
+    # standalone parser reads only the first block, so preserve every later
+    # block byte-for-byte instead of deleting rows that are outside the typed
+    # candidate.
     connection_index = next((i for i, line in enumerate(lines) if line.strip().casefold() == "## connections"), None)
     if connection_index is not None:
         if old["connections"] != new["connections"]:
@@ -621,8 +611,12 @@ def adapter_editor_definition(adapter_id: str, revision_root: Path | None = None
         (kind, (root / spec["template"]).read_text(encoding="utf-8"), spec)
         for kind, spec in config["entity_types"].items()
     ]
-    for path in (DATA / "project_template").rglob("*.md"):
-        source = path.read_text(encoding="utf-8")
+    project_template_root = DATA / "project_template"
+    for path in project_template_root.rglob("*.md"):
+        bound_path = (revision_root / path.relative_to(project_template_root)) if revision_root else path
+        if not bound_path.is_file():
+            continue
+        source = bound_path.read_text(encoding="utf-8")
         kind = frontmatter(source).get("type")
         if kind and kind not in config["entity_types"]:
             sources.append((kind, source, {}))
