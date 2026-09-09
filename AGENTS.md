@@ -166,6 +166,11 @@ already have (symbol, error string, file name) as the query. New to this repo?
 Run `graft map` first — a token-budgeted orientation (dir clusters, hubs,
 hotspots), no LLM, no key.
 
+On a fresh clone, run `graft build` if `graft/` is absent before using the
+queries below. If the optional `graft` CLI is unavailable, continue with the
+normal repository tools and treat graph context as unavailable rather than
+blocking the task.
+
 - Run `graft ask "<your question>" --source` → ranked nodes with the relevant
   code spans inlined (each hit's ≤8-line crux by default; `--full` for whole
   definitions when the crux isn't enough). Match the tool to the task shape:
