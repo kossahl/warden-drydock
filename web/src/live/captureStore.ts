@@ -146,12 +146,16 @@ function assertReceipt(value: ReceiptIdentity): void {
   assertPublicId(value.operationId, "operation_id");
 }
 
+function ordinalCompare(left: string, right: string): number {
+  return left === right ? 0 : left < right ? -1 : 1;
+}
+
 function sortedReceipts(values: readonly ReceiptIdentity[]): ReceiptIdentity[] {
   const result = values.map((value) => ({ ...value }));
   result.forEach(assertReceipt);
   const keys = result.map((value) => `${value.deviceId}\u0000${value.operationId}`);
   if (new Set(keys).size !== keys.length) throw new Error("required_operation_ids_duplicate");
-  return result.sort((a, b) => `${a.deviceId}\u0000${a.operationId}`.localeCompare(`${b.deviceId}\u0000${b.operationId}`));
+  return result.sort((a, b) => ordinalCompare(`${a.deviceId}\u0000${a.operationId}`, `${b.deviceId}\u0000${b.operationId}`));
 }
 
 function captureKey(sessionId: string, deviceId: string, operationId: string): string {
@@ -219,7 +223,7 @@ export async function endDigest(input: StoredEndIntent | Omit<StoredEndIntent, "
     text: "",
     required_operation_ids: input.requiredOperationIds
       .map(({ deviceId, operationId }) => [deviceId, operationId])
-      .sort(([a, aOperation], [b, bOperation]) => `${a}\u0000${aOperation}`.localeCompare(`${b}\u0000${bOperation}`)),
+      .sort(([a, aOperation], [b, bOperation]) => ordinalCompare(`${a}\u0000${aOperation}`, `${b}\u0000${bOperation}`)),
   });
 }
 
@@ -269,7 +273,7 @@ export class MemoryCaptureStore implements CaptureStore {
   public async listCaptures(sessionId: PublicId): Promise<StoredCapture[]> {
     return [...this.captures.values()]
       .filter((capture) => capture.sessionId === sessionId)
-      .sort((a, b) => a.deviceOrder - b.deviceOrder || `${a.deviceId}\u0000${a.operationId}`.localeCompare(`${b.deviceId}\u0000${b.operationId}`))
+      .sort((a, b) => a.deviceOrder - b.deviceOrder || ordinalCompare(`${a.deviceId}\u0000${a.operationId}`, `${b.deviceId}\u0000${b.operationId}`))
       .map(copyCapture);
   }
 
@@ -507,7 +511,7 @@ class IndexedDbCaptureStore implements CaptureStore {
     return new Promise((resolve, reject) => {
       const transaction = database.transaction(captureStore, "readonly");
       const request = transaction.objectStore(captureStore).index("sessionId").getAll(sessionId);
-      request.onsuccess = () => resolve((request.result as StoredCapture[]).sort((a, b) => a.deviceOrder - b.deviceOrder || `${a.deviceId}\u0000${a.operationId}`.localeCompare(`${b.deviceId}\u0000${b.operationId}`)).map(copyCapture));
+      request.onsuccess = () => resolve((request.result as StoredCapture[]).sort((a, b) => a.deviceOrder - b.deviceOrder || ordinalCompare(`${a.deviceId}\u0000${a.operationId}`, `${b.deviceId}\u0000${b.operationId}`)).map(copyCapture));
       request.onerror = () => reject(new CaptureStorageError(request.error?.message ?? "indexeddb_capture_list_failed"));
       transaction.oncomplete = () => database.close();
       transaction.onerror = () => { database.close(); reject(new CaptureStorageError(transaction.error?.message ?? "indexeddb_capture_list_failed")); };
@@ -692,7 +696,13 @@ export class CaptureQueue {
     return this.store.saveEnd(input);
   }
 
-  public async sync(sessionId: PublicId): Promise<CaptureSyncResult> {
+  public sync(sessionId: PublicId): Promise<CaptureSyncResult> {
+    const locks = globalThis.navigator?.locks;
+    if (!locks) return this.syncUnlocked(sessionId);
+    return locks.request(`warden-drydock-live-sync:${sessionId}`, { mode: "exclusive" }, () => this.syncUnlocked(sessionId));
+  }
+
+  private async syncUnlocked(sessionId: PublicId): Promise<CaptureSyncResult> {
     let captures = await this.store.listCaptures(sessionId);
     let end = await this.store.getEnd(sessionId);
     let workflowVersion: number | undefined;
