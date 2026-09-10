@@ -14,6 +14,7 @@
     "negative/removal-outgoing-extra-card.json",
     "negative/removal-outgoing-mismatch-card.json",
     "negative/removal-outgoing-missing-card.json",
+    "negative/source-snapshot-mismatch.json",
     "negative/replay-mismatch.json",
     "negative/stale-record-digest.json",
     "negative/stale-revision.json",

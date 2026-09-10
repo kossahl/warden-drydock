@@ -81,6 +81,106 @@ def projection_digest(value: dict, definition: dict) -> str:
     return canonical_digest(projection)
 
 
+def source_snapshots_match(diff: dict) -> bool:
+    required_metadata = {
+        "id",
+        "type",
+        "status",
+        "ownership",
+        "name",
+        "visibility",
+        "warden_only",
+    }
+    for source in diff.get("source_changes", []):
+        subject = source.get("subject_record_id")
+        resolution = next(
+            (
+                card
+                for card in diff.get("cards", [])
+                if card.get("kind") == "reference_resolution"
+                and card.get("subject_record_id") == subject
+            ),
+            None,
+        )
+        for side in ("before", "after"):
+            source_text = source.get(f"{side}_source")
+            if source_text is None:
+                continue
+            metadata = frontmatter(source_text)
+            if not required_metadata.issubset(metadata) or metadata.get("id") != subject:
+                return False
+            structured = next(
+                (
+                    card[side]
+                    for card in diff.get("cards", [])
+                    if card.get("subject_record_id") == subject
+                    and isinstance(card.get(side), dict)
+                    and "record_id" in card[side]
+                ),
+                None,
+            )
+            if structured is not None:
+                if any(
+                    (
+                        structured["record_type"] != metadata["type"],
+                        structured["displayed_name"] != metadata["name"],
+                        structured["status"] != metadata["status"],
+                        structured["visibility"]["audience"] != metadata["visibility"],
+                        str(structured["visibility"]["warden_only"]).lower()
+                        != metadata["warden_only"],
+                    )
+                ):
+                    return False
+                for field in structured["fields"]:
+                    if str(field["value"]) != metadata.get(field["field_id"]):
+                        return False
+                for section in structured["sections"]:
+                    actual = [
+                        line
+                        for _, line in _section_lines(source_text, section["section_id"])
+                        if line.strip()
+                    ]
+                    if section["body"].splitlines() != actual:
+                        return False
+                expected_connections = [
+                    (
+                        connection["target_record_id"],
+                        connection["relationship"],
+                        connection["state"],
+                        connection["context"],
+                    )
+                    for connection in structured["connections"]
+                ]
+            else:
+                if resolution is None:
+                    return False
+                reference = resolution["before"]
+                target = (
+                    resolution["after"]["replacement_target_record_id"]
+                    if side == "after"
+                    else reference["target_record_id"]
+                )
+                expected_connections = [
+                    (
+                        target,
+                        reference["relationship"],
+                        reference["state"],
+                        reference["context"],
+                    )
+                ]
+            parsed_connections, errors = parse_connections(
+                source_text,
+                source_id=subject,
+                path=Path("synthetic.md"),
+            )
+            if errors or expected_connections != [
+                (item.target_id, item.relationship, item.state, item.context)
+                for item in parsed_connections
+            ]:
+                return False
+    return True
+
+
 def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     """Return the first contract violation found in a negative fixture."""
     instance = fixture["instance"]
@@ -161,6 +261,8 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
             card_subjects = {card.get("subject_record_id") for card in diff.get("cards", [])}
             source_subjects = [source.get("subject_record_id") for source in diff.get("source_changes", [])]
             if len(source_subjects) != len(set(source_subjects)) or set(source_subjects) != card_subjects:
+                return "mutation_consistency", "diff.source_changes"
+            if not source_snapshots_match(diff):
                 return "mutation_consistency", "diff.source_changes"
         removed_card = next(
             (card for card in diff.get("cards", []) if card.get("kind") == "record_removed"),
@@ -404,6 +506,11 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             with self.subTest(route=route_id):
                 self.assertIn("proposal_approval_conflict", route["error_status"]["409"])
                 self.assertNotIn("proposal_approval_conflict", route["error_status"]["422"])
+        approval_route = next(
+            item for item in self.routes["routes"] if item["id"] == "editor_proposal_approve"
+        )
+        self.assertIn("quarantine_failure", approval_route["error_status"]["409"])
+        self.assertIn("publication_intent_failure", approval_route["error_status"]["503"])
 
     def test_corrections_use_mutation_candidates(self) -> None:
         correction = deepcopy(next(item["payload"] for item in self.examples_document["examples"] if item["name"] == "correction_request"))

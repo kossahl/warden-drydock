@@ -103,10 +103,12 @@ own digest and summary, `validation_digest` excludes its own digest, and
 sort lexicographically, array order remains significant, and canonical text
 normalizes CRLF and CR to LF without trimming.
 
-Every `editor_diff` includes one or more `source_changes` entries with the
-exact before and after Markdown source for each affected record. Clients render
-these server-produced snapshots directly during exact proposal review; they do
-not reconstruct source from parsed record documents.
+Every `editor_diff` includes exactly one `source_changes` entry for each
+affected record, with the exact before and after Markdown source. The
+frontmatter, headings, fields, sections, and typed connections in each
+non-null snapshot must agree with its structured record or reference-resolution
+card. Clients render these server-produced snapshots directly during exact
+proposal review; they do not reconstruct source from parsed record documents.
 
 Approval requests carry only a closed diff binding: the diff digest and the
 confirmed change, authority-change, and visibility-change IDs. The full
