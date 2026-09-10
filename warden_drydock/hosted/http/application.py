@@ -1528,7 +1528,7 @@ class SliceApplication:
             self._id("command", request_id, "editor_validate_base"), base_handle,
         ))
         inherited_warnings = {
-            finding.code for finding in base_validation.findings
+            (finding.code, finding.subject_id) for finding in base_validation.findings
             if finding.severity.value == "warning"
         }
         result = self.engine.stage_exact_diff(StageExactDiffRequest(
@@ -1548,7 +1548,7 @@ class SliceApplication:
                 }
                 for index, finding in enumerate(result.findings)
                 if finding.severity.value == "error"
-                or (finding.severity.value == "warning" and finding.code not in inherited_warnings)
+                or (finding.severity.value == "warning" and (finding.code, finding.subject_id) not in inherited_warnings)
             ]
         code = next((finding.code for finding in result.findings if finding.severity.value == "error"), None)
         if code is None and any(change.change_kind is ChangeKind.CREATE for change in changes):

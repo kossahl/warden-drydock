@@ -314,7 +314,7 @@ class DeterministicEngine:
         findings: list[Finding] = []
         for line in output.splitlines():
             if line.startswith("WARNING:"):
-                findings.append(Finding("validation_warning", Severity.WARNING, stage, handle.value))
+                findings.append(Finding("validation_warning", Severity.WARNING, stage, line[len("WARNING:"):].strip()))
             elif line.startswith("ERROR:"):
                 findings.append(Finding("validation_error", Severity.ERROR, stage, handle.value))
         return tuple(findings)

@@ -344,23 +344,26 @@ class EditorBackendTests(unittest.TestCase):
             self._approve_editor(proposal)
         self.assertEqual("proposal_validation_failure", caught.exception.payload["error"]["code"])
 
-    def test_inherited_validation_warnings_do_not_block_editor_proposals(self):
+    def test_only_inherited_validation_warnings_are_removed(self):
         original_validate = self.app.engine.validate
         original_stage = self.app.engine.stage_exact_diff
 
         def validate(request):
             result = original_validate(request)
-            return replace(result, findings=(Finding("validation_warning", Severity.WARNING, Stage.VALIDATE, "base"),))
+            return replace(result, findings=(Finding("validation_warning", Severity.WARNING, Stage.VALIDATE, "same"),))
 
         def stage(request):
             result = original_stage(request)
-            return replace(result, findings=(Finding("validation_warning", Severity.WARNING, Stage.STAGE, "staged"),))
+            return replace(result, findings=(
+                Finding("validation_warning", Severity.WARNING, Stage.STAGE, "same"),
+                Finding("validation_warning", Severity.WARNING, Stage.STAGE, "new"),
+            ))
 
         with mock.patch.object(self.app.engine, "validate", side_effect=validate), \
                 mock.patch.object(self.app.engine, "stage_exact_diff", side_effect=stage):
             _, _, (_, proposal) = self._edit("idem_editor_inherited_warning")
 
-        self.assertEqual([], proposal["validation"]["findings"])
+        self.assertEqual(1, len(proposal["validation"]["findings"]))
 
     def test_restart_recovers_editor_publication_and_exact_replay_once(self):
         _, _, (_, proposal) = self._edit("idem_editor_pending_recovery")
