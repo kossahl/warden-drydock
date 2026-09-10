@@ -8,6 +8,13 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: false,
   },
+  // Adapter definitions and templates are authoritative repository assets
+  // outside the web package. Allow Vite to read them during tests and builds.
+  server: {
+    fs: {
+      allow: [".."],
+    },
+  },
   test: {
     environment: "jsdom",
     setupFiles: "./tests/unit/setup.ts",

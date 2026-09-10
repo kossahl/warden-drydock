@@ -14,6 +14,7 @@ on a focused branch and delivered through a pull request.
    - `python -m unittest discover -s tests -v`
    - `python -m warden_drydock --help`
    - `git diff --check`
+   - `./scripts/review-check.sh` (the canonical local CI gate)
 4. **PR review is required.** At least one maintainer approval is required
    before merge. Maintainers may request changes; respond with follow-up
    commits on the same branch rather than new PRs.
@@ -75,6 +76,14 @@ python -m pip install -e ".[dev]"
 python -m unittest discover -s tests -v
 python -m warden_drydock --help
 ```
+
+Before opening a PR, run `./scripts/review-check.sh`. It uses digest-pinned
+Python 3.11/3.13 and Node/npm containers to mirror CI, including Chromium
+browser tests, the clean onboarding smoke test, live PostgreSQL checks, and
+whitespace validation. The mounted checkout may receive the ignored
+`web/node_modules/`, `web/test-results/`, and `web/dist/` build artifacts;
+remove them when a clean host tree is needed. Set `DRYDOCK_CI_BASE_REF` if
+`origin/master` is not available locally.
 
 ## Continuous integration scope
 

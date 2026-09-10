@@ -1,0 +1,47 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "stale_revision",
+  "expected_path": "binding.base_revision",
+  "description": "The proposal base revision is not the current campaign head; no merge or publication is allowed.",
+  "instance": {
+    "contract_name": "editor_record_edit_request",
+    "contract_version": 1,
+    "operation_request": {
+      "contract_name": "editor_operation_request",
+      "contract_version": 1,
+      "request_id": "request_stale_revision",
+      "operation": "editor_record_edit",
+      "idempotency_key": "idem_stale_revision",
+      "payload_digest": "6a2fa2ae4e5e804eadf96e70eed5f35259c7519b13c19e577c239d89d3c48f80",
+      "expected_revision": "revision_11",
+      "expected_editor_workflow_version": 7,
+      "subject_id": "record-station"
+    },
+    "binding": {
+      "campaign_id": "campaign_alpha",
+      "base_revision": {
+        "revision_id": "revision_11",
+        "ordinal": 11,
+        "tree_digest": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "record_id": "record-station",
+      "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expected_editor_workflow_version": 7
+    },
+    "candidate": {
+      "record_id": "record-station",
+      "record_type": "location",
+      "displayed_name": "Station",
+      "status": "review",
+      "authority": "preparation",
+      "visibility": {
+        "audience": "warden",
+        "warden_only": true
+      },
+      "fields": [],
+      "sections": [],
+      "connections": [],
+      "content_digest": "333cd92f56b145a86ded1b07ff363ff39843efb4645dfdd72b9c6a1aca33c735"
+    }
+  }
+}

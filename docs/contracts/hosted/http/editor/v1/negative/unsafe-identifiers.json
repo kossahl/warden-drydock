@@ -1,0 +1,47 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "unsafe_binding",
+  "expected_path": "operation_request.subject_id",
+  "description": "A structurally valid subject identifier that does not match the bound record must fail before lookup or mutation.",
+  "instance": {
+    "contract_name": "editor_record_create_request",
+    "contract_version": 1,
+    "operation_request": {
+      "contract_name": "editor_operation_request",
+      "contract_version": 1,
+      "request_id": "request_unsafe",
+      "operation": "editor_record_create",
+      "idempotency_key": "idem_unsafe",
+      "payload_digest": "9a8d04facb424826aaa49042920057c8a42f9821d2ccb6987339d77d53809b75",
+      "expected_revision": "revision_12",
+      "expected_editor_workflow_version": 7,
+      "subject_id": "record-other"
+    },
+    "binding": {
+      "campaign_id": "campaign_alpha",
+      "base_revision": {
+        "revision_id": "revision_12",
+        "ordinal": 12,
+        "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "record_id": "record-new",
+      "record_digest": null,
+      "expected_editor_workflow_version": 7
+    },
+    "candidate": {
+      "record_id": "record-new",
+      "record_type": "npc",
+      "displayed_name": "New Keeper",
+      "status": "draft",
+      "authority": "preparation",
+      "visibility": {
+        "audience": "warden",
+        "warden_only": true
+      },
+      "fields": [],
+      "sections": [],
+      "connections": [],
+      "content_digest": "bda0f2ab4152f83a9db205642b0e4280f1403013532a5fcc10832394a1bb220e"
+    }
+  }
+}

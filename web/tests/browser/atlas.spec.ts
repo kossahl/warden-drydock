@@ -77,11 +77,18 @@ test("Overview requests and displays only the newest five approved events", asyn
 
 test("historical view stays selected until Open head", async ({ page }) => {
   await installAtlasApi(page);
-  await page.goto("/campaigns/campaign_atlas?revision=revision_one");
+  await page.goto("/campaigns/campaign_atlas?revision=revision_one&proposal=proposal_editor&version=1");
   await expect(page.getByText(/Viewed revision 1/)).toBeVisible();
   await page.getByRole("link", { name: "Open head" }).click();
-  await expect(page).toHaveURL("/campaigns/campaign_atlas?revision=revision_two");
+  await expect(page).toHaveURL("/campaigns/campaign_atlas?revision=revision_two&proposal=proposal_editor&version=1");
   await expect(page.getByText(/Viewed revision 2/)).toBeVisible();
+});
+
+test("historical record lists do not offer create", async ({ page }) => {
+  await installAtlasApi(page);
+  await page.goto("/campaigns/campaign_atlas/records?revision=revision_one");
+  await expect(page.getByRole("heading", { level: 1, name: "Records" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create typed record", exact: true })).toHaveCount(0);
 });
 
 test("Record content replaces Connections syntax with readable revision-pinned links", async ({ page }) => {

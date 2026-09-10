@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed record editor section corruption, invalid new connection IDs, removal
+  with multiple references from one record, and editing proposal corrections.
 - Added the hardened two-service localhost Compose runtime, reviewed startup
   migrations, health checks, provider-secret storage boundary, and verified
   backup/restore workflow for the Hosted MVP operations baseline.

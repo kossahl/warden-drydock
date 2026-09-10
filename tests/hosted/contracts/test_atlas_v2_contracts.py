@@ -16,13 +16,15 @@ CONTRACT_ROOT = ROOT / "docs" / "contracts" / "hosted" / "http" / "atlas" / "v2"
 
 class AtlasV2ContractTests(unittest.TestCase):
     def test_active_discovery_is_exact_and_historical_packages_remain_on_disk(self) -> None:
-        aggregate = json.loads((CONTRACT_ROOT.parents[1] / "index.json").read_text(encoding="utf-8"))
-        self.assertEqual(4, aggregate["contract_version"])
+        aggregate = json.loads((CONTRACT_ROOT.parents[1] / "index-v5.json").read_text(encoding="utf-8"))
+        self.assertEqual(5, aggregate["contract_version"])
         self.assertEqual(
-            [("hosted_http_v2", "v2/index.json"), ("hosted_atlas_http_v2", "atlas/v2/index.json"), ("hosted_live_http_v1", "live/v1/index.json")],
+            [("hosted_http_v2", "v2/index.json"), ("hosted_atlas_http_v2", "atlas/v2/index.json"), ("hosted_live_http_v1", "live/v1/index.json"), ("hosted_record_editor_http_v1", "editor/v1/index.json")],
             [(item["name"], item["index"]) for item in aggregate["packages"]],
         )
         self.assertTrue((CONTRACT_ROOT.parent / "v1" / "index.json").is_file())
+        legacy = json.loads((CONTRACT_ROOT.parents[1] / "index.json").read_text(encoding="utf-8"))
+        self.assertEqual(4, legacy["contract_version"])
 
     def test_package_is_closed_schema_valid_and_contains_only_read_routes(self) -> None:
         index = json.loads((CONTRACT_ROOT / "index.json").read_text(encoding="utf-8"))

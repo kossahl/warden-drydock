@@ -3,7 +3,9 @@
 ## Version selection
 
 Contract names and positive integer versions form the compatibility key. A
-consumer must select a schema from `index-v1.json` before processing a payload.
+consumer must select a schema from the current `index-v2.json` before
+processing a payload. `index-v1.json` remains available as the preserved
+legacy registry.
 Unknown names and versions fail closed as `unsupported_contract_version`.
 There is no implicit "latest" version and no content negotiation in this
 package.

@@ -9,6 +9,7 @@ import uuid
 from warden_drydock.hosted.ai.repository import PostgresAIRepository
 from warden_drydock.hosted.http.application import HTTPFailure, SliceApplication, SyntheticProvider
 from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input
+from warden_drydock.hosted.http.editor import document_digest
 from warden_drydock.hosted.http.repository import PostgresHTTPRepository, ReceiptConflict
 from warden_drydock.hosted.proposals import PostgresProposalRepository
 from warden_drydock.hosted.projections import PostgresAtlasProjectionRepository
@@ -41,6 +42,143 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ReceiptConflict, "idempotency_digest_conflict"):
             restarted.replay("proposal_create", self.key, "b" * 64)
         self.assertEqual((201, response), restarted.replay("proposal_create", self.key, "a" * 64))
+
+    def test_editor_approval_receipt_survives_repository_restart(self) -> None:
+        response = {
+            "contract_name": "editor_proposal_approval_result",
+            "contract_version": 1,
+            "proposal": {"proposal_id": "proposal_editor", "proposal_version": 1},
+            "outcome": "published",
+            "published_revision": {
+                "revision_id": "revision_editor", "ordinal": 2,
+                "tree_digest": "a" * 64, "immutable": True,
+            },
+            "editor_workflow_version": 3,
+        }
+        self.repository.store("editor_proposal_approve", self.key, "a" * 64, 200, response)
+        restarted = PostgresHTTPRepository(self.connect)
+        self.assertEqual((200, response), restarted.replay("editor_proposal_approve", self.key, "a" * 64))
+        with self.assertRaisesRegex(ReceiptConflict, "idempotency_digest_conflict"):
+            restarted.replay("editor_proposal_approve", self.key, "b" * 64)
+
+    def test_editor_cas_publication_survives_repository_restart(self) -> None:
+        suffix = uuid.uuid4().hex[:16]
+        campaign_id = f"campaign_editor_{suffix}"
+        revision = None
+        proposal_id = None
+        keys = [f"idem_editor_{name}_{suffix}" for name in ("campaign", "edit", "approve")]
+
+        def cleanup() -> None:
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute("DELETE FROM hosted_atlas_projection_checkpoint WHERE campaign_id=%s", (campaign_id,))
+                cursor.execute("DELETE FROM hosted_http_operation_receipt WHERE idempotency_key=ANY(%s)", (keys,))
+                cursor.execute("DELETE FROM hosted_proposal_audit WHERE proposal_id=%s", (proposal_id,))
+                cursor.execute("DELETE FROM hosted_proposal_version WHERE proposal_id=%s", (proposal_id,))
+                cursor.execute("DELETE FROM hosted_editor_workflow WHERE campaign_id=%s", (campaign_id,))
+                cursor.execute("DELETE FROM hosted_campaign_head WHERE campaign_id=%s", (campaign_id,))
+                cursor.execute("DELETE FROM hosted_publication_intent WHERE campaign_id=%s", (campaign_id,))
+
+        self.addCleanup(cleanup)
+
+        def bind(payload):
+            target = payload.get("operation_request", payload)
+            target["payload_digest"] = canonical_digest(request_digest_input(payload))
+            return payload
+
+        def operation(name, request_id, key, **extra):
+            value = {"contract_name": "operation_request", "contract_version": 2,
+                     "request_id": request_id, "operation": name, "idempotency_key": key,
+                     "payload_digest": "0" * 64, "expected_revision": None,
+                     "expected_workflow_version": None}
+            value.update(extra)
+            return value
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "runtime"
+            snapshots = Path(directory) / "snapshots"
+            repositories = {
+                "receipts": PostgresHTTPRepository(self.connect),
+                "proposal_repository": PostgresProposalRepository(self.connect),
+                "workflow_repository": PostgresWorkflowRepository(self.connect),
+                "atlas_repository": PostgresAtlasProjectionRepository(self.connect),
+            }
+            app = SliceApplication(
+                root, snapshot_root=snapshots, provider=SyntheticProvider(), **repositories,
+            )
+            campaign_payload = bind({
+                "contract_name": "campaign_create_request", "contract_version": 2,
+                "operation_request": operation("campaign_create", f"request_campaign_{suffix}", keys[0]),
+                "input": {"campaign_id": campaign_id, "campaign_name": "Editor PostgreSQL", "adapter_id": "mothership"},
+            })
+            revision = app.create_campaign(campaign_payload)[1]["head_revision"]
+            record_id = "record-editor"
+            candidate = {
+                "record_id": record_id, "record_type": "npc",
+                "displayed_name": "Editor PostgreSQL Record", "status": "draft",
+                "authority": "preparation",
+                "visibility": {"audience": "warden", "warden_only": True},
+                "fields": [{"field_id": "ownership", "value": "campaign"}],
+                "sections": [{"section_id": "summary", "body": "Created through PostgreSQL."}],
+                "connections": [], "content_digest": "0" * 64,
+            }
+            candidate["content_digest"] = document_digest(candidate)
+            create = {
+                "contract_name": "editor_record_create_request", "contract_version": 1,
+                "operation_request": {
+                    "contract_name": "editor_operation_request", "contract_version": 1,
+                    "request_id": f"request_create_{suffix}", "operation": "editor_record_create",
+                    "idempotency_key": keys[1], "payload_digest": "0" * 64,
+                    "expected_revision": revision, "expected_editor_workflow_version": 1,
+                    "subject_id": record_id,
+                },
+                "binding": {"campaign_id": campaign_id,
+                            "base_revision": {"revision_id": revision, "ordinal": 1,
+                                               "tree_digest": app.campaigns[campaign_id].revisions[revision].tree_digest},
+                            "record_id": record_id, "record_digest": None,
+                            "expected_editor_workflow_version": 1},
+                "candidate": candidate,
+            }
+            create["operation_request"]["payload_digest"] = canonical_digest(request_digest_input(create))
+            _, proposal = app.editor_record_create(campaign_id, revision, create)
+            proposal_id = proposal["proposal_id"]
+            approval = {
+                "contract_name": "editor_proposal_approval_request", "contract_version": 1,
+                "proposal": {"proposal_id": proposal_id, "proposal_version": 1},
+                "proposal_status": "needs_review", "mutation_kind": "create",
+                "source_revision": proposal["source_revision"], "base_revision": proposal["base_revision"],
+                "expected_campaign_head": proposal["expected_campaign_head"],
+                "expected_editor_workflow_version": proposal["editor_workflow_version"],
+                "proposal_payload_digest": proposal["proposal_payload_digest"],
+                "diff_digest": proposal["diff"]["diff_digest"], "diff": proposal["diff"],
+                "record_bindings": proposal["record_bindings"], "impact_digest": None,
+                "impact_binding": None, "resolutions": [], "validation_status": "passed",
+                "validation_digest": proposal["validation"]["validation_digest"],
+                "affected_record_count": proposal["diff"]["affected_record_count"],
+                "confirmed_change_ids": [card["change_id"] for card in proposal["diff"]["cards"]],
+                "confirmed_authority_change_ids": [], "confirmed_visibility_change_ids": [],
+                "authority_outcome": [], "visibility_outcome": [], "warden_confirmed": True,
+                "operation_request": {
+                    "contract_name": "editor_operation_request", "contract_version": 1,
+                    "request_id": f"request_approve_{suffix}", "operation": "editor_proposal_approve",
+                    "idempotency_key": keys[2], "expected_revision": revision,
+                    "expected_editor_workflow_version": proposal["editor_workflow_version"],
+                    "subject_id": proposal_id, "intent_digest": proposal["diff"]["diff_digest"],
+                    "payload_digest": "0" * 64,
+                },
+            }
+            approval["operation_request"]["payload_digest"] = canonical_digest(request_digest_input(approval))
+            status, result = app.editor_proposal_approve(proposal_id, 1, approval)
+            self.assertEqual((200, "published"), (status, result["outcome"]))
+
+            restarted = SliceApplication(
+                root, snapshot_root=snapshots, provider=SyntheticProvider(), **{
+                    key: value.__class__(self.connect) if key != "receipts" else PostgresHTTPRepository(self.connect)
+                    for key, value in repositories.items()
+                },
+            )
+            self.assertEqual("published", restarted.editor_proposal_read(proposal_id, 1)[1]["publication"]["status"])
+            replay_status, replay = restarted.editor_proposal_approve(proposal_id, 1, approval)
+            self.assertEqual((200, result), (replay_status, replay))
 
     def test_missing_postgres_proposal_maps_to_contract_not_found(self) -> None:
         with tempfile.TemporaryDirectory() as root:
