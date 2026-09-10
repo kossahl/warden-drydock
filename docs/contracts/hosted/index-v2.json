@@ -1,0 +1,24 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "contract_index":"warden_drydock_hosted_contracts",
+  "contract_version":2,
+  "compatibility_policy":"compatibility.md",
+  "authority_redaction_policy":"authority-redaction.md",
+  "semantic_invariants":"semantic-invariants-v1.json",
+  "shared_definitions":["schemas/v1/common.schema.json"],
+  "versioned_contracts":[
+    {"name":"canon_proposal","version":2,"schema":"schemas/v2/proposal.schema.json","semantic_invariants":"schemas/v2/semantic-invariants.json","example":"examples/v2/proposal.json","negative_fixtures":["negative/v2/proposal-approval-binding.json","negative/v2/proposal-approval-validation.json","negative/v2/proposal-approval-state.json","negative/v2/proposal-duplicate-logical-id.json"],"authority_owner":"proposal_service"}
+  ],
+  "http_registry":"http/index-v5.json",
+  "families":[
+    {"family":"api","schema":"schemas/v1/api.schema.json","authority_owner":"application_service","example":"examples/v1/api.json","negative_fixtures":["negative/v1/unknown-version.json","negative/v1/traversal-identifier.json","negative/v1/stale-workflow-version.json","negative/v1/changed-idempotency-digest.json","negative/v1/idempotency-exact-replay-mismatch.json"]},
+    {"family":"atlas","schema":"schemas/v1/atlas.schema.json","authority_owner":"revision_service","example":"examples/v1/atlas.json","negative_fixtures":["negative/v1/atlas-unsafe-head.json"]},
+    {"family":"engine","schema":"schemas/v1/engine.schema.json","authority_owner":"deterministic_engine","example":"examples/v1/engine.json","negative_fixtures":["negative/v1/engine-publication-field.json"]},
+    {"family":"snapshot","schema":"schemas/v1/snapshot.schema.json","authority_owner":"revision_service","example":"examples/v1/snapshot.json","negative_fixtures":["negative/v1/snapshot-unsafe-path.json","negative/v1/snapshot-missing-bindings.json"]},
+    {"family":"retrieval","schema":"schemas/v1/retrieval.schema.json","authority_owner":"retrieval_orchestrator","example":"examples/v1/retrieval.json","negative_fixtures":["negative/v1/missing-source-binding.json","negative/v1/retrieval-count-mismatch.json"]},
+    {"family":"provider","schema":"schemas/v1/provider.schema.json","authority_owner":"provider_orchestrator","example":"examples/v1/provider.json","negative_fixtures":["negative/v1/duplicate-stream-sequence.json","negative/v1/secret-leakage.json","negative/v1/provider-authority-widening.json","negative/v1/provider-unbound-tool.json"]},
+    {"family":"live","schema":"schemas/v1/live.schema.json","authority_owner":"live_session_service","example":"examples/v1/live.json","negative_fixtures":["negative/v1/stale-controller-epoch.json","negative/v1/live-unaccepted-barrier.json","negative/v1/live-replay-digest-mismatch.json"]},
+    {"family":"proposal","schema":"schemas/v1/proposal.schema.json","authority_owner":"proposal_service","example":"examples/v1/proposal.json","negative_fixtures":["negative/v1/invalid-authority-transition.json","negative/v1/mismatched-approval-binding.json"]},
+    {"family":"operations","schema":"schemas/v1/operations.schema.json","authority_owner":"operations_service","example":"examples/v1/operations.json","negative_fixtures":["negative/v1/private-path-leakage.json","negative/v1/ambiguous-publication-intent.json","negative/v1/audit-free-text.json"]}
+  ]
+}

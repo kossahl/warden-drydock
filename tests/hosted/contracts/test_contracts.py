@@ -106,12 +106,46 @@ EXPECTED_FAMILY_CONTRACTS = {
 
 
 def reconcile_index_paths(index, contract_root=CONTRACT_ROOT):
-    indexed_schemas = {item["schema"] for item in index["families"]} | set(index["shared_definitions"])
-    indexed_examples = {item["example"] for item in index["families"]}
-    indexed_negative = {fixture for item in index["families"] for fixture in item["negative_fixtures"]}
-    disk_schemas = {path.relative_to(contract_root).as_posix() for path in (contract_root / "schemas").rglob("*.json")}
-    disk_examples = {path.relative_to(contract_root).as_posix() for path in (contract_root / "examples").rglob("*.json")}
-    disk_negative = {path.relative_to(contract_root).as_posix() for path in (contract_root / "negative").rglob("*.json")}
+    indexed_schemas = (
+        {item["schema"] for item in index["families"]}
+        | set(index["shared_definitions"])
+        | {item["schema"] for item in index.get("versioned_contracts", [])}
+    )
+    indexed_examples = {item["example"] for item in index["families"]} | {
+        item["example"] for item in index.get("versioned_contracts", [])
+    }
+    indexed_negative = {fixture for item in index["families"] for fixture in item["negative_fixtures"]} | {
+        fixture for item in index.get("versioned_contracts", []) for fixture in item["negative_fixtures"]
+    }
+    all_disk_schemas = {
+        path.relative_to(contract_root).as_posix()
+        for path in (contract_root / "schemas").rglob("*.schema.json")
+    }
+    all_disk_examples = {
+        path.relative_to(contract_root).as_posix()
+        for path in (contract_root / "examples").rglob("*.json")
+    }
+    all_disk_negative = {
+        path.relative_to(contract_root).as_posix()
+        for path in (contract_root / "negative").rglob("*.json")
+    }
+    if index.get("versioned_contracts"):
+        disk_schemas = all_disk_schemas
+        disk_examples = all_disk_examples
+        disk_negative = all_disk_negative
+    else:
+        disk_schemas = {
+            path.relative_to(contract_root).as_posix()
+            for path in (contract_root / "schemas" / "v1").glob("*.schema.json")
+        } | (all_disk_schemas & indexed_schemas)
+        disk_examples = {
+            path.relative_to(contract_root).as_posix()
+            for path in (contract_root / "examples" / "v1").glob("*.json")
+        } | (all_disk_examples & indexed_examples)
+        disk_negative = {
+            path.relative_to(contract_root).as_posix()
+            for path in (contract_root / "negative" / "v1").glob("*.json")
+        } | (all_disk_negative & indexed_negative)
     return {
         "schemas": (indexed_schemas, disk_schemas),
         "examples": (indexed_examples, disk_examples),
@@ -248,11 +282,26 @@ def _semantic_errors(instance, schema):
         if proposal.get("status") not in {"approving", "approved"} and binding is not None:
             yield ContractValidationError("approval_binding", "non-approval state cannot be Warden-confirmed", "proposal_approval_conflict")
         if binding is not None:
-            for key in ("proposal_id", "proposal_version", "diff_digest", "base_revision", "source_revision"):
+            keys = ["proposal_id", "proposal_version", "diff_digest", "base_revision", "source_revision"]
+            if "expected_editor_workflow_version" in binding:
+                keys += ["expected_campaign_head", "expected_editor_workflow_version", "authority_change_ids", "visibility_change_ids"]
+            for key in keys:
                 if proposal.get(key) != binding.get(key):
                     yield ContractValidationError(f"approval_binding.{key}", "approval binding mismatch", "proposal_approval_conflict")
+            if "expected_editor_workflow_version" in binding:
+                if binding.get("validation_status") != validation.get("status"):
+                    yield ContractValidationError("approval_binding.validation_status", "approval binding validation status mismatch", "proposal_approval_conflict")
+                if binding.get("validation_digest") != validation.get("validation_digest"):
+                    yield ContractValidationError("approval_binding.validation_digest", "approval binding validation digest mismatch", "proposal_approval_conflict")
             if binding.get("expected_campaign_head") != proposal.get("base_revision"):
                 yield ContractValidationError("approval_binding.expected_campaign_head", "expected campaign head must equal proposal base", "proposal_approval_conflict")
+        if "expected_editor_workflow_version" in instance.get("proposal", {}):
+            for key, items, identifier in (
+                ("proposal.changes", proposal.get("changes", []), "change_id"),
+            ):
+                identifiers = [item.get(identifier) for item in items]
+                if len(identifiers) != len(set(identifiers)):
+                    yield ContractValidationError(f"{key}.{identifier}", "logical identifier is duplicated", "proposal_validation_failure")
         if proposal.get("status") in {"needs_review", "approving", "approved"} and (
             validation.get("status") != "passed" or validation.get("error_count") != 0
         ):
@@ -493,11 +542,13 @@ class HostedContractPackageTests(unittest.TestCase):
 
     def _assert_closed_and_complete(self, index, contract_root=CONTRACT_ROOT):
         families = index["families"]
-        self.assertEqual(index["contract_version"], 1)
+        self.assertEqual(index["contract_version"], 2 if index.get("versioned_contracts") else 1)
         self.assertEqual(index["contract_index"], "warden_drydock_hosted_contracts")
         self.assertEqual(len(families), 9)
         self.assertEqual(len({item["family"] for item in families}), len(families))
         self.assertTrue(all(item["negative_fixtures"] for item in families))
+        if not index.get("versioned_contracts"):
+            self.assertNotIn("versioned_contracts", index)
         for area, (indexed, disk) in reconcile_index_paths(index, contract_root).items():
             self.assertEqual(indexed, disk, area)
         indexed_all = {relative for indexed, _ in reconcile_index_paths(index, contract_root).values() for relative in indexed}
@@ -602,7 +653,7 @@ class HostedContractPackageTests(unittest.TestCase):
         for family in mutated["families"]:
             if family["family"] == "api":
                 target = "examples/v2/api.json"
-                (root / target).parent.mkdir()
+                (root / target).parent.mkdir(exist_ok=True)
                 (root / family["example"]).rename(root / target)
                 family["example"] = target
         self._assert_closed_and_complete(mutated, root)
@@ -616,7 +667,7 @@ class HostedContractPackageTests(unittest.TestCase):
             if family["family"] == "api":
                 source = "negative/v1/unknown-version.json"
                 target = "negative/v2/unknown-version.json"
-                (root / target).parent.mkdir()
+                (root / target).parent.mkdir(exist_ok=True)
                 (root / source).rename(root / target)
                 index = family["negative_fixtures"].index(source)
                 family["negative_fixtures"][index] = target
@@ -629,7 +680,7 @@ class HostedContractPackageTests(unittest.TestCase):
         root, mutated = self._mutated_contract_root()
         source = "schemas/v1/common.schema.json"
         target = "schemas/v2/common.schema.json"
-        (root / target).parent.mkdir()
+        (root / target).parent.mkdir(exist_ok=True)
         (root / source).rename(root / target)
         mutated["shared_definitions"] = [target]
         self._assert_closed_and_complete(mutated, root)
@@ -643,7 +694,7 @@ class HostedContractPackageTests(unittest.TestCase):
             if family["family"] == "api":
                 source = family["schema"]
                 target = "schemas/v2/api.schema.json"
-                (root / target).parent.mkdir()
+                (root / target).parent.mkdir(exist_ok=True)
                 (root / source).rename(root / target)
                 family["schema"] = target
                 for relative in family["negative_fixtures"]:
@@ -723,6 +774,54 @@ class HostedContractPackageTests(unittest.TestCase):
                 failures = list(contract_errors(broken, schema))
                 self.assertTrue(failures, "contradicting example unexpectedly validated")
                 self.assertIn(expected_category, {failure.category for failure in failures})
+
+    def test_new_versioned_registry_preserves_legacy_index_and_binds_proposal_v2(self):
+        legacy = json.loads((CONTRACT_ROOT / "index-v1.json").read_text(encoding="utf-8"))
+        current = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))
+        self.assertEqual(1, legacy["contract_version"])
+        self.assertNotIn("versioned_contracts", legacy)
+        self.assertEqual(2, current["contract_version"])
+        self._assert_closed_and_complete(current)
+        contract = current["versioned_contracts"][0]
+        schema = json.loads((CONTRACT_ROOT / contract["schema"]).read_text(encoding="utf-8"))
+        invariants = json.loads((CONTRACT_ROOT / contract["semantic_invariants"]).read_text(encoding="utf-8"))
+        example = json.loads((CONTRACT_ROOT / contract["example"]).read_text(encoding="utf-8"))
+        self.assertEqual(["proposal_exact_binding", "proposal_validation_gate", "proposal_logical_ids"], schema["x-invariants"])
+        self.assertEqual(["proposal_exact_binding", "proposal_validation_gate", "proposal_logical_ids"], [rule["id"] for rule in invariants["rules"]])
+        self.assertEqual([], list(Draft202012Validator(schema).iter_errors(example)))
+        for relative in contract["negative_fixtures"]:
+            fixture = json.loads((CONTRACT_ROOT / relative).read_text(encoding="utf-8"))
+            self.assertEqual([], list(Draft202012Validator(schema).iter_errors(fixture["instance"])), relative)
+            failures = list(contract_errors(fixture["instance"], schema))
+            self.assertIn(fixture["expected_category"], {failure.category for failure in failures}, relative)
+            evidence = " ".join(f"{failure.path} {failure.message}" for failure in failures if failure.category == fixture["expected_category"])
+            self.assertIn(fixture["expected_evidence"].lower(), evidence.lower())
+            self.assertIn(fixture["expected_path"], evidence)
+
+    def test_proposal_v2_accepts_exact_approving_and_approved_bindings(self):
+        contract = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))["versioned_contracts"][0]
+        schema = json.loads((CONTRACT_ROOT / contract["schema"]).read_text(encoding="utf-8"))
+        example = json.loads((CONTRACT_ROOT / contract["example"]).read_text(encoding="utf-8"))
+        for status in ("approving", "approved"):
+            value = deepcopy(example)
+            value["proposal"]["status"] = status
+            value["approval_binding"] = {
+                "proposal_id": value["proposal"]["proposal_id"],
+                "proposal_version": value["proposal"]["proposal_version"],
+                "diff_digest": value["proposal"]["diff_digest"],
+                "base_revision": value["proposal"]["base_revision"],
+                "source_revision": value["proposal"]["source_revision"],
+                "expected_campaign_head": value["proposal"]["expected_campaign_head"],
+                "expected_editor_workflow_version": value["proposal"]["expected_editor_workflow_version"],
+                "validation_status": value["validation"]["status"],
+                "validation_digest": value["validation"]["validation_digest"],
+                "authority_change_ids": value["proposal"]["authority_change_ids"],
+                "visibility_change_ids": value["proposal"]["visibility_change_ids"],
+                "warden_confirmed": True,
+            }
+            with self.subTest(status=status):
+                self.assertEqual([], list(Draft202012Validator(schema).iter_errors(value)))
+                self.assertEqual([], list(contract_errors(value, schema)))
 
     def test_every_negative_fixture_fails_at_expected_binding(self):
         fixture_paths = [fixture for family in self.index["families"] for fixture in family["negative_fixtures"]]

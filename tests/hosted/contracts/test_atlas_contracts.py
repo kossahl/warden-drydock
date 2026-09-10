@@ -202,10 +202,10 @@ class AtlasContractTests(unittest.TestCase):
         validator = Draft202012Validator(self.schema)
         Draft202012Validator.check_schema(self.schema)
         aggregate = json.loads(
-            (CONTRACT_ROOT.parents[1] / "index.json").read_text(encoding="utf-8")
+            (CONTRACT_ROOT.parents[1] / "index-v5.json").read_text(encoding="utf-8")
         )
         self.assertEqual(
-            ["v2/index.json", "atlas/v2/index.json", "live/v1/index.json"],
+            ["v2/index.json", "atlas/v2/index.json", "live/v1/index.json", "editor/v1/index.json"],
             [item["index"] for item in aggregate["packages"]],
         )
         self.assertIn("does not mutate", self.index["compatibility"])
