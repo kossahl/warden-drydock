@@ -73,6 +73,30 @@ class GeneratorTest(unittest.TestCase):
                 main(['bootstrap',str(root),'--name','Test Campaign'])
             self.assertEqual(existing.read_text(encoding='utf-8'),'user content')
 
+    def test_required_values_keep_string_compatibility_with_typed_frontmatter(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test Campaign', adapter='mothership')
+            adapter_path = root / '00-drydock' / 'adapter.json'
+            adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['entity_types']['npc']['required_values'] = {'rank': '1'}
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+            (root / '01-campaign' / 'test-npc.md').write_text(
+                '---\n'
+                'id: test-npc\n'
+                'type: npc\n'
+                'name: Test NPC\n'
+                'status: draft\n'
+                'visibility: warden\n'
+                'warden_only: true\n'
+                'ownership: campaign\n'
+                'rank: 1\n'
+                '---\n',
+                encoding='utf-8',
+            )
+
+            self.assertEqual(validate_campaign(root), 0)
+
     def test_context_uses_only_approved_sessions_and_is_stable(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)/'campaign'
@@ -156,6 +180,11 @@ class GeneratorTest(unittest.TestCase):
             self.assertEqual(validate_campaign(root),0)
             with self.assertRaises(SystemExit):
                 create_entity(root,'npc','npc-ripley','Duplicate')
+
+            escaped = create_entity(root, 'npc', 'npc-backslash', r'A\name')
+            self.assertEqual(r'A\name', standalone.frontmatter(escaped.read_text(encoding='utf-8'))['name'])
+            separated = create_entity(root, 'npc', 'npc-line-separators', 'A\u2028B\u2029C')
+            self.assertEqual('A\u2028B\u2029C', standalone.frontmatter(separated.read_text(encoding='utf-8'))['name'])
 
     def test_semantic_validation_rejects_missing_adapter_fields(self):
         with TemporaryDirectory() as tmp:
@@ -339,6 +368,21 @@ class GeneratorTest(unittest.TestCase):
                 self.assertEqual(validate_campaign(root),1)
             self.assertIn('forbidden heading Warden truth',output.getvalue())
 
+    def test_validation_accepts_nonempty_numeric_and_boolean_fields(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test Campaign', adapter='mothership')
+            adapter_path = root / '00-drydock' / 'adapter.json'
+            adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['entity_types']['npc']['nonempty_fields'] = ['score', 'enabled']
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+            npc = create_entity(root, 'npc', 'npc-typed', 'Typed')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                'visibility: warden\n', 'visibility: warden\nscore: 0\nenabled: false\n',
+            ), encoding='utf-8')
+
+            self.assertEqual(validate_campaign(root), 0)
+
     def test_player_visibility_cannot_be_warden_only(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)/'campaign'
@@ -424,6 +468,20 @@ class GeneratorTest(unittest.TestCase):
             with redirect_stdout(backlinks):
                 self.assertEqual(main(['backlinks','faction-company','--path',str(root)]),0)
             self.assertIn('npc-ripley\tworks-for\tcurrent',backlinks.getvalue())
+
+    def test_focused_context_normalizes_record_newlines_before_body_extraction(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test', adapter='mothership')
+            npc = create_entity(root, 'npc', 'npc-ripley', 'Ripley')
+            npc.write_bytes(npc.read_bytes().replace(b'\n', b'\r\n'))
+
+            context = standalone.build_context(root, focus='npc-ripley', depth=0, max_records=1)
+            text = context.read_text(encoding='utf-8')
+
+            self.assertIn('Ripley (`npc-ripley`)', text)
+            self.assertIn('## Summary', text)
+            self.assertNotIn('---\n\nid: npc-ripley', text)
 
     def test_relationship_generation_rejects_parse_errors_without_mutation(self):
         with TemporaryDirectory() as tmp:

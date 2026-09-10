@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import math
 import re
 from pathlib import Path
 
@@ -69,7 +70,9 @@ class Connection:
 
 
 def _section_lines(text: str, heading: str) -> list[tuple[int, str]]:
-    lines = text.splitlines()
+    # Normalize every line terminator before parsing. CRLF still represents one
+    # logical line, while a bare CR is an actual line boundary for legacy files.
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     start = None
     for index, line in enumerate(lines):
         if line.strip().casefold() == f"## {heading}".casefold():
@@ -110,7 +113,7 @@ def _collect_entities(root: Path) -> tuple[dict[str, Entity], list[str]]:
         relative = path.relative_to(root)
         if relative.parts[0] in {"templates", "docs"} or relative.as_posix().startswith("00-drydock/"):
             continue
-        text = path.read_text(encoding="utf-8")
+        text = path.read_bytes().decode("utf-8")
         metadata = frontmatter(text)
         entity_id = metadata.get("id")
         if entity_id:
@@ -230,26 +233,64 @@ def validate_graph(root: Path) -> None:
     _graph_or_exit(root.resolve())
 
 
-def frontmatter(text: str) -> dict[str, str]:
+_STRING_FRONTMATTER_KEYS = {"id", "type", "name", "status", "ownership", "visibility", "warden_only"}
+
+
+def _frontmatter_scalar(value: str, key: str) -> object:
+    if value.startswith('"') and value.endswith('"'):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return value[1:-1]
+        return decoded if isinstance(decoded, str) else value[1:-1]
+    if key not in _STRING_FRONTMATTER_KEYS:
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        if decoded is None or isinstance(decoded, bool):
+            return decoded
+        if isinstance(decoded, (int, float)) and math.isfinite(decoded):
+            return decoded
+    return value
+
+
+def frontmatter(text: str) -> dict[str, object]:
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     if not text.startswith("---\n"):
         return {}
     end = text.find("\n---", 4)
     if end < 0:
         return {}
-    result: dict[str, str] = {}
-    for line in text[4:end].splitlines():
+    result: dict[str, object] = {}
+    # JSON-quoted values may contain Unicode line-separator characters.  They
+    # are data here; only the Markdown newline terminates a frontmatter field.
+    for line in text[4:end].split("\n"):
         if ":" in line and not line.startswith(" "):
             key, value = line.split(":", 1)
-            result[key.strip()] = value.strip().strip('"')
+            value = value.strip()
+            result[key.strip()] = _frontmatter_scalar(value, key.strip())
     return result
 
 
+def _frontmatter_text(value: object) -> str:
+    """Compare adapter literals using the pre-typed frontmatter spelling."""
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    return str(value)
+
+
 def body(text: str) -> str:
-    if text.startswith("---\n"):
-        end = text.find("\n---", 4)
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    if normalized.startswith("---\n"):
+        end = normalized.find("\n---", 4)
         if end >= 0:
-            return text[end + 4 :].strip()
-    return text.strip()
+            return normalized[end + 4 :].strip()
+    return normalized.strip()
 
 
 def _read_json(path: Path) -> dict:
@@ -508,10 +549,11 @@ def validate_campaign(root: Path) -> int:
                 if field not in metadata:
                     errors.append(f"{relative}: missing required field {field}")
             for field in entity_rule.get("nonempty_fields", []):
-                if not metadata.get(field, "").strip():
+                value = metadata.get(field, "")
+                if value is None or (isinstance(value, str) and not value.strip()):
                     errors.append(f"{relative}: field {field} must not be empty")
             for field, required_value in entity_rule.get("required_values", {}).items():
-                if metadata.get(field) != required_value:
+                if field not in metadata or _frontmatter_text(metadata[field]).lower() != _frontmatter_text(required_value).lower():
                     errors.append(
                         f"{relative}: {field} must be {required_value} for {entity_type}"
                     )
@@ -583,9 +625,9 @@ def create_entity(root: Path, kind: str, entity_id: str, name: str | None) -> Pa
     text = re.sub(r"(?m)^ownership:\s*.*$", "ownership: campaign", text, count=1)
     if name is not None:
         if re.search(r"(?m)^name:", text):
-            escaped_name = name.replace('"', '\\"')
+            escaped_name = json.dumps(name, ensure_ascii=False).replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
             text = re.sub(
-                r"(?m)^name:\s*.*$", f'name: "{escaped_name}"', text, count=1
+                r"(?m)^name:\s*.*$", lambda _match: f"name: {escaped_name}", text, count=1
             )
         text = re.sub(r"(?m)^# (Name|Adventure|Session)$", f"# {name}", text, count=1)
     destination.parent.mkdir(parents=True, exist_ok=True)
