@@ -1,0 +1,307 @@
+from copy import deepcopy
+from pathlib import Path
+import unittest
+from unittest import mock
+
+from tests.hosted.http import test_editor_backend as backend
+from warden_drydock.hosted.http.application import HTTPFailure, SliceApplication, SyntheticProvider
+from warden_drydock.hosted.http.editor import document_digest
+from warden_drydock.hosted.proposals.service import ProposalStatus
+
+
+class EditorReceiptRecoveryTests(unittest.TestCase):
+    setUp = backend.EditorBackendTests.setUp
+    _campaign = backend.EditorBackendTests._campaign
+    _edit = backend.EditorBackendTests._edit
+    _create_record_proposal = backend.EditorBackendTests._create_record_proposal
+    _create_record = backend.EditorBackendTests._create_record
+    _approve_editor = backend.EditorBackendTests._approve_editor
+    _editor_approval_payload = backend.EditorBackendTests._editor_approval_payload
+
+    def _restart(self):
+        self.app = SliceApplication(
+            Path(self.tmp.name), provider=SyntheticProvider(),
+            receipts=self.receipts, workflow_repository=self.workflow,
+            proposal_repository=self.app.proposal_repository,
+        )
+
+    def _request(self, kind):
+        if kind == "edit":
+            with mock.patch.object(self.app, "editor_record_edit", return_value=(201, {})) as call:
+                self._edit()
+            return "editor_record_edit", call.call_args.args
+        if kind == "create":
+            with mock.patch.object(self.app, "editor_record_create", return_value=(201, {})) as call, mock.patch.object(self, "_approve_editor"):
+                self._create_record("npc-recovery")
+            return "editor_record_create", call.call_args.args
+        if kind == "remove":
+            revision = self._create_record("npc-recovery")
+            impact = self.app.editor_removal_impact("campaign_alpha", revision, "npc-recovery")[1]
+            payload = {
+                "contract_name": "editor_record_remove_request", "contract_version": 1,
+                "binding": impact["binding"], "impact_digest": impact["impact_digest"],
+                "impact_binding": {"binding": impact["binding"], "impact_digest": impact["impact_digest"]},
+                "resolutions": [],
+            }
+            subject = "npc-recovery"
+            method = "editor_record_remove"
+            args = ("campaign_alpha", revision, subject)
+        else:
+            revision, _, (_, proposal) = self._edit()
+            subject = proposal["proposal_id"]
+            method = "editor_proposal_" + kind
+            args = (subject, proposal["proposal_version"])
+            if kind == "correct":
+                candidate = deepcopy(proposal["diff"]["cards"][0]["after"])
+                candidate["displayed_name"] = "Corrected Campaign"
+                candidate["content_digest"] = document_digest(candidate)
+                payload = {
+                    "contract_name": "editor_proposal_correction_request", "contract_version": 1,
+                    "prior_proposal": {"proposal_id": subject, "proposal_version": proposal["proposal_version"]},
+                    "binding": proposal["record_bindings"][0], "mutation_kind": "edit",
+                    "candidate": candidate, "resolutions": [], "impact_digest": None, "impact_binding": None,
+                }
+            else:
+                payload = self._editor_approval_payload(proposal)
+                if kind == "reject":
+                    for key in ("diff", "affected_record_count", "confirmed_change_ids", "confirmed_authority_change_ids", "confirmed_visibility_change_ids"):
+                        payload.pop(key)
+                    payload["contract_name"] = "editor_proposal_rejection_request"
+                    payload["reason_code"] = "warden_rejected"
+        operation = {
+            "contract_name": "editor_operation_request", "contract_version": 1,
+            "request_id": "request_recovery", "operation": method,
+            "idempotency_key": "idem_recovery", "expected_revision": revision,
+            "expected_editor_workflow_version": self.app._editor_version("campaign_alpha"),
+            "subject_id": subject,
+        }
+        if kind in {"approve", "reject"}:
+            operation["intent_digest"] = payload["diff_digest"]
+        payload["operation_request"] = operation
+        operation["payload_digest"] = self.app._editor_payload_digest(payload)
+        return method, (*args, payload)
+
+    def test_all_mutations_recover_exact_response_after_receipt_crash(self):
+        for kind in ("create", "edit", "remove", "correct", "approve", "reject"):
+            with self.subTest(kind=kind):
+                self.setUp()
+                method, args = self._request(kind)
+                expected_workflow = self.app._editor_version("campaign_alpha") + 1
+                captured = []
+
+                def crash(operation, key, digest, status, response):
+                    captured.append(deepcopy(response))
+                    raise SystemExit("receipt crash")
+
+                with mock.patch.object(self.app, "_store", side_effect=crash):
+                    with self.assertRaises(SystemExit):
+                        getattr(self.app, method)(*deepcopy(args))
+                head = self.app.workflow.head("campaign_alpha")
+                audit = tuple(self.app.proposal_repository.audit)
+                self._restart()
+                self._restart()
+                for _ in range(2):
+                    self.assertEqual((200, captured[0]), getattr(self.app, method)(*deepcopy(args)))
+                    self.assertEqual(expected_workflow, self.app._editor_version("campaign_alpha"))
+                    self.assertEqual(head, self.app.workflow.head("campaign_alpha"))
+                    self.assertEqual(audit, tuple(self.app.proposal_repository.audit))
+
+    def test_uncommitted_claim_can_retry_without_relaxing_workflow(self):
+        method, args = self._request("edit")
+        with mock.patch.object(self.app.proposal_repository, "add_editor", side_effect=SystemExit("before commit")):
+            with self.assertRaises(SystemExit):
+                getattr(self.app, method)(*args)
+        self._restart()
+        self.assertEqual(201, getattr(self.app, method)(*args)[0])
+        stale = deepcopy(args)
+        stale[-1]["operation_request"]["idempotency_key"] = "idem_new_stale"
+        with self.assertRaises(HTTPFailure) as failure:
+            getattr(self.app, method)(*stale)
+        self.assertEqual("workflow_conflict", failure.exception.payload["error"]["code"])
+
+    def test_noop_editor_proposal_rejects_before_claim_and_exact_retry_repeats_validation(self):
+        revision = self.app.workflow.head("campaign_alpha")
+        view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
+        operation = {
+            "contract_name": "editor_operation_request", "contract_version": 1,
+            "request_id": "request_noop", "operation": "editor_record_edit",
+            "idempotency_key": "idem_noop", "payload_digest": "0" * 64,
+            "expected_revision": revision, "expected_editor_workflow_version": 1,
+            "subject_id": "campaign-main",
+        }
+        payload = {
+            "contract_name": "editor_record_edit_request", "contract_version": 1,
+            "operation_request": operation,
+            "binding": {
+                "campaign_id": "campaign_alpha", "base_revision": view["viewed_revision"],
+                "record_id": "campaign-main", "record_digest": view["record"]["content_digest"],
+                "expected_editor_workflow_version": 1,
+            },
+            "candidate": deepcopy(view["record"]),
+        }
+        operation["payload_digest"] = self.app._editor_payload_digest(payload)
+
+        for _ in range(2):
+            with self.assertRaises(HTTPFailure) as failure:
+                self.app.editor_record_edit("campaign_alpha", revision, "campaign-main", deepcopy(payload))
+            self.assertEqual("proposal_validation_failure", failure.exception.payload["error"]["category"])
+        self.assertEqual(1, self.app._editor_version("campaign_alpha"))
+
+    def test_editor_proposal_releases_claim_when_atomic_cas_does_not_commit(self):
+        for failure in (False, RuntimeError("before commit")):
+            with self.subTest(failure=type(failure).__name__):
+                self.setUp()
+                method, args = self._request("edit")
+                add = self.app.proposal_repository.add_editor
+                calls = 0
+
+                def fail_once(*positional, **keywords):
+                    nonlocal calls
+                    calls += 1
+                    if calls == 1:
+                        if isinstance(failure, BaseException):
+                            raise failure
+                        return failure
+                    return add(*positional, **keywords)
+
+                with mock.patch.object(self.app.proposal_repository, "add_editor", side_effect=fail_once):
+                    if failure is False:
+                        with self.assertRaises(HTTPFailure):
+                            getattr(self.app, method)(*deepcopy(args))
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            getattr(self.app, method)(*deepcopy(args))
+                    status, result = getattr(self.app, method)(*deepcopy(args))
+                self.assertEqual((201, "edit"), (status, result["diff"]["summary"]))
+
+    def test_approval_retries_in_same_process_after_staging_failure(self):
+        _, _, (_, proposal) = self._edit()
+        payload = self._editor_approval_payload(proposal)
+        args = (proposal["proposal_id"], proposal["proposal_version"], payload)
+        with mock.patch.object(self.app.proposals, "_stage", side_effect=RuntimeError("staging failed")):
+            with self.assertRaises(HTTPFailure) as failure:
+                self.app.editor_proposal_approve(*args)
+        self.assertEqual("proposal_validation_failure", failure.exception.payload["error"]["code"])
+        status, result = self.app.editor_proposal_approve(*args)
+        self.assertEqual((200, "published"), (status, result["outcome"]))
+        self.assertEqual((status, result), self.app.editor_proposal_approve(*args))
+
+    def test_approval_claim_recovers_after_process_dies_before_publication_snapshot(self):
+        _, _, (_, proposal) = self._edit("idem_editor_claim_crash")
+        payload = self._editor_approval_payload(proposal)
+        args = (proposal["proposal_id"], proposal["proposal_version"], payload)
+
+        with mock.patch.object(self.app.proposals, "_stage", side_effect=SystemExit("claim crash")):
+            with self.assertRaises(SystemExit):
+                self.app.editor_proposal_approve(*args)
+
+        self.assertEqual(
+            ProposalStatus.APPROVING,
+            self.app.proposal_repository.get(proposal["proposal_id"], proposal["proposal_version"]).status,
+        )
+        self.assertEqual(1, len(self.app.revisions.store.inventory()))
+
+        self._restart()
+        self.assertEqual(
+            ProposalStatus.APPROVING,
+            self.app.proposal_repository.get(proposal["proposal_id"], proposal["proposal_version"]).status,
+        )
+        status, result = self.app.editor_proposal_approve(*args)
+        self.assertEqual((200, "published"), (status, result["outcome"]))
+        self.assertEqual(
+            ProposalStatus.PUBLISHED,
+            self.app.proposal_repository.get(proposal["proposal_id"], proposal["proposal_version"]).status,
+        )
+
+    def test_rejection_releases_claim_when_atomic_finalization_does_not_commit(self):
+        for failure in (False, RuntimeError("finalization failed")):
+            with self.subTest(failure=type(failure).__name__):
+                self.setUp()
+                method, args = self._request("reject")
+                calls = 0
+
+                def fail_once(*positional, **keywords):
+                    nonlocal calls
+                    calls += 1
+                    if calls == 1:
+                        if isinstance(failure, BaseException):
+                            raise failure
+                        return failure
+                    return True
+
+                with mock.patch.object(self.app.workflow, "finalize_editor_rejection", create=True, side_effect=fail_once):
+                    if failure is False:
+                        with self.assertRaises(HTTPFailure):
+                            getattr(self.app, method)(*deepcopy(args))
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            getattr(self.app, method)(*deepcopy(args))
+                    status, result = getattr(self.app, method)(*deepcopy(args))
+                self.assertEqual((200, "rejected"), (status, result["outcome"]))
+
+    def test_changed_abandoned_payload_is_rejected(self):
+        method, args = self._request("edit")
+        with mock.patch.object(self.app, "_store", side_effect=SystemExit("receipt crash")):
+            with self.assertRaises(SystemExit):
+                getattr(self.app, method)(*args)
+        self._restart()
+        changed = deepcopy(args)
+        changed[-1]["candidate"]["displayed_name"] = "Different"
+        changed[-1]["candidate"]["content_digest"] = document_digest(changed[-1]["candidate"])
+        changed[-1]["operation_request"]["payload_digest"] = self.app._editor_payload_digest(changed[-1])
+        with self.assertRaises(HTTPFailure) as failure:
+            getattr(self.app, method)(*changed)
+        self.assertEqual("idempotency_digest_conflict", failure.exception.payload["error"]["code"])
+        self.assertEqual(200, getattr(self.app, method)(*args)[0])
+
+    def test_proposal_commit_recovers_before_sidecar_and_after_later_approval(self):
+        for kind in ("create", "edit", "remove", "correct"):
+            with self.subTest(kind=kind):
+                self.setUp()
+                method, args = self._request(kind)
+                committed = []
+                add = self.app.proposal_repository.add_editor
+
+                def commit_then_crash(item, campaign_id, expected):
+                    self.assertTrue(add(item, campaign_id, expected))
+                    committed.append(deepcopy(item.editor_metadata))
+                    raise SystemExit("after proposal commit")
+
+                with mock.patch.object(self.app.proposal_repository, "add_editor", side_effect=commit_then_crash):
+                    with self.assertRaises(SystemExit):
+                        getattr(self.app, method)(*args)
+                self._restart()
+                self._approve_editor(committed[0])
+                self._restart()
+                head = self.app.workflow.head("campaign_alpha")
+                workflow = self.app._editor_version("campaign_alpha")
+                audit = tuple(self.app.proposal_repository.audit)
+                self.assertEqual((200, committed[0]), getattr(self.app, method)(*args))
+                self.assertEqual(head, self.app.workflow.head("campaign_alpha"))
+                self.assertEqual(workflow, self.app._editor_version("campaign_alpha"))
+                self.assertEqual(audit, tuple(self.app.proposal_repository.audit))
+
+    def test_rejection_recovers_each_fallback_commit_window(self):
+        for boundary in ("reject", "advance_editor", "save_editor_metadata"):
+            with self.subTest(boundary=boundary):
+                self.setUp()
+                method, args = self._request("reject")
+                owner = self.app.proposals if boundary == "reject" else self.app.proposal_repository
+                original = getattr(owner, boundary)
+
+                def commit_then_crash(*positional, **keywords):
+                    original(*positional, **keywords)
+                    raise SystemExit("after " + boundary)
+
+                with mock.patch.object(owner, boundary, side_effect=commit_then_crash):
+                    with self.assertRaises(SystemExit):
+                        getattr(self.app, method)(*args)
+                self._restart()
+                status, result = getattr(self.app, method)(*args)
+                self.assertEqual((200, "rejected", 3), (status, result["outcome"], result["editor_workflow_version"]))
+                self.assertEqual(3, self.app._editor_version("campaign_alpha"))
+                self.assertEqual("rejected", self.app.editor_proposal_read(*args[:2])[1]["core_proposal"]["proposal"]["status"])
+                audit = tuple(self.app.proposal_repository.audit)
+                self._restart()
+                self.assertEqual((status, result), getattr(self.app, method)(*args))
+                self.assertEqual(audit, tuple(self.app.proposal_repository.audit))
