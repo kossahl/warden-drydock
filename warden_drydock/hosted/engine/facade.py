@@ -48,6 +48,7 @@ from .registry import UnknownWorkspaceError, UnsafeWorkspaceError, WorkspaceRegi
 
 _DOMAIN_ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
+_WARNING_LOCATION = re.compile(r"^(.*):(\d+):(.*)$")
 
 
 def _canonical_digest(value: object) -> str:
@@ -65,6 +66,16 @@ def _tree_digest(root: Path) -> str:
         digest.update(len(content).to_bytes(8, "big"))
         digest.update(content)
     return digest.hexdigest()
+
+
+def _warning_subject_id(detail: str) -> str:
+    """Return a public, stable identity for a validator warning."""
+    match = _WARNING_LOCATION.match(detail)
+    stable_detail = (
+        f"{match.group(1)}:{match.group(3)}" if match is not None else detail
+    )
+    digest = hashlib.sha256(stable_detail.encode("utf-8")).hexdigest()[:32]
+    return f"validation_warning_{digest}"
 
 
 class DeterministicEngine:
@@ -231,7 +242,7 @@ class DeterministicEngine:
                 if entity is None:
                     return self._failure(request.command_id, "proposal_stage", request.workspace_handle, input_digest, Stage.STAGE, "subject_unknown", Status.INVALID)
                 target = source_root / entity.path
-                if content_digest(target.read_text(encoding="utf-8")) != change.expected_content_digest:
+                if content_digest(target.read_bytes().decode("utf-8")) != change.expected_content_digest:
                     return self._failure(request.command_id, "proposal_stage", request.workspace_handle, input_digest, Stage.STAGE, "content_digest_mismatch", Status.INVALID)
                 if change.change_kind is ChangeKind.DELETE and change.replacement:
                     return self._failure(request.command_id, "proposal_stage", request.workspace_handle, input_digest, Stage.STAGE, "change_binding_mismatch", Status.INVALID)
@@ -314,7 +325,8 @@ class DeterministicEngine:
         findings: list[Finding] = []
         for line in output.splitlines():
             if line.startswith("WARNING:"):
-                findings.append(Finding("validation_warning", Severity.WARNING, stage, handle.value))
+                detail = line[len("WARNING:"):].strip()
+                findings.append(Finding("validation_warning", Severity.WARNING, stage, _warning_subject_id(detail)))
             elif line.startswith("ERROR:"):
                 findings.append(Finding("validation_error", Severity.ERROR, stage, handle.value))
         return tuple(findings)

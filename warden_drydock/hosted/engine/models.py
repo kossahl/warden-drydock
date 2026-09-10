@@ -162,7 +162,7 @@ class RetrievalResult:
 
 
 def content_digest(content: str) -> str:
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return hashlib.sha256(content.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")).hexdigest()
 
 
 def exact_diff_digest(changes: Iterable[ExactTextChange]) -> str:
