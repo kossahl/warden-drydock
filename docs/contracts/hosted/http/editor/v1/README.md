@@ -59,6 +59,10 @@ returns that definition and the current editor workflow counter even when the
 revision has no records. It is current-head-only, so the create form does not
 depend on an existing record or silently reuse stale adapter metadata.
 
+An editor record read returns snapshot-integrity or snapshot-lineage failures
+as blocking HTTP 409 errors, so corruption is not presented as a missing record
+or transient service failure.
+
 Removal first returns an impact document. In v1 the impact set contains only
 typed entries from `## Connections`. Each required reference must be removed,
 redirected to a selected existing record, or explicitly accepted unresolved
@@ -107,7 +111,15 @@ not reconstruct source from parsed record documents.
 Approval requests carry only a closed diff binding: the diff digest and the
 confirmed change, authority-change, and visibility-change IDs. The full
 `source_changes` snapshots remain on the server-produced proposal view and are
-not copied into approval requests.
+not copied into approval requests. Approval and rejection operation requests
+also carry an `intent_digest` equal to the top-level `diff_digest`; this binds
+the action to the exact reviewed diff even though the operation wrapper is
+excluded from the canonical payload projection.
+
+An edit or non-removal correction preserves the bound record type. Record type
+migration is outside the editor mutation contract and fails closed. Proposal
+views carry exactly one source snapshot entry for each affected record subject,
+with no missing, duplicate, or extra source subject.
 
 `editor_proposal_view.core_proposal` is `canon_proposal` v2, an additive
 version of the existing proposal contract. It keeps proposal identity,
