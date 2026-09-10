@@ -5,6 +5,7 @@
   "x-invariants": [
     "editor_contract_bindings",
     "editor_canonical_digests",
+    "editor_digest_projections",
     "editor_record_member_ids",
     "editor_logical_ids",
     "editor_status_authority",
@@ -884,7 +885,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 240,
-          "pattern": "^(displayed_name|status|authority|visibility|fields\\.[a-z0-9-]+|sections\\.[a-z0-9-]+)$"
+          "pattern": "^(displayed_name|status|authority|visibility|fields\\.[a-z0-9_-]+|sections\\.[a-z0-9-]+)$"
         },
         "before": {
           "$ref": "#/$defs/property_value"
@@ -2913,8 +2914,33 @@
         },
         "retryable": {
           "type": "boolean"
+        },
+        "findings": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "enum": [
+                  "validation_finding",
+                  "proposal_validation_failure"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": ["findings"]
+          }
+        }
+      ]
     },
     "error_response": {
       "type": "object",

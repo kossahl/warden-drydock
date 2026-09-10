@@ -4,9 +4,64 @@
   "mandatory_with_json_schema":true,
   "http_error_envelope":"../../v2/http.schema.json",
   "error_category_mapping":{"workflow_conflict":"workflow_conflict","stale_record_digest":"stale_revision","replay_mismatch":"idempotency_digest_conflict","incomplete_removal_resolution":"proposal_validation_failure","invalid_authority_transition":"proposal_validation_failure","invalid_connections":"proposal_validation_failure","invalid_correction":"proposal_validation_failure","mutation_consistency":"proposal_validation_failure"},
+  "digest_projections": {
+    "canonical_digest": {
+      "algorithm": "SHA-256",
+      "encoding": "UTF-8",
+      "json": "Compact JSON with lexicographically sorted object keys, preserved array order, and ASCII escaping.",
+      "text_normalization": "CRLF and CR become LF; no trimming is applied."
+    },
+    "text_digest": {
+      "algorithm": "SHA-256",
+      "encoding": "UTF-8",
+      "input": "The normalized text value."
+    },
+    "record_content_digest": {
+      "algorithm": "SHA-256",
+      "encoding": "UTF-8",
+      "json_ascii_escaping": false,
+      "fields": ["record_id", "record_type", "displayed_name", "status", "authority", "visibility", "fields", "sections", "connections"],
+      "exclude_fields": ["content_digest"],
+      "normalize_fields": ["sections[].body"],
+      "array_order": "Preserve fields, sections, and connections order."
+    },
+    "impact_digest": {
+      "fields": ["record", "outgoing_connections", "incoming_references"],
+      "exclude_fields": ["binding", "backlink_policy", "impact_digest"],
+      "array_order": "Preserve outgoing connection and incoming reference order."
+    },
+    "diff_digest": {
+      "fields": ["cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest", "source_changes"],
+      "exclude_fields": ["diff_digest", "summary"],
+      "array_order": "Preserve every card, transition, and source-change order."
+    },
+    "validation_digest": {
+      "fields": ["status", "error_count", "findings"],
+      "exclude_fields": ["validation_digest"],
+      "array_order": "Preserve finding order."
+    },
+    "proposal_payload_digest": {
+      "fields": "Every top-level editor_proposal_view field.",
+      "exclude_fields": ["proposal_payload_digest"],
+      "array_order": "Preserve every nested array order; duplicated compatibility projections remain included and must agree."
+    },
+    "operation_payload_digest": {
+      "fields": "The request body after removing contract_name, contract_version, operation_request, request_id, idempotency_key, and payload_digest.",
+      "array_order": "Preserve every remaining array order."
+    },
+    "duplicate_bindings": {
+      "rules": [
+        "editor_diff.diff_digest equals core_proposal.proposal.diff_digest.",
+        "validation.validation_digest equals core_proposal.validation.validation_digest.",
+        "impact_digest equals editor_diff.impact_digest and impact_binding.impact_digest when a removal impact exists.",
+        "Every record_document.content_digest and record binding record_digest names the digest of its corresponding record projection."
+      ]
+    }
+  },
   "rules":[
     {"id":"editor_contract_bindings","category":"unsafe_binding","applies_to":["all"]},
     {"id":"editor_canonical_digests","category":"idempotency_digest_conflict","applies_to":["all"]},
+    {"id":"editor_digest_projections","category":"idempotency_digest_conflict","applies_to":["editor_record_view","editor_removal_impact","editor_record_create_request","editor_record_edit_request","editor_record_remove_request","editor_proposal_view","editor_proposal_correction_request","editor_proposal_rejection_request","editor_proposal_approval_request","editor_proposal_approval_result","editor_proposal_rejection_result"],"rule":"Every digest uses the exact machine-readable digest_projections above. Self-referential digest fields are excluded only where named; all duplicated digest fields must agree with their authoritative projection."},
     {"id":"editor_record_member_ids","category":"proposal_validation_failure","applies_to":["editor_record_view","editor_record_create_request","editor_record_edit_request","editor_record_remove_request","editor_proposal_view","editor_proposal_correction_request"],"rule":"Every record document rejects duplicate field_id, section_id, and connection_id values even when the complete objects differ."},
     {"id":"editor_logical_ids","category":"proposal_validation_failure","applies_to":["editor_proposal_view","editor_proposal_approval_request","editor_proposal_rejection_request","editor_proposal_correction_request","editor_removal_impact","editor_record_remove_request"],"rule":"Proposal changes, diff cards, authority and visibility entries, references, resolutions, and record bindings are unique by their logical identifiers, not by whole-object equality."},
     {"id":"editor_status_authority","category":"proposal_validation_failure","applies_to":["editor_record_view","editor_record_create_request","editor_record_edit_request","editor_record_remove_request","editor_proposal_view","editor_proposal_correction_request","editor_proposal_approval_request"],"rule":"Every record document, including record views and every card before/after document, derives authority from status: canon maps to canon, revealed maps to revealed, every other supported status maps to preparation, and missing or unknown read statuses map to preparation and must be replaced with a supported status before mutation."},

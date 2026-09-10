@@ -1371,6 +1371,31 @@
           "retryable": false
         }
       }
+    },
+    {
+      "name": "validation_error",
+      "payload": {
+        "contract_name": "error_response",
+        "contract_version": 2,
+        "error": {
+          "category": "proposal_validation_failure",
+          "code": "invalid_connection_target",
+          "stage": "editor_proposal",
+          "request_id": "request_validation_error",
+          "retryable": false,
+          "findings": [
+            {
+              "finding_id": "finding_invalid_connection",
+              "code": "invalid_connection_target",
+              "severity": "error",
+              "location": "connections.connection_bad",
+              "message": "Choose an existing record as the connection target.",
+              "recovery_action": "Replace the target with an existing record.",
+              "retryable": false
+            }
+          ]
+        }
+      }
     }
   ],
   "card_examples": [

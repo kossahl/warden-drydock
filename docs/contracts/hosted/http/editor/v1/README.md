@@ -79,6 +79,20 @@ language `message`, and retryability. A finding may also include a
 browser uses the same finding in the summary and beside the affected control;
 it does not need to infer user guidance from an internal code.
 
+Validation failures use the same closed HTTP error envelope as other editor
+failures. A `validation_finding` or `proposal_validation_failure` error must
+carry one or more of those structured findings in `error.findings`; the error
+code remains a stable machine identifier, not the browser's only user-facing
+explanation.
+
+Digest inputs are machine-readable in `semantic-invariants.json` under
+`digest_projections`. In particular, `content_digest` excludes itself and
+normalizes section bodies, `impact_digest` excludes transport binding fields,
+`diff_digest` excludes its own digest and summary, `validation_digest` excludes
+its own digest, and `proposal_payload_digest` excludes only its own top-level
+field. Object keys sort lexicographically, array order remains significant,
+and canonical text normalizes CRLF and CR to LF without trimming.
+
 `editor_proposal_view.core_proposal` is `canon_proposal` v2, an additive
 version of the existing proposal contract. It keeps proposal identity,
 version, validation, source revision, base revision, change digest, and
