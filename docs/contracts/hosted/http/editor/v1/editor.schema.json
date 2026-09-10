@@ -17,7 +17,9 @@
     "editor_connection_bindings",
     "editor_mutation_consistency",
     "editor_removal_binding",
-    "editor_removal_correction"
+    "editor_removal_correction",
+    "editor_warning_policy",
+    "editor_unresolved_reference_policy"
   ],
   "oneOf": [
     {

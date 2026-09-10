@@ -274,11 +274,12 @@ def frontmatter(text: str) -> dict[str, object]:
 
 
 def body(text: str) -> str:
-    if text.startswith("---\n"):
-        end = text.find("\n---", 4)
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    if normalized.startswith("---\n"):
+        end = normalized.find("\n---", 4)
         if end >= 0:
-            return text[end + 4 :].strip()
-    return text.strip()
+            return normalized[end + 4 :].strip()
+    return normalized.strip()
 
 
 def _read_json(path: Path) -> dict:

@@ -198,6 +198,9 @@ class SliceApplication:
         self.campaigns: dict[str, CampaignState] = {}
         self._lock = threading.RLock()
         self._dispatch_lock = threading.RLock()
+        # Known ceiling: one process-wide lock serializes editor terminal
+        # actions across campaigns. Move to per-campaign locks if hosted
+        # concurrency becomes a product requirement.
         self._editor_mutation_lock = threading.RLock()
         self._dispatching: set[str] = set()
         self._editor_workflow: dict[str, int] = {}
@@ -1447,7 +1450,15 @@ class SliceApplication:
         record = self._record(campaign_id, revision_id, record_id)
         head_id = self.workflow.head(campaign_id)
         head = campaign.revisions[head_id] if head_id else manifest
-        return campaign, manifest, head, parse_document(record["content"], record_id, record["record_type"])
+        try:
+            document = parse_document(record["content"], record_id, record["record_type"])
+        except ValueError as exc:
+            if str(exc) == "invalid_field_value":
+                raise HTTPFailure(
+                    422, "unsafe_binding", "record_not_editable", "editor_record_read",
+                ) from exc
+            raise
+        return campaign, manifest, head, document
 
     @staticmethod
     def _editor_revision_ref(manifest: SnapshotManifest) -> dict:
@@ -1840,7 +1851,7 @@ class SliceApplication:
                     source["connections"] = [item for item in source["connections"] if item["connection_id"] != reference["connection_id"]]
                 source["content_digest"] = document_digest(source)
             for source_record_id, (source, source_content, first_connection_id) in source_mutations.items():
-                source_labels = editor_definition["records"][source["record_type"]]["section_labels"]
+                source_labels = editor_definition["records"].get(source["record_type"], {}).get("section_labels", {})
                 source_change = change_for(source_content, source, self._id("change", campaign_id, revision_id, source_record_id, first_connection_id), ChangeKind.UPDATE, section_labels=source_labels)
                 changes.append(source_change)
                 source_before[source_change.change_id] = source_content

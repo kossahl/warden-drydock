@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 import shutil
 import unittest
 from pathlib import Path
@@ -78,6 +79,43 @@ Keep these wants.
 
         with self.assertRaisesRegex(ValueError, "editor_section_reordering_not_allowed"):
             validate_adapter_document(candidate, adapter_editor_definition("mothership"), before)
+
+    def test_supported_fields_and_sections_can_be_removed(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+score: 1
+---
+
+## Summary
+Keep this record.
+
+## Notes
+Remove these notes.
+"""
+        before = parse_document(source, "record-main", "npc")
+        candidate = deepcopy(before)
+        candidate["fields"] = [item for item in candidate["fields"] if item["field_id"] != "score"]
+        candidate["sections"] = [item for item in candidate["sections"] if item["section_id"] != "notes"]
+        candidate["content_digest"] = document_digest(candidate)
+        definition = {
+            "records": {"npc": {
+                "fields": {"score"}, "sections": {"summary", "notes"},
+                "required_fields": set(), "nonempty_fields": set(),
+                "required_values": {}, "forbidden_headings": set(),
+            }},
+            "creatable": {"npc"}, "relationships": set(), "states": set(),
+        }
+
+        validate_adapter_document(candidate, definition, before)
+        result = mutate_document(source, candidate)
+
+        self.assertNotIn("score:", result)
+        self.assertNotIn("## Notes", result)
+        self.assertEqual(candidate, parse_document(result, "record-main", "npc"))
 
     def test_multiple_section_edits_publish_reviewed_candidate_and_keep_history(self):
         revision = self.app.workflow.head("campaign_alpha")
@@ -497,7 +535,15 @@ Keep this record.
         with self.assertRaisesRegex(ValueError, "invalid_field_value"):
             parse_document(source, "record-main", "npc")
 
-    def test_editor_rejects_integral_float_fields_outside_javascript_safe_range(self):
+        revision = self.app.workflow.head("campaign_alpha")
+        with mock.patch.object(self.app, "_record", return_value={"content": source, "record_type": "npc"}):
+            with self.assertRaises(_editor_backend.HTTPFailure) as caught:
+                self.app.editor_record_read("campaign_alpha", revision, "record-main")
+        self.assertEqual((422, "record_not_editable"), (
+            caught.exception.status, caught.exception.payload["error"]["code"],
+        ))
+
+    def test_editor_normalizes_integral_float_fields_within_javascript_safe_range(self):
         source = """---
 id: record-main
 type: npc
@@ -511,8 +557,9 @@ count: 1.0
 Keep this record.
 """
 
-        with self.assertRaisesRegex(ValueError, "invalid_field_value"):
-            parse_document(source, "record-main", "npc")
+        document = parse_document(source, "record-main", "npc")
+        self.assertEqual(1, document["fields"][0]["value"])
+        self.assertIs(type(document["fields"][0]["value"]), int)
 
     def test_custom_frontmatter_keys_survive_typed_mutation(self):
         source = """---
@@ -553,11 +600,28 @@ bound_revision_field: \"from revision\"
 
 ## Bound section
 """, encoding="utf-8")
+        legacy_template = revision_root / "01-campaign" / "legacy-overview.md"
+        legacy_template.write_text("""---
+type: legacy-campaign
+status: draft
+ownership: campaign
+legacy_field: from old revision
+---
+
+## Legacy section
+""", encoding="utf-8")
+        (revision_root / ".drydock-lock.json").write_text(json.dumps({
+            "schema_version": 1,
+            "files": {
+                "01-campaign/legacy-overview.md": {"ownership": "campaign"},
+            },
+        }), encoding="utf-8")
 
         definition = adapter_editor_definition("mothership", revision_root)
 
         self.assertIn("bound_revision_field", definition["records"]["campaign"]["fields"])
         self.assertNotIn("system", definition["records"]["campaign"]["fields"])
+        self.assertIn("legacy_field", definition["records"]["legacy-campaign"]["fields"])
 
     def test_unsupported_adapter_fields_use_typed_equality(self):
         before = {
@@ -581,6 +645,31 @@ bound_revision_field: \"from revision\"
 
         with self.assertRaisesRegex(ValueError, "unsupported_editor_fields"):
             validate_adapter_document(candidate, definition, before)
+
+    def test_nonempty_adapter_fields_accept_non_string_scalars(self):
+        candidate = {
+            "record_id": "record-main",
+            "record_type": "npc",
+            "displayed_name": "Keeper",
+            "status": "draft",
+            "visibility": {"audience": "warden", "warden_only": True},
+            "fields": [
+                {"field_id": "score", "value": 0},
+                {"field_id": "enabled", "value": False},
+            ],
+            "sections": [],
+            "connections": [],
+        }
+        definition = {
+            "records": {"npc": {
+                "fields": {"score", "enabled"}, "sections": set(),
+                "required_fields": set(), "nonempty_fields": {"score", "enabled"},
+                "required_values": {}, "forbidden_headings": set(),
+            }},
+            "creatable": {"npc"}, "relationships": set(), "states": set(),
+        }
+
+        validate_adapter_document(candidate, definition, None)
 
     def test_source_connection_trailing_whitespace_is_read_as_context_only(self):
         source = """---
@@ -857,6 +946,54 @@ visibility: warden
 
         self.assertIn("<!-- drydock:connection-id=duplicate_marker -->", result)
         self.assertIn("<!-- drydock:connection-id=duplicate_marker_2 -->", result)
+        self.assertEqual(candidate["connections"], parse_document(result, "record-main", "npc")["connections"])
+
+    def test_long_connection_markers_are_bounded_and_stable(self):
+        marker = "marker_" + ("a" * 90)
+        source = f"""---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Connections
+
+<!-- drydock:connection-id={marker} -->
+- `guards` -> [[record-gate]] (`current`) — Watches the gate.
+"""
+        first = parse_document(source, "record-main", "npc")
+        second = parse_document(source, "record-main", "npc")
+
+        self.assertEqual(first["connections"], second["connections"])
+        self.assertLessEqual(len(first["connections"][0]["connection_id"]), 80)
+        self.assertNotEqual(marker, first["connections"][0]["connection_id"])
+
+    def test_mutation_slots_reuse_collision_safe_fallback_ids(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Connections
+
+<!-- drydock:connection-id=connection_2 -->
+- `guards` -> [[record-gate]] (`current`) — Watches the gate.
+- `supports` -> [[record-hall]] (`current`) — Checks the hall.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        self.assertEqual(["connection_2", "connection_2_2"], [
+            item["connection_id"] for item in candidate["connections"]
+        ])
+        candidate["connections"][1]["context"] = "Checks the hall carefully."
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+
         self.assertEqual(candidate["connections"], parse_document(result, "record-main", "npc")["connections"])
 
     def test_mutating_connection_preserves_unrelated_markdown_bullets(self):

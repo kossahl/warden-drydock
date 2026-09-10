@@ -739,6 +739,13 @@ class EditorContractTests(unittest.TestCase):
         for route in routes:
             if route["id"] in workflow_conflict_routes:
                 self.assertIn("unsafe_binding", route["error_status"]["409"])
+        action_routes = {
+            "editor_proposal_reject", "editor_proposal_approve",
+        }
+        for route in routes:
+            if route["id"] in action_routes:
+                self.assertIn("proposal_approval_conflict", route["error_status"]["422"])
+                self.assertIn("idempotency_digest_conflict", route["error_status"]["422"])
         for item in aggregate["packages"]:
             package_index = json.loads((HTTP_ROOT / item["index"]).read_text())
             for key in ("schema", "routes", "examples", "semantic_invariants"):

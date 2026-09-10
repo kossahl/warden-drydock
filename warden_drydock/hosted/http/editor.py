@@ -208,6 +208,9 @@ def _heading_id(value: str) -> str:
 
 
 def _unique_public_id(base: str, used: set[str]) -> str:
+    if len(base) > 80:
+        digest = hashlib.sha256(base.encode("utf-8")).hexdigest()[:12]
+        base = f"{base[:67].rstrip('_')}_{digest}"
     candidate = base
     suffix = 2
     while candidate in used:
@@ -296,7 +299,7 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
         conn.append({"connection_id": connection_id, "target_record_id": item.target_id,
                      "relationship": item.relationship, "state": item.state,
                      "context": item.context.rstrip()})
-    fields = [{"field_id": key, "value": value} for key, value in metadata.items()
+    fields = [{"field_id": key, "value": int(value) if isinstance(value, float) and math.isfinite(value) and value.is_integer() else value} for key, value in metadata.items()
               if key not in {"id", "type", "name", "status", "visibility", "warden_only"}
               and _FIELD_ID.fullmatch(key)]
     audience = metadata.get("visibility", "warden")
@@ -538,14 +541,17 @@ def mutate_document(
             block, source_id=new["record_id"], path=None  # type: ignore[arg-type]
         )
         occurrences = _connection_marker_occurrences(block)
-        return [
-            (
+        used_connection_ids: set[str] = set()
+        slots = []
+        for index, connection in enumerate(typed_connections, 1):
+            raw_id = occurrences[connection.line][1] if connection.line in occurrences else f"connection_{index}"
+            connection_id = _unique_public_id(raw_id, used_connection_ids)
+            slots.append((
                 heading_index + connection.line - 1,
                 heading_index + occurrences[connection.line][0] - 1 if connection.line in occurrences else None,
-                occurrences[connection.line][1] if connection.line in occurrences else f"connection_{index}",
-            )
-            for index, connection in enumerate(typed_connections, 1)
-        ]
+                connection_id,
+            ))
+        return slots
 
     # Duplicate Connections headings are authored source boundaries. The
     # standalone parser reads only the first block, so preserve every later
@@ -659,8 +665,32 @@ def adapter_editor_definition(adapter_id: str, revision_root: Path | None = None
         for kind, spec in config["entity_types"].items()
     ]
     project_template_root = DATA / "project_template"
-    for path in project_template_root.rglob("*.md"):
-        bound_path = (revision_root / path.relative_to(project_template_root)) if revision_root else path
+    project_paths: dict[str, Path] = {
+        path.relative_to(project_template_root).as_posix(): path
+        for path in project_template_root.rglob("*.md")
+    }
+    if revision_root:
+        try:
+            lock = json.loads(
+                (revision_root / ".drydock-lock.json").read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            lock = {}
+        lock_files = lock.get("files", {}) if isinstance(lock, dict) else {}
+        if isinstance(lock_files, dict):
+            for relative, metadata in lock_files.items():
+                relative_path = Path(relative) if isinstance(relative, str) else None
+                if (
+                    relative_path is not None
+                    and relative_path.suffix == ".md"
+                    and not relative_path.is_absolute()
+                    and ".." not in relative_path.parts
+                    and isinstance(metadata, dict)
+                    and metadata.get("ownership") != "adapter"
+                ):
+                    project_paths[relative_path.as_posix()] = revision_root / relative_path
+    for relative, path in project_paths.items():
+        bound_path = (revision_root / relative) if revision_root else path
         if not bound_path.is_file():
             continue
         source = bound_path.read_text(encoding="utf-8")
@@ -752,8 +782,6 @@ def validate_adapter_document(candidate: dict, definition: dict, before: dict | 
         for identifier in old.keys() | new.keys():
             if identifier not in spec[collection] and not _typed_equal(old.get(identifier), new.get(identifier)):
                 raise ValueError("unsupported_editor_" + collection)
-            if identifier in old and identifier not in new:
-                raise ValueError("editor_member_removal_not_allowed")
         for identifier, item in new.items():
             if old.get(identifier) == item:
                 continue

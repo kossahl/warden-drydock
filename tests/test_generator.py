@@ -430,6 +430,20 @@ class GeneratorTest(unittest.TestCase):
                 self.assertEqual(main(['backlinks','faction-company','--path',str(root)]),0)
             self.assertIn('npc-ripley\tworks-for\tcurrent',backlinks.getvalue())
 
+    def test_focused_context_normalizes_record_newlines_before_body_extraction(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test', adapter='mothership')
+            npc = create_entity(root, 'npc', 'npc-ripley', 'Ripley')
+            npc.write_bytes(npc.read_bytes().replace(b'\n', b'\r\n'))
+
+            context = standalone.build_context(root, focus='npc-ripley', depth=0, max_records=1)
+            text = context.read_text(encoding='utf-8')
+
+            self.assertIn('Ripley (`npc-ripley`)', text)
+            self.assertIn('## Summary', text)
+            self.assertNotIn('---\n\nid: npc-ripley', text)
+
     def test_relationship_generation_rejects_parse_errors_without_mutation(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)/'campaign';init_campaign(root,name='Test',adapter='mothership')

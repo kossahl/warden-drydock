@@ -77,11 +77,13 @@ python -m unittest discover -s tests -v
 python -m warden_drydock --help
 ```
 
-Before opening a PR, run `./scripts/review-check.sh`. It uses pinned
+Before opening a PR, run `./scripts/review-check.sh`. It uses digest-pinned
 Python 3.11/3.13 and Node/npm containers to mirror CI, including Chromium
 browser tests, the clean onboarding smoke test, live PostgreSQL checks, and
-whitespace validation. Set `DRYDOCK_CI_BASE_REF` if `origin/master` is not
-available locally.
+whitespace validation. The mounted checkout may receive the ignored
+`web/node_modules/`, `web/test-results/`, and `web/dist/` build artifacts;
+remove them when a clean host tree is needed. Set `DRYDOCK_CI_BASE_REF` if
+`origin/master` is not available locally.
 
 ## Continuous integration scope
 

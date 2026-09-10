@@ -7,8 +7,8 @@ root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 project_name="drydock-review-${RANDOM}-${BASHPID}"
 db_container="${project_name}-postgres"
 network_name="${project_name}-network"
-python_image="python:3.11-bookworm"
-compatibility_image="python:3.13-bookworm"
+python_image="python:3.11-bookworm@sha256:35d3a4a3d5e42e02ab916d44513a050689f12c0533d45598d229672503fe77ca"
+compatibility_image="python:3.13-bookworm@sha256:933b46a028fd786c9c3d426ebabc237e29a15912231ea8de576e95f0e4f41a4c"
 node_image="node:24.11.1-bookworm"
 git_mount_args=()
 if [ -f "$root_dir/.git" ]; then
