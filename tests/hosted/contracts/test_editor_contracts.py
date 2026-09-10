@@ -205,6 +205,9 @@ class HostedRecordEditorContractTests(unittest.TestCase):
 
     def test_mutation_routes_advertise_structured_validation_errors(self) -> None:
         self.assertEqual("error_response", self.routes["error_response"])
+        self.assertEqual(3, self.routes["error_response_version"])
+        validation_error = next(item["payload"] for item in self.examples if item["name"] == "validation_error")
+        self.assertEqual(3, validation_error["contract_version"])
         mutation_routes = [
             route for route in self.routes["routes"]
             if route["method"] == "POST" and route["id"] in {
@@ -238,9 +241,45 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 projection = projections[name]
                 self.assertEqual(fields, set(projection["include_fields"]))
                 self.assertTrue(set(projection["exclude_fields"]).issubset(fields))
+        self.assertIn("diff_digest", projections["operation_payload_digest"]["include_fields"])
         self.assertEqual(
             ["contract_name", "contract_version", "operation_request"],
             projections["operation_payload_digest"]["exclude_fields"],
+        )
+
+    def test_source_snapshots_match_change_type(self) -> None:
+        proposal = next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        for change_type, before_source, after_source in (
+            ("create", "before", None),
+            ("update", "before", "after"),
+            ("delete", "before", None),
+        ):
+            with self.subTest(change_type=change_type):
+                candidate = deepcopy(proposal)
+                source = candidate["diff"]["source_changes"][0]
+                source["change_type"] = change_type
+                source["before_source"] = before_source
+                source["after_source"] = after_source
+                if change_type == "create":
+                    source["before_source"] = "before"
+                elif change_type == "update":
+                    source["before_source"] = None
+                elif change_type == "delete":
+                    source["after_source"] = "after"
+                self.assertTrue(list(self.validator.iter_errors(candidate)))
+
+    def test_approval_requests_bind_changes_without_source_snapshots(self) -> None:
+        approval = next(item["payload"] for item in self.examples if item["name"] == "approval_request")
+        self.assertNotIn("cards", approval["diff"])
+        self.assertNotIn("source_changes", approval["diff"])
+        self.assertEqual(
+            {
+                "diff_digest",
+                "confirmed_change_ids",
+                "confirmed_authority_change_ids",
+                "confirmed_visibility_change_ids",
+            },
+            set(approval["diff"]),
         )
 
 

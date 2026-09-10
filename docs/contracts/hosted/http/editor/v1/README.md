@@ -79,11 +79,11 @@ language `message`, and retryability. A finding may also include a
 browser uses the same finding in the summary and beside the affected control;
 it does not need to infer user guidance from an internal code.
 
-Validation failures use the same closed HTTP error envelope as other editor
-failures. A `validation_finding` or `proposal_validation_failure` error must
-carry one or more of those structured findings in `error.findings`; the error
-code remains a stable machine identifier, not the browser's only user-facing
-explanation.
+Validation failures use this package's version-3 `error_response` envelope, an
+additive extension of the shared HTTP v2 envelope. A `validation_finding` or
+`proposal_validation_failure` error must carry one or more of those structured
+findings in `error.findings`; the error code remains a stable machine
+identifier, not the browser's only user-facing explanation.
 
 Digest inputs are machine-readable in `semantic-invariants.json` under
 `digest_projections`. Each projection names its source object, complete
@@ -99,6 +99,11 @@ Every `editor_diff` includes one or more `source_changes` entries with the
 exact before and after Markdown source for each affected record. Clients render
 these server-produced snapshots directly during exact proposal review; they do
 not reconstruct source from parsed record documents.
+
+Approval requests carry only a closed diff binding: the diff digest and the
+confirmed change, authority-change, and visibility-change IDs. The full
+`source_changes` snapshots remain on the server-produced proposal view and are
+not copied into approval requests.
 
 `editor_proposal_view.core_proposal` is `canon_proposal` v2, an additive
 version of the existing proposal contract. It keeps proposal identity,

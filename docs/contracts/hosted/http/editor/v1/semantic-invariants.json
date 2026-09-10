@@ -2,7 +2,7 @@
   "contract_name":"hosted_record_editor_semantic_invariants",
   "contract_version":1,
   "mandatory_with_json_schema":true,
-  "http_error_envelope":"../../v2/http.schema.json",
+  "http_error_envelope":"editor.schema.json#/$defs/error_response",
   "error_category_mapping":{"workflow_conflict":"workflow_conflict","stale_record_digest":"stale_revision","replay_mismatch":"idempotency_digest_conflict","incomplete_removal_resolution":"proposal_validation_failure","invalid_authority_transition":"proposal_validation_failure","invalid_connections":"proposal_validation_failure","invalid_correction":"proposal_validation_failure","mutation_consistency":"proposal_validation_failure"},
   "digest_projections": {
     "canonical_digest": {
@@ -62,7 +62,7 @@
       "source": "editor_mutation_request",
       "algorithm": "SHA-256",
       "encoding": "UTF-8",
-      "include_fields": ["binding", "candidate", "impact_digest", "impact_binding", "mutation_kind", "prior_proposal", "resolutions", "diff", "affected_record_count", "authority_outcome", "base_revision", "confirmed_authority_change_ids", "confirmed_change_ids", "confirmed_visibility_change_ids", "expected_campaign_head", "expected_editor_workflow_version", "proposal", "proposal_payload_digest", "proposal_status", "reason_code", "record_bindings", "source_revision", "validation_digest", "validation_status", "visibility_outcome", "warden_confirmed"],
+      "include_fields": ["binding", "candidate", "impact_digest", "impact_binding", "mutation_kind", "prior_proposal", "resolutions", "diff", "diff_digest", "affected_record_count", "authority_outcome", "base_revision", "confirmed_authority_change_ids", "confirmed_change_ids", "confirmed_visibility_change_ids", "expected_campaign_head", "expected_editor_workflow_version", "proposal", "proposal_payload_digest", "proposal_status", "reason_code", "record_bindings", "source_revision", "validation_digest", "validation_status", "visibility_outcome", "warden_confirmed"],
       "exclude_fields": ["contract_name", "contract_version", "operation_request"],
       "omit_if_absent": true,
       "array_order": "Preserve every remaining array order."
