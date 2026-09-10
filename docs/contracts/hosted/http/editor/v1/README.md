@@ -49,6 +49,15 @@ target, relationship, state, context, and occurrence ID. The server derives
 incoming backlinks from typed outgoing connections. The client cannot submit
 reverse backlinks or server edge IDs.
 
+The current editor read response also carries the revision-bound
+`adapter_definition`. It lists creatable record types, allowed relationship and
+connection-state values, and each record type's metadata, fields, defaults,
+sections, required values, and forbidden headings. PR #213 already returns this
+object from `editor_record_read`; this package describes that existing response
+field and does not add another discovery route. The definition comes from the
+committed adapter and campaign revision being viewed, so a browser must not
+silently replace it with build-time vocabulary when the response is present.
+
 Removal first returns an impact document. In v1 the impact set contains only
 typed entries from `## Connections`. Each required reference must be removed,
 redirected to a selected existing record, or explicitly accepted unresolved
@@ -63,6 +72,12 @@ card, affected-record binding, and derived graph effect for each impact
 reference. Connection cards are derived from record before/after documents;
 omissions, extras, no-ops, and directionally inconsistent effects fail closed.
 Duplicate, missing, extra, self, and unknown redirect targets fail closed.
+
+Validation findings carry a stable code, severity, target location, plain
+language `message`, and retryability. A finding may also include a
+`recovery_action` when the editor can tell the Warden what to do next. The
+browser uses the same finding in the summary and beside the affected control;
+it does not need to infer user guidance from an internal code.
 
 `editor_proposal_view.core_proposal` is `canon_proposal` v2, an additive
 version of the existing proposal contract. It keeps proposal identity,

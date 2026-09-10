@@ -11,6 +11,7 @@
     "editor_mutation_shapes",
     "editor_publication_binding",
     "editor_history_read_only",
+    "editor_adapter_definition_binding",
     "editor_action_bindings",
     "editor_workflow_lifecycle",
     "editor_transition_completeness",
@@ -189,6 +190,160 @@
           "$ref": "#/$defs/raw_status"
         }
       ]
+    },
+    "adapter_definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_types",
+        "relationships",
+        "connection_states",
+        "record_definitions"
+      ],
+      "properties": {
+        "record_types": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/domain_id"
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/domain_id"
+          }
+        },
+        "connection_states": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/domain_id"
+          }
+        },
+        "record_definitions": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "$ref": "#/$defs/domain_id"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/adapter_record_definition"
+          }
+        }
+      }
+    },
+    "adapter_record_definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metadata",
+        "fields",
+        "field_defaults",
+        "sections",
+        "required_fields",
+        "nonempty_fields",
+        "required_values",
+        "forbidden_headings"
+      ],
+      "properties": {
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "boolean",
+              "number",
+              "null"
+            ]
+          }
+        },
+        "fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+          }
+        },
+        "field_defaults": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "boolean",
+              "number",
+              "null"
+            ]
+          }
+        },
+        "sections": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/domain_id"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            }
+          }
+        },
+        "required_fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+          }
+        },
+        "nonempty_fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+          }
+        },
+        "required_values": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "boolean",
+              "number",
+              "null"
+            ]
+          }
+        },
+        "forbidden_headings": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      }
     },
     "visibility": {
       "type": "object",
@@ -496,6 +651,7 @@
         "code",
         "severity",
         "location",
+        "message",
         "retryable"
       ],
       "properties": {
@@ -517,6 +673,16 @@
           "minLength": 1,
           "maxLength": 240,
           "pattern": "^(record|metadata|fields|sections|connections|references)(?:\\.[a-z0-9_-]+)*$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "recovery_action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
         },
         "retryable": {
           "type": "boolean"
@@ -1967,6 +2133,7 @@
         "editor_workflow_version",
         "historical",
         "editable",
+        "adapter_definition",
         "record"
       ],
       "properties": {
@@ -1994,6 +2161,9 @@
         },
         "editable": {
           "type": "boolean"
+        },
+        "adapter_definition": {
+          "$ref": "#/$defs/adapter_definition"
         },
         "record": {
           "$ref": "#/$defs/record_document"
@@ -2725,6 +2895,7 @@
             "quarantine_failure",
             "proposal_validation_failure",
             "proposal_approval_conflict",
+            "workflow_conflict",
             "service_unavailable",
             "not_found"
           ]

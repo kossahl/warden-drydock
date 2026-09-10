@@ -22,6 +22,31 @@
         "editor_workflow_version": 7,
         "historical": false,
         "editable": true,
+        "adapter_definition": {
+          "record_types": ["location"],
+          "relationships": ["works-for"],
+          "connection_states": ["current"],
+          "record_definitions": {
+            "location": {
+              "metadata": {
+                "type": "location",
+                "status": "review",
+                "visibility": "warden",
+                "warden_only": "true"
+              },
+              "fields": ["date"],
+              "field_defaults": {"date": ""},
+              "sections": [
+                {"id": "summary", "label": "Summary"},
+                {"id": "notes", "label": "Notes"}
+              ],
+              "required_fields": ["id", "type", "status", "name", "visibility", "warden_only"],
+              "nonempty_fields": [],
+              "required_values": {"visibility": "warden", "warden_only": "true"},
+              "forbidden_headings": []
+            }
+          }
+        },
         "record": {
           "record_id": "record-station",
           "record_type": "location",
@@ -80,6 +105,31 @@
         "editor_workflow_version": 7,
         "historical": false,
         "editable": true,
+        "adapter_definition": {
+          "record_types": ["location"],
+          "relationships": ["works-for"],
+          "connection_states": ["current"],
+          "record_definitions": {
+            "location": {
+              "metadata": {
+                "type": "location",
+                "status": "review",
+                "visibility": "warden",
+                "warden_only": "true"
+              },
+              "fields": ["date"],
+              "field_defaults": {"date": ""},
+              "sections": [
+                {"id": "summary", "label": "Summary"},
+                {"id": "notes", "label": "Notes"}
+              ],
+              "required_fields": ["id", "type", "status", "name", "visibility", "warden_only"],
+              "nonempty_fields": [],
+              "required_values": {"visibility": "warden", "warden_only": "true"},
+              "forbidden_headings": []
+            }
+          }
+        },
         "record": {
           "record_id": "record-station",
           "record_type": "location",
@@ -1193,6 +1243,31 @@
         "editor_workflow_version": 7,
         "historical": true,
         "editable": false,
+        "adapter_definition": {
+          "record_types": ["location"],
+          "relationships": ["works-for"],
+          "connection_states": ["current"],
+          "record_definitions": {
+            "location": {
+              "metadata": {
+                "type": "location",
+                "status": "review",
+                "visibility": "warden",
+                "warden_only": "true"
+              },
+              "fields": ["date"],
+              "field_defaults": {"date": ""},
+              "sections": [
+                {"id": "summary", "label": "Summary"},
+                {"id": "notes", "label": "Notes"}
+              ],
+              "required_fields": ["id", "type", "status", "name", "visibility", "warden_only"],
+              "nonempty_fields": [],
+              "required_values": {"visibility": "warden", "warden_only": "true"},
+              "forbidden_headings": []
+            }
+          }
+        },
         "record": {
           "record_id": "record-station",
           "record_type": "location",
