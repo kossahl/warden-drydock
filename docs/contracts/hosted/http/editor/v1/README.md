@@ -76,16 +76,20 @@ is no legacy-ID mapping or translation table.
 ## Authority and visibility
 
 Status and authority are separate. `canon` and `revealed` status produce the
-matching authority. Every other supported status produces `preparation`.
+matching authority. Every other supported status produces `preparation`. Read
+views may also carry Atlas-compatible missing or unknown raw-status objects;
+those map to `preparation` and must be replaced with a supported status before
+the record is submitted as a mutation candidate.
 Promotion to canon or revealed must be visible in a structured exact diff and
 must be named in the approval confirmation. Approval alone never promotes a
 record.
 
 Visibility is explicit metadata, not authority. The document carries both an
-audience (`warden`, `players`, or `shared`) and `warden_only`. Every visibility
-change appears in the exact diff. A broadening requires explicit approval. The
-server never widens visibility automatically and never infers Warden safety
-from a name, status, relationship, or badge.
+audience (`warden`, `players`, or `shared`) and `warden_only`. The schema keeps
+those values independent; adapter validation decides which combinations are
+allowed. Every visibility change appears in the exact diff. A broadening
+requires explicit approval. The server never widens visibility automatically
+and never infers Warden safety from a name, status, relationship, or badge.
 
 ## Acceptance mapping for Issue #67
 
@@ -110,7 +114,9 @@ from a name, status, relationship, or badge.
   provider output.
 - Record IDs remain stable through ordinary edits. Displayed names may change.
 - Status derives record authority. `canon` and `revealed` map to matching
-  authority; every other supported status maps to preparation.
+  authority; every other supported status maps to preparation. Missing and
+  unknown read statuses also map to preparation and are not mutation
+  candidates until replaced with a supported status.
 - Proposal changes, cards, transition entries, references, resolutions, and
   record bindings are unique by logical ID, even when duplicate objects differ.
 - Connections are directed and explicit. Backlinks are derived and never

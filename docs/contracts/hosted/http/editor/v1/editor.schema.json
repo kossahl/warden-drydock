@@ -115,21 +115,21 @@
         "accepted"
       ]
     },
-    "visibility": {
+    "raw_status": {
       "oneOf": [
         {
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "audience",
-            "warden_only"
+            "classification",
+            "value"
           ],
           "properties": {
-            "audience": {
-              "const": "warden"
+            "classification": {
+              "const": "known"
             },
-            "warden_only": {
-              "const": true
+            "value": {
+              "$ref": "#/$defs/status"
             }
           }
         },
@@ -137,22 +137,78 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "audience",
-            "warden_only"
+            "classification",
+            "value"
           ],
           "properties": {
-            "audience": {
-              "enum": [
-                "players",
-                "shared"
-              ]
+            "classification": {
+              "const": "missing"
             },
-            "warden_only": {
-              "const": false
+            "value": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "classification",
+            "value"
+          ],
+          "properties": {
+            "classification": {
+              "const": "unknown"
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "not": {
+                "enum": [
+                  "idea",
+                  "draft",
+                  "review",
+                  "canon",
+                  "revealed",
+                  "archived",
+                  "accepted"
+                ]
+              }
             }
           }
         }
       ]
+    },
+    "read_status": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/status"
+        },
+        {
+          "$ref": "#/$defs/raw_status"
+        }
+      ]
+    },
+    "visibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "audience",
+        "warden_only"
+      ],
+      "properties": {
+        "audience": {
+          "enum": [
+            "warden",
+            "players",
+            "shared"
+          ]
+        },
+        "warden_only": {
+          "type": "boolean"
+        }
+      }
     },
     "field": {
       "type": "object",
@@ -270,7 +326,7 @@
           "maxLength": 200
         },
         "status": {
-          "$ref": "#/$defs/status"
+          "$ref": "#/$defs/read_status"
         },
         "authority": {
           "$ref": "#/$defs/authority"
@@ -303,6 +359,21 @@
           "$ref": "#/$defs/digest"
         }
       }
+    },
+    "candidate_record_document": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/record_document"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "$ref": "#/$defs/status"
+            }
+          }
+        }
+      ]
     },
     "binding": {
       "type": "object",
@@ -2004,7 +2075,7 @@
           "$ref": "#/$defs/binding"
         },
         "candidate": {
-          "$ref": "#/$defs/record_document"
+          "$ref": "#/$defs/candidate_record_document"
         }
       },
       "allOf": [
@@ -2062,7 +2133,7 @@
           "$ref": "#/$defs/binding"
         },
         "candidate": {
-          "$ref": "#/$defs/record_document"
+          "$ref": "#/$defs/candidate_record_document"
         }
       },
       "allOf": [
