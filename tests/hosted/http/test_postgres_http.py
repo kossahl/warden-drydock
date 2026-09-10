@@ -111,7 +111,7 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
                 "input": {"campaign_id": campaign_id, "campaign_name": "Editor PostgreSQL", "adapter_id": "mothership"},
             })
             revision = app.create_campaign(campaign_payload)[1]["head_revision"]
-            record_id = "record_editor"
+            record_id = "record-editor"
             candidate = {
                 "record_id": record_id, "record_type": "npc",
                 "displayed_name": "Editor PostgreSQL Record", "status": "draft",

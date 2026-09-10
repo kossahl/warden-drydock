@@ -63,10 +63,11 @@ class EditorReceiptRecoveryTests(unittest.TestCase):
                 }
             else:
                 payload = self._editor_approval_payload(proposal)
-                for key in ("diff", "affected_record_count", "confirmed_change_ids", "confirmed_authority_change_ids", "confirmed_visibility_change_ids"):
-                    payload.pop(key)
-                payload["contract_name"] = "editor_proposal_rejection_request"
-                payload["reason_code"] = "warden_rejected"
+                if kind == "reject":
+                    for key in ("diff", "affected_record_count", "confirmed_change_ids", "confirmed_authority_change_ids", "confirmed_visibility_change_ids"):
+                        payload.pop(key)
+                    payload["contract_name"] = "editor_proposal_rejection_request"
+                    payload["reason_code"] = "warden_rejected"
         operation = {
             "contract_name": "editor_operation_request", "contract_version": 1,
             "request_id": "request_recovery", "operation": method,
@@ -74,14 +75,14 @@ class EditorReceiptRecoveryTests(unittest.TestCase):
             "expected_editor_workflow_version": self.app._editor_version("campaign_alpha"),
             "subject_id": subject,
         }
-        if kind == "reject":
+        if kind in {"approve", "reject"}:
             operation["intent_digest"] = payload["diff_digest"]
         payload["operation_request"] = operation
         operation["payload_digest"] = self.app._editor_payload_digest(payload)
         return method, (*args, payload)
 
     def test_all_mutations_recover_exact_response_after_receipt_crash(self):
-        for kind in ("create", "edit", "remove", "correct", "reject"):
+        for kind in ("create", "edit", "remove", "correct", "approve", "reject"):
             with self.subTest(kind=kind):
                 self.setUp()
                 method, args = self._request(kind)

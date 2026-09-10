@@ -543,3 +543,33 @@ test("correction does not post after target visibility completes on another rout
   await expect.poll(() => correctionPosts).toBe(0);
   expect(targetReads).toBe(3);
 });
+
+test("record editor fits the documented 320px layout", async ({ page }) => {
+  await installAtlasApi(page);
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      return route.fulfill({
+        headers: { "X-CSRF-Token": "browser-csrf" },
+        json: {
+          contract_name: "editor_record_view", contract_version: 1,
+          campaign_id: "campaign_atlas", viewed_revision: headRevision,
+          head_revision: headRevision, editor_workflow_version: 1,
+          historical: false, editable: true, record: editorRecord,
+        },
+      });
+    }
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  const editor = page.locator(".editor").filter({ hasText: "Edit record" });
+  await expect(editor.getByRole("heading", { name: "Edit record" })).toBeVisible();
+  const dimensions = await editor.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+});

@@ -273,6 +273,17 @@ def frontmatter(text: str) -> dict[str, object]:
     return result
 
 
+def _frontmatter_text(value: object) -> str:
+    """Compare adapter literals using the pre-typed frontmatter spelling."""
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    return str(value)
+
+
 def body(text: str) -> str:
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     if normalized.startswith("---\n"):
@@ -542,7 +553,7 @@ def validate_campaign(root: Path) -> int:
                 if value is None or (isinstance(value, str) and not value.strip()):
                     errors.append(f"{relative}: field {field} must not be empty")
             for field, required_value in entity_rule.get("required_values", {}).items():
-                if metadata.get(field) != required_value:
+                if field not in metadata or _frontmatter_text(metadata[field]).lower() != _frontmatter_text(required_value).lower():
                     errors.append(
                         f"{relative}: {field} must be {required_value} for {entity_type}"
                     )

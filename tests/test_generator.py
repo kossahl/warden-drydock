@@ -73,6 +73,30 @@ class GeneratorTest(unittest.TestCase):
                 main(['bootstrap',str(root),'--name','Test Campaign'])
             self.assertEqual(existing.read_text(encoding='utf-8'),'user content')
 
+    def test_required_values_keep_string_compatibility_with_typed_frontmatter(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test Campaign', adapter='mothership')
+            adapter_path = root / '00-drydock' / 'adapter.json'
+            adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['entity_types']['npc']['required_values'] = {'rank': '1'}
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+            (root / '01-campaign' / 'test-npc.md').write_text(
+                '---\n'
+                'id: test-npc\n'
+                'type: npc\n'
+                'name: Test NPC\n'
+                'status: draft\n'
+                'visibility: warden\n'
+                'warden_only: true\n'
+                'ownership: campaign\n'
+                'rank: 1\n'
+                '---\n',
+                encoding='utf-8',
+            )
+
+            self.assertEqual(validate_campaign(root), 0)
+
     def test_context_uses_only_approved_sessions_and_is_stable(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)/'campaign'

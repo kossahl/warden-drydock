@@ -1445,19 +1445,27 @@ class SliceApplication:
 
     # The editor uses a separate, additive contract.  Its records are parsed
     # from the verified revision and all writes still pass through the engine.
+    @staticmethod
+    def _editor_parse_document(
+        content: str, record_id: str, record_type: str | None = None,
+        *, stage: str, request_id: str = "request_http",
+    ) -> dict:
+        try:
+            return parse_document(content, record_id, record_type)
+        except ValueError as exc:
+            raise HTTPFailure(
+                422, "unsafe_binding", "record_not_editable", stage, request_id,
+            ) from exc
+
     def _editor_context(self, campaign_id: str, revision_id: str, record_id: str):
         campaign, manifest = self._campaign_revision(campaign_id, revision_id)
         record = self._record(campaign_id, revision_id, record_id)
         head_id = self.workflow.head(campaign_id)
         head = campaign.revisions[head_id] if head_id else manifest
-        try:
-            document = parse_document(record["content"], record_id, record["record_type"])
-        except ValueError as exc:
-            if str(exc) == "invalid_field_value":
-                raise HTTPFailure(
-                    422, "unsafe_binding", "record_not_editable", "editor_record_read",
-                ) from exc
-            raise
+        document = self._editor_parse_document(
+            record["content"], record_id, record["record_type"],
+            stage="editor_record_read",
+        )
         return campaign, manifest, head, document
 
     @staticmethod
@@ -1644,23 +1652,40 @@ class SliceApplication:
                 "workflow_conflict": "workflow_conflict",
                 "invalid_connections": "invalid_connections",
                 "incomplete_removal_resolution": "incomplete_removal_resolution",
+                "mutation_consistency": "proposal_validation_failure",
                 "proposal_validation_failure": "proposal_validation_failure",
             }.get(exc.category, "editor_semantic_invalid")
             raise HTTPFailure(status, {
                 "workflow_conflict": "unsafe_binding",
                 "stale_record_digest": "stale_revision",
+                "mutation_consistency": "proposal_validation_failure",
             }.get(exc.category, exc.category), code, stage, self._request_id(payload)) from exc
 
     def _editor_validate_resolution_actions(self, payload: dict, stage: str) -> None:
         resolutions = payload.get("resolutions")
-        if not isinstance(resolutions, list):
+        if resolutions is None:
             return
+        if not isinstance(resolutions, list):
+            raise HTTPFailure(
+                422, "unsafe_binding", "invalid_resolution_shape",
+                stage, self._request_id(payload),
+            )
         allowed = {"remove_reference", "redirect", "accept_unresolved"}
         for resolution in resolutions:
             action = resolution.get("action") if isinstance(resolution, dict) else None
             if not isinstance(action, str) or action not in allowed:
                 raise HTTPFailure(
                     422, "proposal_validation_failure", "invalid_resolution_action",
+                    stage, self._request_id(payload),
+                )
+            if (
+                set(resolution) != {"reference_id", "action", "replacement_target_record_id"}
+                or not isinstance(resolution.get("reference_id"), str)
+                or (action == "redirect" and not isinstance(resolution.get("replacement_target_record_id"), str))
+                or (action != "redirect" and resolution.get("replacement_target_record_id") is not None)
+            ):
+                raise HTTPFailure(
+                    422, "unsafe_binding", "invalid_resolution_shape",
                     stage, self._request_id(payload),
                 )
 
@@ -1836,15 +1861,22 @@ class SliceApplication:
         current = self._editor_version(campaign_id)
         if expected != current or binding.get("expected_editor_workflow_version") != current:
             raise HTTPFailure(409, "unsafe_binding", "workflow_conflict", "editor_workflow", self._request_id(payload))
-        base = binding.get("base_revision", {}).get("revision_id")
+        base_revision = binding.get("base_revision")
+        if not isinstance(base_revision, dict):
+            raise HTTPFailure(422, "unsafe_binding", "invalid_editor_binding", "editor_proposal", self._request_id(payload))
+        base = base_revision.get("revision_id")
         head_id = self.workflow.head(campaign_id)
         if base != revision_id or head_id != revision_id:
             raise HTTPFailure(409, "stale_revision", "stale_revision", "editor_workflow", self._request_id(payload))
         before = None
         before_doc = None
         if record_id is not None and kind != "create":
-            before = self._record(campaign_id, revision_id, record_id)["content"]
-            before_doc = parse_document(before, record_id)
+            record = self._record(campaign_id, revision_id, record_id)
+            before = record["content"]
+            before_doc = self._editor_parse_document(
+                before, record_id, record["record_type"],
+                stage="editor_proposal", request_id=self._request_id(payload),
+            )
             if binding.get("record_digest") != before_doc["content_digest"]:
                 raise HTTPFailure(409, "stale_revision", "stale_record_digest", "editor_proposal", self._request_id(payload))
         elif kind == "create" and binding.get("record_digest") is not None:
@@ -1877,7 +1909,11 @@ class SliceApplication:
                 raise HTTPFailure(422, "proposal_validation_failure", "incomplete_removal_resolution", "editor_proposal", self._request_id(payload))
             documents = {
                 record_id: (
-                    parse_document((record := self._record(campaign_id, revision_id, record_id))["content"], record_id, record["record_type"]),
+                    self._editor_parse_document(
+                        (record := self._record(campaign_id, revision_id, record_id))["content"],
+                        record_id, record["record_type"], stage="editor_proposal",
+                        request_id=self._request_id(payload),
+                    ),
                     record["content"],
                 )
                 for record_id in self._editor_record_ids(campaign_id, revision_id)
@@ -2018,8 +2054,10 @@ class SliceApplication:
             raise HTTPFailure(404, "not_found", "proposal_not_found", "editor_correct")
         if payload.get("prior_proposal") != {"proposal_id": proposal_id, "proposal_version": version}:
             raise HTTPFailure(422, "unsafe_binding", "invalid_editor_binding", "editor_correct", self._request_id(payload))
-        operation = payload.get("operation_request", {})
-        if not isinstance(operation, dict) or operation.get("payload_digest") != self._editor_payload_digest(payload):
+        operation = payload.get("operation_request")
+        if not isinstance(operation, dict):
+            raise HTTPFailure(422, "unsafe_binding", "invalid_operation_shape", "editor_correct", self._request_id(payload))
+        if operation.get("payload_digest") != self._editor_payload_digest(payload):
             raise HTTPFailure(422, "idempotency_digest_conflict", "payload_digest_mismatch", "editor_correct", self._request_id(payload))
         replay = self._replay("editor_proposal_correct", operation.get("idempotency_key"), operation.get("payload_digest"))
         if replay:
@@ -2073,13 +2111,20 @@ class SliceApplication:
                 422, "proposal_validation_failure", "required_record_removal", "editor_removal_impact"
             )
         campaign, manifest = self._campaign_revision(campaign_id, revision_id)
-        removed = parse_document(self._record(campaign_id, revision_id, record_id)["content"], record_id)
+        removed_record = self._record(campaign_id, revision_id, record_id)
+        removed = self._editor_parse_document(
+            removed_record["content"], record_id, removed_record["record_type"],
+            stage="editor_removal_impact",
+        )
         incoming = []
         for source_record_id in sorted(self._editor_record_ids(campaign_id, revision_id)):
             if source_record_id == record_id:
                 continue
             source = self._record(campaign_id, revision_id, source_record_id)
-            document = parse_document(source["content"], source_record_id, source["record_type"])
+            document = self._editor_parse_document(
+                source["content"], source_record_id, source["record_type"],
+                stage="editor_removal_impact",
+            )
             for connection in document["connections"]:
                 if connection["target_record_id"] == record_id:
                     incoming.append({"reference_id": self._id("reference", campaign_id, revision_id, source_record_id, connection["connection_id"]),

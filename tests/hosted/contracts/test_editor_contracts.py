@@ -8,6 +8,10 @@ import re
 import unittest
 
 from jsonschema import Draft202012Validator
+from warden_drydock.hosted.http.editor_semantics import (
+    EditorSemanticError as ProductionEditorSemanticError,
+    validate_editor_semantics as production_validate_editor_semantics,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -1112,8 +1116,8 @@ class EditorContractTests(unittest.TestCase):
                 if path.name == "invalid-connections.json": kwargs["existing_record_ids"] = {"record-station", "record-company", "record-ship"}
                 if path.name.startswith("removal-outgoing-"):
                     kwargs["impact"] = self.by_name["removal_impact_with_outgoing_connections"]
-                with self.assertRaises(EditorSemanticError) as caught:
-                    validate_editor_semantics(fixture["instance"], **kwargs)
+                with self.assertRaises(ProductionEditorSemanticError) as caught:
+                    production_validate_editor_semantics(fixture["instance"], **kwargs)
                 self.assertEqual(fixture["expected_category"], caught.exception.category)
                 self.assertEqual(fixture["expected_path"], caught.exception.path)
 

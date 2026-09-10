@@ -518,6 +518,42 @@ It must remain in place.
         self.assertIn("warden_only: true\n", result)
         self.assertTrue(result.endswith("Campaign-authored prose without a heading.\nIt must remain in place.\n"))
 
+    def test_no_frontmatter_edit_preserves_prose_before_first_heading(self):
+        source = (
+            "Campaign-authored introduction.\n"
+            "It must remain before the typed sections.\n\n"
+            "## Summary\n"
+            "Original summary.\n"
+        )
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["displayed_name"] = "Updated Keeper"
+        candidate["sections"][0]["body"] = "Updated summary."
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+
+        self.assertIn("Campaign-authored introduction.\nIt must remain before the typed sections.\n\n", result)
+        self.assertIn("## Summary\nUpdated summary.\n", result)
+
+    def test_one_crlf_does_not_convert_an_lf_source_to_crlf(self):
+        source = (
+            "---\n"
+            "id: record-main\n"
+            "type: npc\n"
+            "name: Keeper\n"
+            "status: draft\n"
+            "visibility: warden\n"
+            "---\n\n"
+            "## Summary\nOriginal\r\n"
+        )
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["displayed_name"] = "Updated Keeper"
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+
+        self.assertNotIn("\r\n", result)
+
     def test_editor_rejects_integer_fields_outside_javascript_safe_range(self):
         source = """---
 id: record-main
@@ -540,6 +576,54 @@ Keep this record.
             with self.assertRaises(_editor_backend.HTTPFailure) as caught:
                 self.app.editor_record_read("campaign_alpha", revision, "record-main")
         self.assertEqual((422, "record_not_editable"), (
+            caught.exception.status, caught.exception.payload["error"]["code"],
+        ))
+
+    def test_editor_parse_failures_are_structured_across_read_and_impact_paths(self):
+        malformed = [
+            "---\nid: record-main\ntype: npc\nname: Keeper\nstatus: draft\nvisibility: yes\n---\n",
+            "---\nid: record-main\ntype: npc\nname: \nstatus: draft\nvisibility: warden\n---\n",
+            "---\nid: record-main\ntype: npc\nname: Keeper\nstatus: unknown\nvisibility: warden\n---\n",
+        ]
+        revision = self.app.workflow.head("campaign_alpha")
+        for source in malformed:
+            with self.subTest(source=source), mock.patch.object(
+                self.app, "_record", return_value={"content": source, "record_type": "npc"}
+            ):
+                with self.assertRaises(_editor_backend.HTTPFailure) as caught:
+                    self.app.editor_record_read("campaign_alpha", revision, "record-main")
+            self.assertEqual((422, "record_not_editable"), (
+                caught.exception.status, caught.exception.payload["error"]["code"],
+            ))
+
+        with mock.patch.object(
+            self.app, "_record", return_value={"content": malformed[0], "record_type": "npc"}
+        ), mock.patch.object(self.app, "_editor_record_ids", return_value={"record-main"}):
+            with self.assertRaises(_editor_backend.HTTPFailure) as caught:
+                self.app.editor_removal_impact("campaign_alpha", revision, "record-main")
+        self.assertEqual((422, "record_not_editable"), (
+            caught.exception.status, caught.exception.payload["error"]["code"],
+        ))
+
+    def test_malformed_nested_editor_binding_fails_as_422(self):
+        revision, payload, _ = self.backend._edit("idem_malformed_nested_binding")
+        payload["operation_request"]["idempotency_key"] = "idem_malformed_nested_binding_retry"
+        payload["operation_request"]["expected_editor_workflow_version"] = 2
+        payload["binding"]["expected_editor_workflow_version"] = 2
+        payload["binding"]["base_revision"] = "stale"
+        payload["operation_request"]["payload_digest"] = self.app._editor_payload_digest(payload)
+
+        with self.assertRaises(_editor_backend.HTTPFailure) as caught:
+            self.app.editor_record_edit("campaign_alpha", revision, "campaign-main", payload)
+        self.assertEqual((422, "invalid_editor_binding"), (
+            caught.exception.status, caught.exception.payload["error"]["code"],
+        ))
+
+        with self.assertRaises(_editor_backend.HTTPFailure) as caught:
+            self.app._editor_validate_resolution_actions(
+                {"resolutions": [{"action": "redirect"}]}, "editor_proposal"
+            )
+        self.assertEqual((422, "invalid_resolution_shape"), (
             caught.exception.status, caught.exception.payload["error"]["code"],
         ))
 

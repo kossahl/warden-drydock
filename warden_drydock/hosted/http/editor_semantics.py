@@ -7,7 +7,6 @@ same typed mutation projection that is sent to the deterministic engine.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Mapping
 
 from .contracts import canonical_digest, text_digest
@@ -39,7 +38,11 @@ def _unique(items: list[Mapping[str, Any]], key: str, path: str, category: str =
 def _record(value: Mapping[str, Any], path: str) -> None:
     try:
         normalized = _document(value)
-    except (KeyError, TypeError, ValueError):
+    except ValueError as exc:
+        if str(exc) == "authority_status_mismatch":
+            _fail("invalid_authority_transition", f"{path}.authority")
+        _fail("proposal_validation_failure", path)
+    except (KeyError, TypeError):
         _fail("proposal_validation_failure", path)
     _equal(document_digest(normalized), value.get("content_digest"), "idempotency_digest_conflict", f"{path}.content_digest")
 
@@ -99,16 +102,16 @@ def _connection_cards(cards: list[Mapping[str, Any]]) -> None:
         if key in actual:
             _fail("proposal_validation_failure", "diff.cards.change_id")
         actual[key] = card
-    _equal(set(actual), set(expected), "unsafe_binding", "diff.cards.connection_delta")
+    _equal(set(actual), set(expected), "mutation_consistency", "diff.cards.connection_delta")
     for key, card in actual.items():
         connection, effects = expected[key]
-        _equal(card["connection"], connection, "unsafe_binding", "diff.cards.connection")
-        _equal(card["derived_backlinks"], effects, "unsafe_binding", "diff.cards.derived_backlinks")
+        _equal(card["connection"], connection, "mutation_consistency", "diff.cards.connection")
+        _equal(card["derived_backlinks"], effects, "mutation_consistency", "diff.cards.derived_backlinks")
     for card in records:
         if card["kind"] == "record_updated":
             if card["before"] == card["after"]:
                 _fail("proposal_validation_failure", "diff.cards.record_updated")
-            _equal(card["property_changes"], _property_changes(card["before"], card["after"]), "proposal_validation_failure", "diff.cards.property_changes")
+            _equal(card["property_changes"], _property_changes(card["before"], card["after"]), "mutation_consistency", "diff.cards.property_changes")
 
 
 def _resolution_check(resolutions: list[Mapping[str, Any]], references: Mapping[str, Mapping[str, Any]], *, existing_record_ids: set[str] | None = None, removed_id: str | None = None) -> None:
@@ -194,6 +197,7 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
         _equal(binding["campaign_id"], value["campaign_id"], "unsafe_binding", "record binding campaign")
         _equal(binding["base_revision"], value["base_revision"], "unsafe_binding", "record binding revision")
         _equal(binding["expected_editor_workflow_version"], value["editor_workflow_version"], "unsafe_binding", "record binding workflow")
+    _connection_cards(cards)
     actual_authority: set[tuple[Any, ...]] = set()
     actual_visibility: set[tuple[Any, ...]] = set()
     for card in cards:
@@ -233,7 +237,6 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
         broadens = change["before"]["audience"] == "warden" and change["after"]["audience"] != "warden"
         if card is None or card.get("before") is None or card.get("after") is None or (change["record_id"], change["before"], change["after"]) != (card["subject_record_id"], card["before"]["visibility"], card["after"]["visibility"]) or change["audience_broadens"] != broadens:
             _fail("unsafe_binding", "visibility change card")
-    _connection_cards(cards)
     kinds = {"create": {"record_created", "connection_added"}, "edit": {"record_updated", "connection_added", "connection_updated", "connection_removed"}, "remove": {"record_removed", "connection_removed", "reference_resolution"}}
     if value["mutation_kind"] not in kinds or any(card["kind"] not in kinds[value["mutation_kind"]] for card in cards):
         _fail("proposal_validation_failure", "diff.cards.kind")
@@ -275,7 +278,16 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
     _equal(value["proposal_payload_digest"], canonical_digest({key: item for key, item in value.items() if key != "proposal_payload_digest"}), "idempotency_digest_conflict", "proposal_payload_digest")
 
 
-def validate_editor_semantics(payload: Mapping[str, Any], *, proposal: Mapping[str, Any] | None = None, current_head: Mapping[str, Any] | None = None, current_workflow_version: int | None = None, impact: Mapping[str, Any] | None = None, existing_record_ids: set[str] | None = None) -> None:
+def validate_editor_semantics(
+    payload: Mapping[str, Any], *, proposal: Mapping[str, Any] | None = None,
+    current_head: Mapping[str, Any] | None = None,
+    current_workflow_version: int | None = None,
+    record_digest_at_base: str | None = None,
+    stored_receipt: Mapping[str, Any] | None = None,
+    required_reference_ids: set[str] | None = None,
+    impact: Mapping[str, Any] | None = None,
+    existing_record_ids: set[str] | None = None,
+) -> None:
     name = payload.get("contract_name")
     if name == "editor_record_view":
         _equal(payload["historical"], payload["viewed_revision"] != payload["head_revision"], "unsafe_binding", "historical")
@@ -309,6 +321,16 @@ def validate_editor_semantics(payload: Mapping[str, Any], *, proposal: Mapping[s
         return
     if name in {"editor_record_create_request", "editor_record_edit_request", "editor_record_remove_request", "editor_proposal_correction_request"}:
         operation = payload["operation_request"]
+        if name in {"editor_record_create_request", "editor_record_edit_request", "editor_record_remove_request"}:
+            _equal(operation["subject_id"], payload["binding"]["record_id"], "unsafe_binding", "operation_request.subject_id")
+        if name == "editor_proposal_correction_request" and proposal is not None:
+            if (
+                payload["prior_proposal"] != {"proposal_id": proposal["proposal_id"], "proposal_version": proposal["proposal_version"]}
+                or payload["mutation_kind"] != proposal["mutation_kind"]
+            ):
+                _fail("invalid_correction", "prior_proposal")
+        if stored_receipt is not None and stored_receipt.get("idempotency_key") == operation["idempotency_key"] and stored_receipt.get("payload_digest") != operation["payload_digest"]:
+            _fail("replay_mismatch", "operation_request.payload_digest")
         if operation["payload_digest"] != canonical_digest({key: value for key, value in payload.items() if key not in {"contract_name", "contract_version", "operation_request", "request_id", "idempotency_key", "payload_digest"}}):
             _fail("idempotency_digest_conflict", "operation_request.payload_digest")
         binding = payload["binding"]
@@ -318,6 +340,10 @@ def validate_editor_semantics(payload: Mapping[str, Any], *, proposal: Mapping[s
             _fail("stale_revision", "binding.base_revision")
         if current_workflow_version is not None and binding["expected_editor_workflow_version"] != current_workflow_version:
             _fail("workflow_conflict", "binding.expected_editor_workflow_version")
+        if record_digest_at_base is not None and binding.get("record_digest") != record_digest_at_base:
+            _fail("stale_record_digest", "binding.record_digest")
+        if name == "editor_proposal_correction_request" and proposal is not None:
+            _equal(operation["subject_id"], proposal["proposal_id"], "unsafe_binding", "operation_request.subject_id")
         if payload.get("candidate") is not None:
             _equal(payload["candidate"]["record_id"], binding["record_id"], "unsafe_binding", "candidate.record_id")
             _record(payload["candidate"], "candidate")
@@ -326,6 +352,17 @@ def validate_editor_semantics(payload: Mapping[str, Any], *, proposal: Mapping[s
                     if connection["target_record_id"] not in existing_record_ids:
                         _fail("invalid_connections", f"candidate.connections.{index}.target_record_id")
         if name == "editor_record_remove_request":
+            if binding["record_digest"] is None:
+                _fail("unsafe_binding", "binding.record_digest")
+            if required_reference_ids is not None:
+                _equal({item["reference_id"] for item in payload["resolutions"]}, required_reference_ids, "incomplete_removal_resolution", "resolutions")
+            elif impact is None:
+                _fail("unsafe_binding", "impact lookup")
+            if impact is not None:
+                _equal(payload["impact_digest"], impact["impact_digest"], "unsafe_binding", "impact_digest")
+                _equal(payload["impact_binding"], {"binding": impact["binding"], "impact_digest": impact["impact_digest"]}, "unsafe_binding", "impact_binding")
+                _resolution_check(payload["resolutions"], {item["reference_id"]: item for item in impact["incoming_references"]}, existing_record_ids=existing_record_ids, removed_id=binding["record_id"])
+        if name == "editor_proposal_correction_request" and payload["mutation_kind"] == "remove":
             if impact is None:
                 _fail("unsafe_binding", "impact lookup")
             _equal(payload["impact_digest"], impact["impact_digest"], "unsafe_binding", "impact_digest")

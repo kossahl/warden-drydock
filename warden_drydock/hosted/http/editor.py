@@ -400,11 +400,35 @@ def mutate_document(
         raise ValueError("editor_connection_reordering_not_allowed")
     if _typed_equal(old, new):
         return before
-    newline = "\r\n" if "\r\n" in before else "\n"
+    crlf_count = before.count("\r\n")
+    lf_count = before.count("\n") - crlf_count
+    newline = "\r\n" if crlf_count > lf_count else "\n"
     source = before.replace("\r\n", "\n").replace("\r", "\n")
     lines = _split_lf_lines(source)
     if not lines or not source.startswith("---\n"):
-        return serialize_document(new, labels).replace("\n", newline)
+        serialized = serialize_document(new, labels)
+        body = serialized.split("\n---\n", 1)[1].lstrip("\n")
+        first_heading = next(
+            (index for index, line in enumerate(lines) if re.match(r"^##\s+", line)),
+            None,
+        )
+        prefix = "" if first_heading is None else "".join(lines[:first_heading])
+        if first_heading is not None:
+            original_headings = [
+                match.group(1).strip()
+                for line in lines[first_heading:]
+                if (match := re.match(r"^##\s+(.+?)\s*$", line))
+            ]
+            heading_index = 0
+            preserved_body: list[str] = []
+            for line in _split_lf_lines(body):
+                if re.match(r"^##\s+", line) and heading_index < len(original_headings):
+                    preserved_body.append(f"## {original_headings[heading_index]}\n")
+                    heading_index += 1
+                else:
+                    preserved_body.append(line)
+            body = "".join(preserved_body)
+        return normalize_text(prefix + body).replace("\n", newline)
     end = next((index for index, line in enumerate(lines[1:], 1) if line.rstrip("\n") == "---"), None)
     if end is None:
         return serialize_document(new, labels).replace("\n", newline)

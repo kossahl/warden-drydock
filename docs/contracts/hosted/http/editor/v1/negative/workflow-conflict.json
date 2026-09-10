@@ -1,7 +1,7 @@
 {
   "schema": "../editor.schema.json",
   "expected_category": "workflow_conflict",
-  "expected_path": "expected_editor_workflow_version",
+  "expected_path": "binding.expected_editor_workflow_version",
   "description": "Another accepted editor operation advanced the campaign-wide CAS counter.",
   "instance": {
     "contract_name": "editor_record_remove_request",

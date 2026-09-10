@@ -109,6 +109,9 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   const resolutions = editor.getByLabel(/^Resolution for/);
   await expect(resolutions).toHaveCount(2);
   const removalSubmit = editor.getByRole("button", { name: "Submit removal proposal", exact: true });
+  await expect(editor.getByLabel("Displayed name", { exact: true })).toBeDisabled();
+  await expect(editor.getByLabel("summary", { exact: true })).toBeDisabled();
+  await expect(editor.getByRole("button", { name: "Add typed connection", exact: true })).toBeDisabled();
   for (const resolution of await resolutions.all()) await expect(resolution).toHaveValue("");
   await expect(removalSubmit).toBeDisabled();
   await resolutions.nth(0).selectOption("remove_reference");
