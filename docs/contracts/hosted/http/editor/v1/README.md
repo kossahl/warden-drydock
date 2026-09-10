@@ -59,9 +59,9 @@ returns that definition and the current editor workflow counter even when the
 revision has no records. It is current-head-only, so the create form does not
 depend on an existing record or silently reuse stale adapter metadata.
 
-An editor record read returns snapshot-integrity or snapshot-lineage failures
-as blocking HTTP 409 errors, so corruption is not presented as a missing record
-or transient service failure.
+Editor record and removal-impact reads return snapshot-integrity or
+snapshot-lineage failures as blocking HTTP 409 errors, so corruption is not
+presented as a missing record or transient service failure.
 
 Removal first returns an impact document. In v1 the impact set contains only
 typed entries from `## Connections`. Each required reference must be removed,
@@ -115,6 +115,10 @@ not copied into approval requests. Approval and rejection operation requests
 also carry an `intent_digest` equal to the top-level `diff_digest`; this binds
 the action to the exact reviewed diff even though the operation wrapper is
 excluded from the canonical payload projection.
+
+Proposal approval conflicts, including a mismatched action intent, use HTTP
+409. HTTP 422 is reserved for malformed bindings, proposal validation, and
+idempotency digest conflicts.
 
 An edit or non-removal correction preserves the bound record type. Record type
 migration is outside the editor mutation contract and fails closed. Proposal

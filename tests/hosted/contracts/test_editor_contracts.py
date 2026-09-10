@@ -116,7 +116,7 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
             return "workflow_conflict", "binding.expected_editor_workflow_version"
 
     if (
-        operation.get("operation") == "editor_record_edit"
+        operation.get("operation") in {"editor_record_edit", "editor_proposal_correct"}
         and isinstance(candidate, dict)
         and context.get("current_record_type") is not None
         and candidate.get("record_type") != context["current_record_type"]
@@ -269,6 +269,18 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             }),
         )
 
+        correction = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "correction_request")
+        )
+        correction["candidate"]["record_type"] = "faction"
+        self.assertEqual(
+            ("invalid_record_type", "candidate.record_type"),
+            evaluate_semantic_failure({
+                "instance": correction,
+                "semantic_context": {"current_record_type": "location"},
+            }),
+        )
+
         removal = deepcopy(
             next(
                 item["payload"]
@@ -351,11 +363,18 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         record_route = next(
             item for item in self.routes["routes"] if item["id"] == "editor_record_read"
         )
+        removal_route = next(
+            item for item in self.routes["routes"] if item["id"] == "editor_removal_impact"
+        )
         self.assertEqual(route["response"], context["contract_name"])
         self.assertEqual(context["viewed_revision"], context["head_revision"])
         self.assertEqual(
             {"snapshot_integrity_failure", "snapshot_lineage_failure"},
             set(record_route["error_status"]["409"]),
+        )
+        self.assertEqual(
+            {"snapshot_integrity_failure", "snapshot_lineage_failure"},
+            set(removal_route["error_status"]["409"]),
         )
         self.assertIn(
             "editor_creation_context_binding",
@@ -380,6 +399,11 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         for route in mutation_routes:
             with self.subTest(route=route["id"]):
                 self.assertIn("proposal_validation_failure", route["error_status"]["422"])
+        for route_id in ("editor_proposal_reject", "editor_proposal_approve"):
+            route = next(item for item in self.routes["routes"] if item["id"] == route_id)
+            with self.subTest(route=route_id):
+                self.assertIn("proposal_approval_conflict", route["error_status"]["409"])
+                self.assertNotIn("proposal_approval_conflict", route["error_status"]["422"])
 
     def test_corrections_use_mutation_candidates(self) -> None:
         correction = deepcopy(next(item["payload"] for item in self.examples_document["examples"] if item["name"] == "correction_request"))
