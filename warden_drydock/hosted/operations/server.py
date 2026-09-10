@@ -25,6 +25,15 @@ from warden_drydock.hosted.http.query import parse_flat_query, require_int
 _ROUTES = {
     "revision": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)$"),
     "record": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/records/([^/]+)$"),
+    "editor_record": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/records/([^/]+)/editor$"),
+    "editor_removal_impact": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/records/([^/]+)/removal-impact$"),
+    "editor_create": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/editor/records/proposals$"),
+    "editor_edit": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/editor/records/([^/]+)/proposals$"),
+    "editor_remove": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/editor/records/([^/]+)/removal-proposals$"),
+    "editor_proposal": re.compile(r"^/api/v1/editor/proposals/([^/]+)/versions/(\d+)$"),
+    "editor_correct": re.compile(r"^/api/v1/editor/proposals/([^/]+)/versions/(\d+)/corrections$"),
+    "editor_reject": re.compile(r"^/api/v1/editor/proposals/([^/]+)/versions/(\d+)/rejection$"),
+    "editor_approve": re.compile(r"^/api/v1/editor/proposals/([^/]+)/versions/(\d+)/approval$"),
     "generation_start": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/generations$"),
     "events": re.compile(r"^/api/v1/generations/([^/]+)/events$"),
     "generation": re.compile(r"^/api/v1/generations/([^/]+)$"),
@@ -220,6 +229,15 @@ class Handler(SimpleHTTPRequestHandler):
             elif match := _ROUTES["record"].fullmatch(path):
                 parse_flat_query(raw_query, singleton=frozenset())
                 status, payload = app.record_view(*match.groups())
+            elif match := _ROUTES["editor_record"].fullmatch(path):
+                parse_flat_query(raw_query, singleton=frozenset())
+                status, payload = app.editor_record_read(*match.groups())
+            elif match := _ROUTES["editor_removal_impact"].fullmatch(path):
+                parse_flat_query(raw_query, singleton=frozenset())
+                status, payload = app.editor_removal_impact(*match.groups())
+            elif match := _ROUTES["editor_proposal"].fullmatch(path):
+                parse_flat_query(raw_query, singleton=frozenset())
+                status, payload = app.editor_proposal_read(match.group(1), int(match.group(2)))
             elif match := _ROUTES["generation"].fullmatch(path):
                 parse_flat_query(raw_query, singleton=frozenset())
                 status, payload = app.generation_view(match.group(1))
@@ -350,6 +368,18 @@ class Handler(SimpleHTTPRequestHandler):
                 dispatch = response["generation_id"] if reserved else None
             elif match := _ROUTES["proposal_create"].fullmatch(path):
                 status, response = app.create_proposal(match.group(1), payload)
+            elif match := _ROUTES["editor_create"].fullmatch(path):
+                status, response = app.editor_record_create(*match.groups(), payload)
+            elif match := _ROUTES["editor_edit"].fullmatch(path):
+                status, response = app.editor_record_edit(*match.groups(), payload)
+            elif match := _ROUTES["editor_remove"].fullmatch(path):
+                status, response = app.editor_record_remove(*match.groups(), payload)
+            elif match := _ROUTES["editor_correct"].fullmatch(path):
+                status, response = app.editor_proposal_correct(match.group(1), int(match.group(2)), payload)
+            elif match := _ROUTES["editor_reject"].fullmatch(path):
+                status, response = app.editor_proposal_reject(match.group(1), int(match.group(2)), payload)
+            elif match := _ROUTES["editor_approve"].fullmatch(path):
+                status, response = app.editor_proposal_approve(match.group(1), int(match.group(2)), payload)
             elif match := _ROUTES["correct"].fullmatch(path):
                 status, response = app.correct_proposal(match.group(1), int(match.group(2)), payload)
             elif match := _ROUTES["reject"].fullmatch(path):
