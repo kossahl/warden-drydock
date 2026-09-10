@@ -1,0 +1,108 @@
+import type { AdapterDefinitionWire } from "./adapterDefinition";
+
+export type EditorVisibility = { audience: "warden"; warden_only: true } | { audience: "players" | "shared"; warden_only: false };
+export type RevisionRef = { revision_id: string; ordinal: number; tree_digest: string };
+export type ImmutableRevisionRef = RevisionRef & { immutable: true };
+export interface EditorField { field_id: string; value: string | number | boolean | null; }
+export interface EditorSection { section_id: string; body: string; }
+export interface EditorConnection { connection_id: string; target_record_id: string; relationship: string; state: string; context: string; }
+export const nextConnectionId = (connections: EditorConnection[]) => {
+  const used = new Set(connections.map((connection) => connection.connection_id));
+  let suffix = 1;
+  for (const connectionId of used) {
+    const match = /^connection_(\d+)$/.exec(connectionId);
+    if (match) suffix = Math.max(suffix, Number(match[1]) + 1);
+  }
+  let candidate = `connection_${suffix}`;
+  while (used.has(candidate)) candidate = `connection_${++suffix}`;
+  return candidate;
+};
+export interface EditorRecord { record_id: string; record_type: string; displayed_name: string; status: string; authority: "preparation" | "canon" | "revealed"; visibility: EditorVisibility; fields: EditorField[]; sections: EditorSection[]; connections: EditorConnection[]; content_digest: string; }
+export interface EditorBinding { campaign_id: string; base_revision: RevisionRef; record_id: string; record_digest: string | null; expected_editor_workflow_version: number; }
+export interface EditorRecordView { contract_name: "editor_record_view"; contract_version: 1; campaign_id: string; viewed_revision: RevisionRef; head_revision: RevisionRef; editor_workflow_version: number; historical: boolean; editable: boolean; adapter_definition?: AdapterDefinitionWire; record: EditorRecord; }
+export interface EditorFinding { finding_id: string; code: string; severity: "error" | "warning"; location: string; retryable: boolean; }
+export interface EditorCard { change_id: string; kind: string; subject_record_id: string; [key: string]: unknown; }
+export interface EditorSourceChange { change_id: string; subject_record_id: string; change_type: string; before_source: string | null; after_source: string | null; }
+export interface EditorDiff { diff_digest: string; cards: EditorCard[]; affected_record_count: number; authority_changes: Array<Record<string, unknown>>; visibility_changes: Array<Record<string, unknown>>; unresolved_reference_count: number; impact_digest: string | null; source_changes?: EditorSourceChange[]; summary: string; }
+export interface EditorProposalReference { proposal_id: string; proposal_version: number; }
+export interface EditorProposal { proposal_id: string; proposal_version: number; campaign_id: string; source_revision: RevisionRef; base_revision: RevisionRef; expected_campaign_head: RevisionRef; editor_workflow_version: number; proposal_payload_digest: string; mutation_kind: "create" | "edit" | "remove"; correction_of?: EditorProposalReference | null; record_bindings: EditorBinding[]; diff: EditorDiff; impact_digest: string | null; impact_binding: Record<string, unknown> | null; resolutions: Array<Record<string, unknown>>; validation: { status: string; validation_digest: string; error_count: number; findings: EditorFinding[] }; authority_outcome: Array<Record<string, unknown>>; visibility_outcome: Array<Record<string, unknown>>; publication: { status: string; published_revision: ImmutableRevisionRef | null }; [key: string]: unknown; }
+export interface EditorRemovalReference { reference_id: string; source_record_id: string; target_record_id: string; connection_id: string; relationship: string; state: string; context: string; resolution_required: true; permitted_unresolved: boolean; }
+export interface EditorRemovalImpact { contract_name: "editor_removal_impact"; contract_version: 1; binding: EditorBinding; impact_digest: string; record: EditorRecord; outgoing_connections: EditorConnection[]; incoming_references: EditorRemovalReference[]; backlink_policy: "server_derived_from_typed_connections"; }
+
+const escapeAscii = (value: string): string => value.replace(/[\u007F-\uFFFF]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
+const compareKeys = (left: string, right: string): number => { const leftCodePoints = Array.from(left, (character) => character.codePointAt(0)!); const rightCodePoints = Array.from(right, (character) => character.codePointAt(0)!); for (let index = 0; index < Math.min(leftCodePoints.length, rightCodePoints.length); index += 1) { if (leftCodePoints[index] !== rightCodePoints[index]) return leftCodePoints[index] - rightCodePoints[index]; } return leftCodePoints.length - rightCodePoints.length; };
+const pythonNumber = (value: number): string => {
+  const wire = JSON.stringify(value);
+  if (wire === undefined || !/[.eE]/.test(wire)) return wire ?? "null";
+  const absolute = Math.abs(value);
+  if (absolute !== 0 && (absolute < 1e-4 || absolute >= 1e16)) {
+    return value.toExponential().replace(/e([+-])(\d+)$/, (_match, sign: string, exponent: string) => `e${sign}${exponent.padStart(2, "0")}`);
+  }
+  return wire;
+};
+const canonical = (value: unknown, ensureAscii = true): string => Array.isArray(value) ? `[${value.map((item) => canonical(item, ensureAscii)).join(",")}]` : value && typeof value === "object" ? `{${Object.keys(value as Record<string, unknown>).sort(compareKeys).map((key) => `${ensureAscii ? escapeAscii(JSON.stringify(key)) : JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key], ensureAscii)}`).join(",")}}` : typeof value === "number" ? pythonNumber(value) : ensureAscii ? escapeAscii(JSON.stringify(value)) : JSON.stringify(value);
+export async function digest(value: unknown, ensureAscii = true): Promise<string> { const bytes = new TextEncoder().encode(canonical(value, ensureAscii).replaceAll("\r\n", "\n").replaceAll("\r", "\n")); const hash = await crypto.subtle.digest("SHA-256", bytes); return Array.from(new Uint8Array(hash), (item) => item.toString(16).padStart(2, "0")).join(""); }
+const recordDigestInput = (record: EditorRecord) => ({ record_id: record.record_id, record_type: record.record_type, displayed_name: record.displayed_name, status: record.status, authority: record.authority, visibility: record.visibility, fields: record.fields, sections: record.sections.map((section) => ({ ...section, body: section.body.replaceAll("\r\n", "\n").replaceAll("\r", "\n") })), connections: record.connections });
+export const recomputeRecordDigest = (record: EditorRecord) => digest(recordDigestInput(record), false);
+const operationPayload = (payload: Record<string, unknown>) => Object.fromEntries(Object.entries(payload).filter(([key]) => !["contract_name", "contract_version", "operation_request", "request_id", "idempotency_key", "payload_digest"].includes(key)));
+const revisionId = (value: unknown): string => typeof value === "string" ? value : (value as RevisionRef).revision_id;
+let csrfToken: string | null = null;
+const pendingOperationStorageKey = "warden-drydock.editor.pending-operation-ids.v1";
+type OperationIdentity = { request_id: string; idempotency_key: string };
+
+const readPersistedOperationIdentities = (): Record<string, OperationIdentity> => {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(pendingOperationStorageKey) ?? "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).filter(([, identity]) => (
+      identity && typeof identity === "object" && !Array.isArray(identity)
+      && typeof (identity as OperationIdentity).request_id === "string"
+      && typeof (identity as OperationIdentity).idempotency_key === "string"
+    ))) as Record<string, OperationIdentity>;
+  } catch {
+    return {};
+  }
+};
+
+const persistOperationIdentity = (retryKey: string, identity: OperationIdentity): void => {
+  try {
+    const identities = readPersistedOperationIdentities();
+    identities[retryKey] = identity;
+    localStorage.setItem(pendingOperationStorageKey, JSON.stringify(identities));
+  } catch {
+    // Private browsing and disabled storage fall back to the module-local map.
+  }
+};
+
+const removePersistedOperationIdentity = (retryKey: string): void => {
+  try {
+    const identities = readPersistedOperationIdentities();
+    if (!(retryKey in identities)) return;
+    delete identities[retryKey];
+    if (Object.keys(identities).length === 0) localStorage.removeItem(pendingOperationStorageKey);
+    else localStorage.setItem(pendingOperationStorageKey, JSON.stringify(identities));
+  } catch {
+    // Ignore storage failures. The request result still controls the caller.
+  }
+};
+
+type ResponseError = Error & { category?: string; code?: string; responseReceived?: boolean; retryable?: boolean; status?: number };
+const request = async <T>(path: string, init: RequestInit = {}): Promise<T> => { const headers = new Headers(init.headers); headers.set("Accept", "application/json"); if (init.body !== undefined) headers.set("Content-Type", "application/json"); if (init.method && init.method !== "GET" && csrfToken) headers.set("X-CSRF-Token", csrfToken); const response = await fetch(`/api/v1${path}`, { ...init, credentials: "same-origin", headers }); csrfToken = response.headers.get("X-CSRF-Token") ?? csrfToken; const body = await response.json() as T & { error?: { code?: string; category?: string; retryable?: boolean } }; if (!response.ok) { const code = body?.error?.code ?? "request_failed"; const error = new Error(code) as ResponseError; error.code = code; error.category = body?.error?.category; error.retryable = body?.error?.retryable; error.status = response.status; error.responseReceived = true; throw error; } return body; };
+const operation = async (name: string, expectedRevision: string, workflow: number, subjectId: string, payload: Record<string, unknown>, intentDigest?: string, identity?: OperationIdentity) => { const operationRequest = { contract_name: "editor_operation_request", contract_version: 1, request_id: identity?.request_id ?? `request_${crypto.randomUUID().replaceAll("-", "")}`, operation: name, idempotency_key: identity?.idempotency_key ?? `idem_${crypto.randomUUID().replaceAll("-", "")}`, expected_revision: expectedRevision, expected_editor_workflow_version: workflow, subject_id: subjectId, ...(intentDigest ? { intent_digest: intentDigest } : {}) }; const body = { ...payload, operation_request: operationRequest }; return { ...body, operation_request: { ...operationRequest, payload_digest: await digest(operationPayload(body)) } }; };
+const pendingOperations = new Map<string, Promise<Record<string, unknown>>>();
+const definitiveResponse = (error: ResponseError): boolean => error.responseReceived === true
+  && error.status !== undefined && error.status < 500
+  && error.retryable !== true && error.category !== "service_unavailable";
+const mutation = async <T>(path: string, name: string, expectedRevision: string, workflow: number, subjectId: string, payload: Record<string, unknown>, intentDigest?: string): Promise<T> => { const retryKey = await digest({ path, name, expectedRevision, workflow, subjectId, payload, intentDigest: intentDigest ?? null }); let bodyPromise = pendingOperations.get(retryKey); if (!bodyPromise) { const identities = readPersistedOperationIdentities(); const identity = identities[retryKey] ?? { request_id: `request_${crypto.randomUUID().replaceAll("-", "")}`, idempotency_key: `idem_${crypto.randomUUID().replaceAll("-", "")}` }; persistOperationIdentity(retryKey, identity); bodyPromise = operation(name, expectedRevision, workflow, subjectId, payload, intentDigest, identity); pendingOperations.set(retryKey, bodyPromise); } let body: Record<string, unknown>; try { body = await bodyPromise; } catch (reason) { pendingOperations.delete(retryKey); removePersistedOperationIdentity(retryKey); throw reason; } try { const result = await request<T>(path, { method: "POST", body: JSON.stringify(body) }); pendingOperations.delete(retryKey); removePersistedOperationIdentity(retryKey); return result; } catch (reason) { const error = reason as ResponseError; if (definitiveResponse(error)) { pendingOperations.delete(retryKey); removePersistedOperationIdentity(retryKey); } throw reason; } };
+
+const proposalAction = async (proposal: EditorProposal, approve: boolean, reasonCode = "review_rejected", wardenConfirmed = false) => { if (approve && !wardenConfirmed) throw new Error("warden_confirmation_required"); const payload: Record<string, unknown> = { contract_name: approve ? "editor_proposal_approval_request" : "editor_proposal_rejection_request", contract_version: 1, proposal: { proposal_id: proposal.proposal_id, proposal_version: proposal.proposal_version }, proposal_status: (proposal.core_proposal as { proposal: { status: string } }).proposal.status, mutation_kind: proposal.mutation_kind, source_revision: proposal.source_revision, base_revision: proposal.base_revision, expected_campaign_head: proposal.expected_campaign_head, expected_editor_workflow_version: proposal.editor_workflow_version, proposal_payload_digest: proposal.proposal_payload_digest, diff_digest: proposal.diff.diff_digest, record_bindings: proposal.record_bindings, impact_digest: proposal.impact_digest, impact_binding: proposal.impact_binding, resolutions: proposal.resolutions, validation_status: proposal.validation.status, validation_digest: proposal.validation.validation_digest, authority_outcome: proposal.authority_outcome, visibility_outcome: proposal.visibility_outcome, warden_confirmed: approve ? wardenConfirmed : true }; if (approve) { payload.diff = proposal.diff; payload.affected_record_count = proposal.diff.affected_record_count; payload.confirmed_change_ids = proposal.diff.cards.map((card) => card.change_id); payload.confirmed_authority_change_ids = proposal.diff.authority_changes.map((change) => String(change.change_id)); payload.confirmed_visibility_change_ids = proposal.diff.visibility_changes.map((change) => String(change.change_id)); } else payload.reason_code = reasonCode; return mutation<Record<string, unknown>>(`/editor/proposals/${encodeURIComponent(proposal.proposal_id)}/versions/${proposal.proposal_version}/${approve ? "approval" : "rejection"}`, approve ? "editor_proposal_approve" : "editor_proposal_reject", revisionId(proposal.base_revision), proposal.editor_workflow_version, proposal.proposal_id, payload, proposal.diff.diff_digest); };
+
+export const httpEditorApi = {
+  read: (campaignId: string, revisionIdValue: string, recordId: string) => request<EditorRecordView>(`/campaigns/${encodeURIComponent(campaignId)}/revisions/${encodeURIComponent(revisionIdValue)}/records/${encodeURIComponent(recordId)}/editor`),
+  impact: (campaignId: string, revisionIdValue: string, recordId: string) => request<EditorRemovalImpact>(`/campaigns/${encodeURIComponent(campaignId)}/revisions/${encodeURIComponent(revisionIdValue)}/records/${encodeURIComponent(recordId)}/removal-impact`),
+  propose: async (kind: "create" | "edit" | "remove", campaignId: string, revision: RevisionRef, record: EditorRecord, workflow: number, resolutions: Array<Record<string, unknown>> = [], impact?: EditorRemovalImpact) => { const candidate = kind === "remove" ? undefined : { ...record, content_digest: await recomputeRecordDigest(record) }; const binding: EditorBinding = { campaign_id: campaignId, base_revision: revision, record_id: record.record_id, record_digest: kind === "create" ? null : record.content_digest, expected_editor_workflow_version: workflow }; const payload: Record<string, unknown> = { contract_name: `editor_record_${kind}_request`, contract_version: 1, binding, ...(candidate ? { candidate } : {}) }; if (kind === "remove") { if (!impact) throw new Error("removal_impact_required"); payload.impact_digest = impact.impact_digest; payload.impact_binding = { binding: impact.binding, impact_digest: impact.impact_digest }; payload.resolutions = resolutions; } const path = kind === "create" ? `/campaigns/${encodeURIComponent(campaignId)}/revisions/${encodeURIComponent(revision.revision_id)}/editor/records/proposals` : kind === "edit" ? `/campaigns/${encodeURIComponent(campaignId)}/revisions/${encodeURIComponent(revision.revision_id)}/editor/records/${encodeURIComponent(record.record_id)}/proposals` : `/campaigns/${encodeURIComponent(campaignId)}/revisions/${encodeURIComponent(revision.revision_id)}/editor/records/${encodeURIComponent(record.record_id)}/removal-proposals`; return mutation<EditorProposal>(path, `editor_record_${kind}`, revision.revision_id, workflow, record.record_id, payload); },
+  proposal: (id: string, version: number) => request<EditorProposal>(`/editor/proposals/${encodeURIComponent(id)}/versions/${version}`),
+  reject: (proposal: EditorProposal, reasonCode?: string) => proposalAction(proposal, false, reasonCode),
+  approve: (proposal: EditorProposal, wardenConfirmed: boolean) => proposalAction(proposal, true, undefined, wardenConfirmed),
+  correct: async (proposal: EditorProposal, candidate: EditorRecord | null, resolutions: Array<Record<string, unknown>> = [], baseRevision: RevisionRef = proposal.base_revision, workflow = proposal.editor_workflow_version, recordDigest?: string, impact?: EditorRemovalImpact) => { const corrected = candidate ? { ...candidate, content_digest: await recomputeRecordDigest(candidate) } : null; const binding: EditorBinding = { ...proposal.record_bindings[0], base_revision: baseRevision, expected_editor_workflow_version: workflow, record_digest: proposal.mutation_kind === "create" ? null : (recordDigest ?? proposal.record_bindings[0].record_digest) }; const payload: Record<string, unknown> = { contract_name: "editor_proposal_correction_request", contract_version: 1, prior_proposal: { proposal_id: proposal.proposal_id, proposal_version: proposal.proposal_version }, binding, mutation_kind: proposal.mutation_kind, candidate: corrected, resolutions, impact_digest: impact?.impact_digest ?? proposal.impact_digest, impact_binding: impact ? { binding: impact.binding, impact_digest: impact.impact_digest } : proposal.impact_binding }; return mutation<EditorProposal>(`/editor/proposals/${encodeURIComponent(proposal.proposal_id)}/versions/${proposal.proposal_version}/corrections`, "editor_proposal_correct", baseRevision.revision_id, workflow, proposal.proposal_id, payload); },
+};
