@@ -1021,6 +1021,31 @@ visibility: warden
         self.assertEqual(candidate["connections"], parse_document(result, "record-main", "npc")["connections"])
         self.assertIn("<!-- drydock:connection-id=custom_occurrence -->", result)
 
+    def test_mutating_connection_preserves_unchanged_source_formatting(self):
+        source = """---
+id: record-main
+type: npc
+name: Keeper
+status: draft
+visibility: warden
+---
+
+## Connections
+
+<!-- drydock:connection-id=connection_1 -->
+- `guards` -> [[record-gate|Gate]] (`current`) — Watches the gate.
+<!-- drydock:connection-id=connection_2 -->
+- `supports` -> [[record-hall|Hall]] (`current`) — Checks the hall.
+"""
+        candidate = parse_document(source, "record-main", "npc")
+        candidate["connections"][1]["context"] = "Checks the hall carefully."
+        candidate["content_digest"] = document_digest(candidate)
+
+        result = mutate_document(source, candidate)
+
+        self.assertIn("- `guards` -> [[record-gate|Gate]] (`current`) — Watches the gate.", result)
+        self.assertIn("- `supports` -> [[record-hall]] (`current`) — Checks the hall carefully.", result)
+
     def test_duplicate_connections_heading_preserves_non_typed_content(self):
         source = """---
 id: record-main

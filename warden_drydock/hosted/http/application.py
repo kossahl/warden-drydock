@@ -1524,6 +1524,13 @@ class SliceApplication:
         record and all affected typed connections one atomic validation unit.
         """
         base_handle = self._workspace_for_revision(campaign_id, revision_id)
+        base_validation = self.engine.validate(WorkspaceRequest(
+            self._id("command", request_id, "editor_validate_base"), base_handle,
+        ))
+        inherited_warnings = {
+            finding.code for finding in base_validation.findings
+            if finding.severity.value == "warning"
+        }
         result = self.engine.stage_exact_diff(StageExactDiffRequest(
             self._id("command", request_id, "editor_validate"), base_handle,
             exact_diff_digest(tuple(changes)), tuple(changes),
@@ -1540,7 +1547,8 @@ class SliceApplication:
                     "retryable": False,
                 }
                 for index, finding in enumerate(result.findings)
-                if finding.severity.value in {"warning", "error"}
+                if finding.severity.value == "error"
+                or (finding.severity.value == "warning" and finding.code not in inherited_warnings)
             ]
         code = next((finding.code for finding in result.findings if finding.severity.value == "error"), None)
         if code is None and any(change.change_kind is ChangeKind.CREATE for change in changes):

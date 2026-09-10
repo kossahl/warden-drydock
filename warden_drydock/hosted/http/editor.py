@@ -520,7 +520,11 @@ def mutate_document(
         del lines[heading_index:next_index]
 
     # New sections are inserted before the typed Connections section, or at EOF.
-    missing = [item for item in new["sections"] if item["section_id"] not in consumed]
+    synthetic_summary = "summary" in sections and not any(
+        section_id == "summary" for _, _, section_id in section_headings
+    )
+    missing = [item for item in new["sections"] if item["section_id"] not in consumed
+               and not (synthetic_summary and item["section_id"] == "summary")]
     if missing:
         connection_index = next((i for i, line in enumerate(lines) if line.strip().casefold() == "## connections"), len(lines))
         inserted: list[str] = []
@@ -572,19 +576,38 @@ def mutate_document(
             slots = typed_connection_slots(connection_index, next_heading)
             typed_line_indexes = {line for line, _, _ in slots}
             marker_line_indexes = {marker for _, marker, _ in slots if marker is not None}
+            marker_by_line = {line: marker for line, marker, _ in slots if marker is not None}
+            connection_by_marker_line = {
+                marker: connection_id
+                for line, marker, connection_id in slots
+                if marker is not None
+            }
             slots_by_line = {line: connection_id for line, _, connection_id in slots}
             connections_by_id = {item["connection_id"]: item for item in new["connections"]}
+            old_connections_by_id = {item["connection_id"]: item for item in old["connections"]}
             emitted_ids: set[str] = set()
+            emitted_count = 0
             segment = lines[connection_index + 1:next_heading]
             if typed_line_indexes:
                 rewritten: list[str] = []
                 for index, line in enumerate(segment, connection_index + 1):
+                    connection_id = slots_by_line.get(index) or connection_by_marker_line.get(index)
+                    unchanged = connection_id is not None and connections_by_id.get(connection_id) == old_connections_by_id.get(connection_id)
                     if index in marker_line_indexes:
+                        if unchanged:
+                            rewritten.append(line)
                         continue
                     if index in typed_line_indexes:
                         connection_id = slots_by_line[index]
                         item = connections_by_id.get(connection_id)
-                        if item is not None:
+                        if unchanged:
+                            emitted_count += 1
+                            if index not in marker_by_line and connection_id != f"connection_{emitted_count}":
+                                rewritten.append(f"<!-- drydock:connection-id={connection_id} -->{newline}")
+                            rewritten.append(line)
+                            emitted_ids.add(connection_id)
+                        elif item is not None:
+                            emitted_count += 1
                             rewritten.extend([
                                 f"<!-- drydock:connection-id={item['connection_id']} -->{newline}",
                                 f"{_connection_line(item)}{newline}",

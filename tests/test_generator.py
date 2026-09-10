@@ -344,6 +344,21 @@ class GeneratorTest(unittest.TestCase):
                 self.assertEqual(validate_campaign(root),1)
             self.assertIn('forbidden heading Warden truth',output.getvalue())
 
+    def test_validation_accepts_nonempty_numeric_and_boolean_fields(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test Campaign', adapter='mothership')
+            adapter_path = root / '00-drydock' / 'adapter.json'
+            adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['entity_types']['npc']['nonempty_fields'] = ['score', 'enabled']
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+            npc = create_entity(root, 'npc', 'npc-typed', 'Typed')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                'visibility: warden\n', 'visibility: warden\nscore: 0\nenabled: false\n',
+            ), encoding='utf-8')
+
+            self.assertEqual(validate_campaign(root), 0)
+
     def test_player_visibility_cannot_be_warden_only(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)/'campaign'

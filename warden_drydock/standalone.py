@@ -539,7 +539,7 @@ def validate_campaign(root: Path) -> int:
                     errors.append(f"{relative}: missing required field {field}")
             for field in entity_rule.get("nonempty_fields", []):
                 value = metadata.get(field, "")
-                if not isinstance(value, str) or not value.strip():
+                if value is None or (isinstance(value, str) and not value.strip()):
                     errors.append(f"{relative}: field {field} must not be empty")
             for field, required_value in entity_rule.get("required_values", {}).items():
                 if metadata.get(field) != required_value:
