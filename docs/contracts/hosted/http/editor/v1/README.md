@@ -86,12 +86,19 @@ code remains a stable machine identifier, not the browser's only user-facing
 explanation.
 
 Digest inputs are machine-readable in `semantic-invariants.json` under
-`digest_projections`. In particular, `content_digest` excludes itself and
-normalizes section bodies, `impact_digest` excludes transport binding fields,
-`diff_digest` excludes its own digest and summary, `validation_digest` excludes
-its own digest, and `proposal_payload_digest` excludes only its own top-level
-field. Object keys sort lexicographically, array order remains significant,
-and canonical text normalizes CRLF and CR to LF without trimming.
+`digest_projections`. Each projection names its source object, complete
+include/exclude field set, normalization paths, encoding, and array-order rule.
+In particular, `content_digest` excludes itself and normalizes section bodies,
+`impact_digest` excludes transport binding fields, `diff_digest` excludes its
+own digest and summary, `validation_digest` excludes its own digest, and
+`proposal_payload_digest` excludes only its own top-level field. Object keys
+sort lexicographically, array order remains significant, and canonical text
+normalizes CRLF and CR to LF without trimming.
+
+Every `editor_diff` includes one or more `source_changes` entries with the
+exact before and after Markdown source for each affected record. Clients render
+these server-produced snapshots directly during exact proposal review; they do
+not reconstruct source from parsed record documents.
 
 `editor_proposal_view.core_proposal` is `canon_proposal` v2, an additive
 version of the existing proposal contract. It keeps proposal identity,

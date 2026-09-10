@@ -1303,6 +1303,7 @@
         "visibility_changes",
         "unresolved_reference_count",
         "impact_digest",
+        "source_changes",
         "summary"
       ],
       "properties": {
@@ -2495,7 +2496,7 @@
         "candidate": {
           "oneOf": [
             {
-              "$ref": "#/$defs/record_document"
+              "$ref": "#/$defs/candidate_record_document"
             },
             {
               "type": "null"

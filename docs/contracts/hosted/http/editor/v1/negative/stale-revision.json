@@ -3,6 +3,9 @@
   "expected_category": "stale_revision",
   "expected_path": "binding.base_revision",
   "description": "The proposal base revision is not the current campaign head; no merge or publication is allowed.",
+  "semantic_context": {
+    "current_head_revision": "revision_12"
+  },
   "instance": {
     "contract_name": "editor_record_edit_request",
     "contract_version": 1,

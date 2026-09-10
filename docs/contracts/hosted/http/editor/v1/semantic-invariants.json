@@ -17,36 +17,54 @@
       "input": "The normalized text value."
     },
     "record_content_digest": {
+      "source": "record_document",
       "algorithm": "SHA-256",
       "encoding": "UTF-8",
       "json_ascii_escaping": false,
-      "fields": ["record_id", "record_type", "displayed_name", "status", "authority", "visibility", "fields", "sections", "connections"],
+      "include_fields": ["record_id", "record_type", "displayed_name", "status", "authority", "visibility", "fields", "sections", "connections", "content_digest"],
       "exclude_fields": ["content_digest"],
-      "normalize_fields": ["sections[].body"],
+      "normalize_paths": ["sections[].body"],
       "array_order": "Preserve fields, sections, and connections order."
     },
     "impact_digest": {
-      "fields": ["record", "outgoing_connections", "incoming_references"],
+      "source": "editor_removal_impact",
+      "algorithm": "SHA-256",
+      "encoding": "UTF-8",
+      "include_fields": ["contract_name", "contract_version", "binding", "impact_digest", "record", "outgoing_connections", "incoming_references", "backlink_policy"],
       "exclude_fields": ["binding", "backlink_policy", "impact_digest"],
       "array_order": "Preserve outgoing connection and incoming reference order."
     },
     "diff_digest": {
-      "fields": ["cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest", "source_changes"],
+      "source": "editor_diff",
+      "algorithm": "SHA-256",
+      "encoding": "UTF-8",
+      "include_fields": ["diff_digest", "cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest", "source_changes", "summary"],
       "exclude_fields": ["diff_digest", "summary"],
       "array_order": "Preserve every card, transition, and source-change order."
     },
     "validation_digest": {
-      "fields": ["status", "error_count", "findings"],
+      "source": "validation",
+      "algorithm": "SHA-256",
+      "encoding": "UTF-8",
+      "include_fields": ["status", "validation_digest", "error_count", "findings"],
       "exclude_fields": ["validation_digest"],
       "array_order": "Preserve finding order."
     },
     "proposal_payload_digest": {
-      "fields": "Every top-level editor_proposal_view field.",
+      "source": "editor_proposal_view",
+      "algorithm": "SHA-256",
+      "encoding": "UTF-8",
+      "include_fields": ["contract_name", "contract_version", "proposal_id", "proposal_version", "campaign_id", "source_revision", "base_revision", "expected_campaign_head", "editor_workflow_version", "proposal_payload_digest", "mutation_kind", "record_bindings", "core_proposal", "correction_of", "diff", "impact_digest", "impact_binding", "resolutions", "validation", "authority_outcome", "visibility_outcome", "publication"],
       "exclude_fields": ["proposal_payload_digest"],
       "array_order": "Preserve every nested array order; duplicated compatibility projections remain included and must agree."
     },
     "operation_payload_digest": {
-      "fields": "The request body after removing contract_name, contract_version, operation_request, request_id, idempotency_key, and payload_digest.",
+      "source": "editor_mutation_request",
+      "algorithm": "SHA-256",
+      "encoding": "UTF-8",
+      "include_fields": ["binding", "candidate", "impact_digest", "impact_binding", "mutation_kind", "prior_proposal", "resolutions", "diff", "affected_record_count", "authority_outcome", "base_revision", "confirmed_authority_change_ids", "confirmed_change_ids", "confirmed_visibility_change_ids", "expected_campaign_head", "expected_editor_workflow_version", "proposal", "proposal_payload_digest", "proposal_status", "reason_code", "record_bindings", "source_revision", "validation_digest", "validation_status", "visibility_outcome", "warden_confirmed"],
+      "exclude_fields": ["contract_name", "contract_version", "operation_request"],
+      "omit_if_absent": true,
       "array_order": "Preserve every remaining array order."
     },
     "duplicate_bindings": {
@@ -61,7 +79,7 @@
   "rules":[
     {"id":"editor_contract_bindings","category":"unsafe_binding","applies_to":["all"]},
     {"id":"editor_canonical_digests","category":"idempotency_digest_conflict","applies_to":["all"]},
-    {"id":"editor_digest_projections","category":"idempotency_digest_conflict","applies_to":["editor_record_view","editor_removal_impact","editor_record_create_request","editor_record_edit_request","editor_record_remove_request","editor_proposal_view","editor_proposal_correction_request","editor_proposal_rejection_request","editor_proposal_approval_request","editor_proposal_approval_result","editor_proposal_rejection_result"],"rule":"Every digest uses the exact machine-readable digest_projections above. Self-referential digest fields are excluded only where named; all duplicated digest fields must agree with their authoritative projection."},
+    {"id":"editor_digest_projections","category":"idempotency_digest_conflict","applies_to":["editor_record_view","editor_removal_impact","editor_record_create_request","editor_record_edit_request","editor_record_remove_request","editor_proposal_view","editor_proposal_correction_request","editor_proposal_rejection_request","editor_proposal_approval_request","editor_proposal_approval_result","editor_proposal_rejection_result"],"rule":"Every digest uses the exact source, include_fields, exclude_fields, normalization paths, encoding, and array-order rules in digest_projections. Self-referential digest fields are excluded only where named; all duplicated digest fields must agree with their authoritative projection."},
     {"id":"editor_record_member_ids","category":"proposal_validation_failure","applies_to":["editor_record_view","editor_record_create_request","editor_record_edit_request","editor_record_remove_request","editor_proposal_view","editor_proposal_correction_request"],"rule":"Every record document rejects duplicate field_id, section_id, and connection_id values even when the complete objects differ."},
     {"id":"editor_logical_ids","category":"proposal_validation_failure","applies_to":["editor_proposal_view","editor_proposal_approval_request","editor_proposal_rejection_request","editor_proposal_correction_request","editor_removal_impact","editor_record_remove_request"],"rule":"Proposal changes, diff cards, authority and visibility entries, references, resolutions, and record bindings are unique by their logical identifiers, not by whole-object equality."},
     {"id":"editor_status_authority","category":"proposal_validation_failure","applies_to":["editor_record_view","editor_record_create_request","editor_record_edit_request","editor_record_remove_request","editor_proposal_view","editor_proposal_correction_request","editor_proposal_approval_request"],"rule":"Every record document, including record views and every card before/after document, derives authority from status: canon maps to canon, revealed maps to revealed, every other supported status maps to preparation, and missing or unknown read statuses map to preparation and must be replaced with a supported status before mutation."},

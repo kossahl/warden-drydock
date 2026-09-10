@@ -3,6 +3,9 @@
   "expected_category": "workflow_conflict",
   "expected_path": "binding.expected_editor_workflow_version",
   "description": "Another accepted editor operation advanced the campaign-wide CAS counter.",
+  "semantic_context": {
+    "current_editor_workflow_version": 7
+  },
   "instance": {
     "contract_name": "editor_record_remove_request",
     "contract_version": 1,

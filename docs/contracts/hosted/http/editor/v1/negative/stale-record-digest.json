@@ -3,6 +3,9 @@
   "expected_category": "stale_record_digest",
   "expected_path": "binding.record_digest",
   "description": "The bound record digest no longer matches the record at the exact base revision.",
+  "semantic_context": {
+    "current_record_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
   "instance": {
     "contract_name": "editor_record_edit_request",
     "contract_version": 1,

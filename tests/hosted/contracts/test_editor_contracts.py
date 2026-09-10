@@ -4,7 +4,6 @@ from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
-import re
 import unittest
 
 from jsonschema import Draft202012Validator
@@ -43,6 +42,92 @@ def record_content_digest(record: dict) -> str:
         for section in record["sections"]
     ]
     return canonical_digest(projection, ensure_ascii=False)
+
+
+def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
+    """Return the first contract violation found in a negative fixture."""
+    instance = fixture["instance"]
+    operation = instance.get("operation_request", {})
+    binding = instance.get("binding", {})
+    candidate = instance.get("candidate")
+
+    if operation.get("operation") == "editor_proposal_correct":
+        prior_ref = instance.get("prior_proposal", {})
+        if operation.get("subject_id") != prior_ref.get("proposal_id"):
+            return "unsafe_binding", "operation_request.subject_id"
+    elif operation and operation.get("subject_id") != binding.get("record_id"):
+        return "unsafe_binding", "operation_request.subject_id"
+
+    if isinstance(candidate, dict) and candidate.get("record_id") != binding.get("record_id"):
+        return "unsafe_binding", "candidate.record_id"
+
+    receipt = fixture.get("stored_receipt")
+    if receipt and receipt.get("idempotency_key") == operation.get("idempotency_key"):
+        if receipt.get("payload_digest") != operation.get("payload_digest"):
+            return "replay_mismatch", "operation_request.payload_digest"
+
+    context = fixture.get("semantic_context", {})
+    base_revision = binding.get("base_revision", {})
+    if context.get("current_head_revision") != base_revision.get("revision_id"):
+        if "current_head_revision" in context:
+            return "stale_revision", "binding.base_revision"
+    if context.get("current_record_digest") != binding.get("record_digest"):
+        if "current_record_digest" in context:
+            return "stale_record_digest", "binding.record_digest"
+    if context.get("current_editor_workflow_version") != binding.get("expected_editor_workflow_version"):
+        if "current_editor_workflow_version" in context:
+            return "workflow_conflict", "binding.expected_editor_workflow_version"
+
+    if isinstance(candidate, dict):
+        expected_authority = {
+            "canon": "canon",
+            "revealed": "revealed",
+        }.get(candidate.get("status"), "preparation")
+        if candidate.get("authority") != expected_authority:
+            return "invalid_authority_transition", "candidate.authority"
+
+        available_ids = set(context.get("available_record_ids", []))
+        for index, connection in enumerate(candidate.get("connections", [])):
+            if available_ids and connection.get("target_record_id") not in available_ids:
+                return "invalid_connections", f"candidate.connections.{index}.target_record_id"
+
+    prior_proposal = context.get("prior_proposal")
+    if prior_proposal and (
+        instance.get("mutation_kind") != prior_proposal.get("mutation_kind")
+        or binding.get("record_id") != prior_proposal.get("record_id")
+    ):
+        return "invalid_correction", "prior_proposal"
+
+    impact = fixture.get("impact", {})
+    required_reference_id = impact.get("required_reference_id")
+    resolutions = {item.get("reference_id") for item in instance.get("resolutions", [])}
+    if required_reference_id and not impact.get("permitted_unresolved") and required_reference_id not in resolutions:
+        return "incomplete_removal_resolution", "resolutions"
+
+    diff = instance.get("diff")
+    if isinstance(diff, dict):
+        removed_card = next(
+            (card for card in diff.get("cards", []) if card.get("kind") == "record_removed"),
+            None,
+        )
+        if removed_card:
+            expected = {
+                connection["connection_id"]: connection
+                for connection in removed_card.get("before", {}).get("connections", [])
+            }
+            actual_cards = [
+                card for card in diff.get("cards", []) if card.get("kind") == "connection_removed"
+            ]
+            actual = {
+                card["connection"]["connection_id"]: card["connection"]
+                for card in actual_cards
+            }
+            if set(expected) != set(actual):
+                return "mutation_consistency", "diff.cards.connection_delta"
+            if any(expected[key] != actual[key] for key in expected):
+                return "mutation_consistency", "diff.cards.connection"
+
+    return None
 
 
 class HostedRecordEditorContractTests(unittest.TestCase):
@@ -103,42 +188,9 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 self.assertEqual([], list(self.validator.iter_errors(instance)))
                 self.assertTrue(fixture["expected_path"])
                 self.assertIn(fixture["expected_category"], set(mapping) | set(mapping.values()) | {"unsafe_binding"})
-                self._assert_semantic_mutation(fixture)
-
-    def _assert_semantic_mutation(self, fixture: dict) -> None:
-        instance = fixture["instance"]
-        category = fixture["expected_category"]
-        if category == "incomplete_removal_resolution":
-            self.assertEqual([], instance["resolutions"])
-        elif category == "invalid_authority_transition":
-            expected = "canon" if instance["candidate"]["status"] == "canon" else "revealed" if instance["candidate"]["status"] == "revealed" else "preparation"
-            self.assertNotEqual(expected, instance["candidate"]["authority"])
-        elif category == "invalid_connections":
-            target = instance["candidate"]["connections"][0]["target_record_id"]
-            self.assertEqual("record-unknown", target)
-        elif category == "mutation_consistency":
-            removed = next(card for card in instance["diff"]["cards"] if card["kind"] == "record_removed")
-            expected = {connection["connection_id"]: connection for connection in removed["before"]["connections"]}
-            actual = {card["connection"]["connection_id"]: card["connection"] for card in instance["diff"]["cards"] if card["kind"] == "connection_removed"}
-            self.assertTrue(set(expected) != set(actual) or any(expected[key] != actual[key] for key in set(expected) & set(actual)))
-        elif category == "replay_mismatch":
-            ignored = {"contract_name", "contract_version", "operation_request", "request_id", "idempotency_key", "payload_digest"}
-            payload = {key: value for key, value in instance.items() if key not in ignored}
-            self.assertEqual(instance["operation_request"]["payload_digest"], canonical_digest(payload))
-            self.assertEqual("idem_replay", instance["operation_request"]["idempotency_key"])
-        elif category == "stale_record_digest":
-            self.assertNotEqual(instance["binding"]["record_digest"], instance["candidate"]["content_digest"])
-        elif category == "unsafe_binding":
-            self.assertIsNone(re.fullmatch(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*", instance["operation_request"]["subject_id"]))
-        elif category == "workflow_conflict":
-            self.assertEqual(instance["operation_request"]["expected_editor_workflow_version"], instance["binding"]["expected_editor_workflow_version"])
-        elif category == "invalid_correction":
-            self.assertEqual("editor_proposal_correct", instance["operation_request"]["operation"])
-            self.assertEqual(instance["operation_request"]["subject_id"], instance["prior_proposal"]["proposal_id"])
-        elif category == "stale_revision":
-            self.assertEqual(instance["operation_request"]["expected_revision"], instance["binding"]["base_revision"]["revision_id"])
-        else:
-            self.fail(f"No semantic fixture assertion for {category}")
+                semantic_failure = evaluate_semantic_failure(fixture)
+                self.assertIsNotNone(semantic_failure)
+                self.assertEqual((fixture["expected_category"], fixture["expected_path"]), semantic_failure)
 
     def test_digest_projections_are_deterministic(self) -> None:
         head = next(item["payload"] for item in self.examples if item["name"] == "head_record_view")
@@ -152,6 +204,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         self.assertNotEqual(first, record_content_digest(record))
 
     def test_mutation_routes_advertise_structured_validation_errors(self) -> None:
+        self.assertEqual("error_response", self.routes["error_response"])
         mutation_routes = [
             route for route in self.routes["routes"]
             if route["method"] == "POST" and route["id"] in {
@@ -165,6 +218,30 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         for route in mutation_routes:
             with self.subTest(route=route["id"]):
                 self.assertIn("proposal_validation_failure", route["error_status"]["422"])
+
+    def test_corrections_use_mutation_candidates(self) -> None:
+        correction = deepcopy(next(item["payload"] for item in self.examples_document["examples"] if item["name"] == "correction_request"))
+        correction["candidate"]["status"] = "missing"
+        self.assertTrue(list(self.validator.iter_errors(correction)))
+
+    def test_digest_projections_name_every_source_field(self) -> None:
+        projections = self.invariants["digest_projections"]
+        expected_fields = {
+            "record_content_digest": {"record_id", "record_type", "displayed_name", "status", "authority", "visibility", "fields", "sections", "connections", "content_digest"},
+            "impact_digest": {"contract_name", "contract_version", "binding", "impact_digest", "record", "outgoing_connections", "incoming_references", "backlink_policy"},
+            "diff_digest": {"diff_digest", "cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest", "source_changes", "summary"},
+            "validation_digest": {"status", "validation_digest", "error_count", "findings"},
+            "proposal_payload_digest": {"contract_name", "contract_version", "proposal_id", "proposal_version", "campaign_id", "source_revision", "base_revision", "expected_campaign_head", "editor_workflow_version", "proposal_payload_digest", "mutation_kind", "record_bindings", "core_proposal", "correction_of", "diff", "impact_digest", "impact_binding", "resolutions", "validation", "authority_outcome", "visibility_outcome", "publication"},
+        }
+        for name, fields in expected_fields.items():
+            with self.subTest(digest=name):
+                projection = projections[name]
+                self.assertEqual(fields, set(projection["include_fields"]))
+                self.assertTrue(set(projection["exclude_fields"]).issubset(fields))
+        self.assertEqual(
+            ["contract_name", "contract_version", "operation_request"],
+            projections["operation_payload_digest"]["exclude_fields"],
+        )
 
 
 if __name__ == "__main__":

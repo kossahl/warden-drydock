@@ -3,6 +3,12 @@
   "expected_category": "invalid_correction",
   "expected_path": "prior_proposal",
   "description": "A correction changes the mutation kind and targets a different record, so it cannot extend the immutable prior proposal.",
+  "semantic_context": {
+    "prior_proposal": {
+      "mutation_kind": "edit",
+      "record_id": "record-station"
+    }
+  },
   "instance": {
     "contract_name": "editor_proposal_correction_request",
     "contract_version": 1,

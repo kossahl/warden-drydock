@@ -2,7 +2,10 @@
   "schema": "../editor.schema.json",
   "expected_category": "invalid_connections",
   "expected_path": "candidate.connections.0.target_record_id",
-  "description": "A connection target is path-like and is not a selected public domain record.",
+  "description": "A connection target is not one of the existing selected public domain records.",
+  "semantic_context": {
+    "available_record_ids": ["record-company", "record-ship", "record-station"]
+  },
   "instance": {
     "contract_name": "editor_record_edit_request",
     "contract_version": 1,
