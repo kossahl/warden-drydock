@@ -43,7 +43,7 @@ export function ErrorState({ error, retry, children }: { error: unknown; retry: 
 }
 
 export function stateFromRoute(route: AtlasRoute, revisionId: string): AtlasUrlState { return { revisionId, q: route.q, type: route.type, authority: route.authority, status: route.status, cursor: route.cursor, relationshipCursor: route.relationshipCursor, generationCursor: route.generationCursor, proposalCursor: route.proposalCursor }; }
-export function openHeadHref(route: AtlasRoute, head: AtlasRevisionRef) { const state = { ...stateFromRoute(route, head.revision_id), cursor: null, relationshipCursor: null, generationCursor: null, proposalCursor: null }; return route.kind === "record" && route.recordId ? recordHref(route.campaignId, route.recordId, state) : atlasHref(route.campaignId, route.kind === "history" ? "history" : route.kind === "records" ? "records" : "overview", state); }
+export function openHeadHref(route: AtlasRoute, head: AtlasRevisionRef) { const state = { ...stateFromRoute(route, head.revision_id), cursor: null, relationshipCursor: null, generationCursor: null, proposalCursor: null, proposalId: route.proposalId, proposalVersion: route.proposalVersion }; return route.kind === "record" && route.recordId ? recordHref(route.campaignId, route.recordId, state) : atlasHref(route.campaignId, route.kind === "history" ? "history" : route.kind === "records" ? "records" : "overview", state); }
 
 function RecordName({ api, campaignId, revision, recordId }: { api: AtlasApi; campaignId: string; revision: AtlasRevisionRef; recordId: string }) {
   const result = useResource(() => api.record(campaignId, recordId, revisionQuery(revision)), [api, campaignId, revision.revision_id, recordId]);
