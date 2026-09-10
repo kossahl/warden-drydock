@@ -137,6 +137,21 @@ class WorkspaceBoundaryTests(EngineTestCase):
 
 
 class DeterministicOperationTests(EngineTestCase):
+    def test_validation_warning_subject_is_public_and_line_stable(self) -> None:
+        import warden_drydock.hosted.engine.facade as facade_module
+
+        def warning_at(line: int) -> int:
+            print(f"WARNING: records/ship.md:{line}: self-connection")
+            return 0
+
+        with mock.patch.object(facade_module, "validate_campaign", side_effect=lambda root: warning_at(12)):
+            first = self.engine.validate(WorkspaceRequest("command_validate", self.handle))
+        with mock.patch.object(facade_module, "validate_campaign", side_effect=lambda root: warning_at(13)):
+            second = self.engine.validate(WorkspaceRequest("command_validate", self.handle))
+
+        self.assertEqual(first.findings, second.findings)
+        self.assertRegex(first.findings[0].subject_id, r"^validation_warning_[a-f0-9]{32}$")
+
     def test_repeated_index_context_validate_and_retrieve_are_deterministic(self) -> None:
         first_index = self.engine.index(WorkspaceRequest("command_index", self.handle))
         second_index = self.engine.index(WorkspaceRequest("command_index", self.handle))

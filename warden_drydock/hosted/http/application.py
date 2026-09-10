@@ -1683,6 +1683,51 @@ class SliceApplication:
         ignored = {"contract_name", "contract_version", "operation_request", "request_id", "idempotency_key", "payload_digest"}
         return canonical_digest({key: value for key, value in payload.items() if key not in ignored})
 
+    def _validate_editor_action_replay_binding(
+        self, proposal_id: str, version: int, payload: dict, action: str,
+    ) -> dict:
+        """Validate URL/body/idempotency bindings before looking up a receipt."""
+        stage = "editor_" + action
+        operation = payload.get("operation_request")
+        request_id = (
+            operation.get("request_id", "request_http")
+            if isinstance(operation, dict)
+            else payload.get("request_id", "request_http")
+        )
+        expected_contract = "editor_proposal_approval_request" if action == "approve" else "editor_proposal_rejection_request"
+        expected_operation = "editor_proposal_approve" if action == "approve" else "editor_proposal_reject"
+        if (
+            payload.get("contract_name") != expected_contract
+            or payload.get("contract_version") != 1
+            or payload.get("proposal") != {"proposal_id": proposal_id, "proposal_version": version}
+        ):
+            raise HTTPFailure(422, "proposal_approval_conflict", "approval_binding_mismatch", stage, request_id)
+        operation_fields = {
+            "contract_name", "contract_version", "request_id", "operation",
+            "idempotency_key", "payload_digest", "expected_revision",
+            "expected_editor_workflow_version", "subject_id", "intent_digest",
+        }
+        if (
+            not isinstance(operation, dict)
+            or set(operation) != operation_fields
+            or operation.get("contract_name") != "editor_operation_request"
+            or operation.get("contract_version") != 1
+            or operation.get("operation") != expected_operation
+            or operation.get("subject_id") != proposal_id
+        ):
+            raise HTTPFailure(422, "proposal_approval_conflict", "approval_binding_mismatch", stage, request_id)
+        base_revision = payload.get("base_revision")
+        if (
+            not isinstance(base_revision, dict)
+            or operation.get("expected_revision") != base_revision.get("revision_id")
+            or operation.get("expected_editor_workflow_version") != payload.get("expected_editor_workflow_version")
+            or operation.get("intent_digest") != payload.get("diff_digest")
+        ):
+            raise HTTPFailure(422, "proposal_approval_conflict", "approval_binding_mismatch", stage, request_id)
+        if operation.get("payload_digest") != self._editor_payload_digest(payload):
+            raise HTTPFailure(422, "idempotency_digest_conflict", "payload_digest_mismatch", stage, request_id)
+        return operation
+
     def _editor_original_value(self, item: ProposalVersion, workflow: int) -> dict | None:
         """Recover the immutable response, even if the proposal later terminated."""
         value = deepcopy(item.editor_metadata)
@@ -2330,12 +2375,15 @@ class SliceApplication:
 
     def _editor_action(self, proposal_id: str, version: int, payload: dict, action: str):
         with self._editor_mutation_lock:
-            operation = payload.get("operation_request")
             receipt_operation = "editor_proposal_" + action
-            if isinstance(operation, dict):
-                replay = self._replay(receipt_operation, operation.get("idempotency_key"), operation.get("payload_digest"))
-                if replay:
-                    return 200, replay[1]
+            operation = self._validate_editor_action_replay_binding(
+                proposal_id, version, payload, action,
+            )
+            replay = self._replay(
+                receipt_operation, operation["idempotency_key"], operation["payload_digest"]
+            )
+            if replay:
+                return 200, replay[1]
             stored = self._editor_proposals.get((proposal_id, version))
             if stored is None:
                 raise HTTPFailure(404, "not_found", "proposal_not_found", "editor_" + action)

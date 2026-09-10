@@ -280,6 +280,31 @@ class EditorBackendTests(unittest.TestCase):
         )
         self.assertEqual((200, replay), (status, exact_replay))
 
+    def test_action_replay_validates_route_and_body_before_receipt_lookup(self):
+        _, _, (_, first) = self._edit("idem_editor_binding_first")
+        self._approve_editor(first)
+        approval = self._editor_approval_payload(first)
+        forged = deepcopy(approval)
+        forged["proposal"] = {"proposal_id": "proposal_other", "proposal_version": 1}
+
+        with self.assertRaises(HTTPFailure) as error:
+            self.app.editor_proposal_approve(
+                first["proposal_id"], first["proposal_version"], forged,
+            )
+        self.assertEqual((422, "approval_binding_mismatch"), (
+            error.exception.status, error.exception.payload["error"]["code"],
+        ))
+
+        malformed = self._editor_approval_payload(first)
+        malformed["warden_confirmed"] = False
+        with self.assertRaises(HTTPFailure) as digest_error:
+            self.app.editor_proposal_approve(
+                first["proposal_id"], first["proposal_version"], malformed,
+            )
+        self.assertEqual((422, "payload_digest_mismatch"), (
+            digest_error.exception.status, digest_error.exception.payload["error"]["code"],
+        ))
+
     def test_stale_editor_approval_persists_conflict_metadata(self):
         _, _, (_, proposal) = self._edit("idem_editor_conflict")
 
