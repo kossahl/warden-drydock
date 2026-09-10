@@ -282,6 +282,8 @@ def _semantic_errors(instance, schema):
         if proposal.get("status") not in {"approving", "approved"} and binding is not None:
             yield ContractValidationError("approval_binding", "non-approval state cannot be Warden-confirmed", "proposal_approval_conflict")
         if binding is not None:
+            if binding.get("warden_confirmed") is not True:
+                yield ContractValidationError("approval_binding.warden_confirmed", "Warden confirmation must be true", "proposal_approval_conflict")
             keys = ["proposal_id", "proposal_version", "diff_digest", "base_revision", "source_revision"]
             if "expected_editor_workflow_version" in binding:
                 keys += ["expected_campaign_head", "expected_editor_workflow_version", "authority_change_ids", "visibility_change_ids"]

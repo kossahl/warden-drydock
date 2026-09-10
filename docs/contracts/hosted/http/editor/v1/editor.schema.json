@@ -13,6 +13,7 @@
     "editor_publication_binding",
     "editor_history_read_only",
     "editor_adapter_definition_binding",
+    "editor_creation_context_binding",
     "editor_action_bindings",
     "editor_workflow_lifecycle",
     "editor_transition_completeness",
@@ -26,6 +27,9 @@
   "oneOf": [
     {
       "$ref": "#/$defs/editor_record_view"
+    },
+    {
+      "$ref": "#/$defs/editor_creation_context"
     },
     {
       "$ref": "#/$defs/editor_record_create_request"
@@ -869,6 +873,9 @@
         },
         {
           "$ref": "#/$defs/section"
+        },
+        {
+          "$ref": "#/$defs/raw_status"
         }
       ]
     },
@@ -2265,6 +2272,43 @@
         }
       ]
     },
+    "creation_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_name",
+        "contract_version",
+        "campaign_id",
+        "viewed_revision",
+        "head_revision",
+        "editor_workflow_version",
+        "adapter_definition"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "editor_creation_context"
+        },
+        "contract_version": {
+          "const": 1
+        },
+        "campaign_id": {
+          "$ref": "#/$defs/public_id"
+        },
+        "viewed_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "head_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "editor_workflow_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "adapter_definition": {
+          "$ref": "#/$defs/adapter_definition"
+        }
+      }
+    },
     "create_request": {
       "type": "object",
       "additionalProperties": false,
@@ -3061,6 +3105,9 @@
     },
     "editor_record_view": {
       "$ref": "#/$defs/record_view"
+    },
+    "editor_creation_context": {
+      "$ref": "#/$defs/creation_context"
     },
     "editor_record_create_request": {
       "$ref": "#/$defs/create_request"

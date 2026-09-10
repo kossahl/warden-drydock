@@ -8,7 +8,7 @@
       "id": "proposal_exact_binding",
       "category": "proposal_approval_conflict",
       "schema": "schemas/v2/proposal.schema.json",
-      "rule": "When approval_binding is present, proposal_id, proposal_version, diff_digest, base_revision, source_revision, expected_campaign_head, expected_editor_workflow_version, authority_change_ids, visibility_change_ids, and warden_confirmed must equal the proposal values. approval_binding.validation_status and approval_binding.validation_digest must equal the sibling top-level validation.status and validation.validation_digest; only approving and approved states may carry a binding."
+      "rule": "When approval_binding is present, proposal_id, proposal_version, diff_digest, base_revision, source_revision, expected_campaign_head, expected_editor_workflow_version, authority_change_ids, and visibility_change_ids must equal the proposal values. approval_binding.warden_confirmed must be true. approval_binding.validation_status and approval_binding.validation_digest must equal the sibling top-level validation.status and validation.validation_digest; only approving and approved states may carry a binding."
     },
     {
       "id": "proposal_validation_gate",

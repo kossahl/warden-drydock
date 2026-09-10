@@ -8,6 +8,8 @@ import unittest
 
 from jsonschema import Draft202012Validator
 
+from warden_drydock.standalone import _section_lines, frontmatter, parse_connections
+
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_ROOT = ROOT / "docs" / "contracts" / "hosted" / "http" / "editor" / "v1"
@@ -42,6 +44,41 @@ def record_content_digest(record: dict) -> str:
         for section in record["sections"]
     ]
     return canonical_digest(projection, ensure_ascii=False)
+
+
+def record_documents(value: object):
+    if isinstance(value, dict):
+        if all(
+            key in value
+            for key in (
+                "record_id",
+                "record_type",
+                "displayed_name",
+                "status",
+                "authority",
+                "visibility",
+                "fields",
+                "sections",
+                "connections",
+                "content_digest",
+            )
+        ):
+            yield value
+        for child in value.values():
+            yield from record_documents(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from record_documents(child)
+
+
+def projection_digest(value: dict, definition: dict) -> str:
+    excluded = set(definition["exclude_fields"])
+    projection = {
+        key: value[key]
+        for key in definition["include_fields"]
+        if key in value and key not in excluded
+    }
+    return canonical_digest(projection)
 
 
 def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
@@ -178,6 +215,14 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "after": "new",
             })),
         )
+        self.assertEqual(
+            [],
+            list(property_validator.iter_errors({
+                "property": "status",
+                "before": {"classification": "unknown", "value": "legacy-state"},
+                "after": "review",
+            })),
+        )
 
     def test_negative_fixtures_are_schema_valid_and_exercise_declared_rules(self) -> None:
         mapping = self.invariants["error_category_mapping"]
@@ -202,6 +247,53 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         self.assertEqual(first, record_content_digest(record))
         record["displayed_name"] = "A different station"
         self.assertNotEqual(first, record_content_digest(record))
+
+    def test_positive_examples_match_declared_digest_projections(self) -> None:
+        projections = self.invariants["digest_projections"]
+        for example in self.examples:
+            payload = example["payload"]
+            with self.subTest(example=example["name"]):
+                for record in record_documents(payload):
+                    self.assertEqual(record_content_digest(record), record["content_digest"])
+                if payload.get("contract_name") == "editor_removal_impact":
+                    self.assertEqual(
+                        projection_digest(payload, projections["impact_digest"]),
+                        payload["impact_digest"],
+                    )
+                if payload.get("contract_name") == "editor_proposal_view":
+                    self.assertEqual(
+                        projection_digest(payload["diff"], projections["diff_digest"]),
+                        payload["diff"]["diff_digest"],
+                    )
+                    self.assertEqual(
+                        payload["diff"]["diff_digest"],
+                        payload["core_proposal"]["proposal"]["diff_digest"],
+                    )
+                    self.assertEqual(
+                        projection_digest(payload, projections["proposal_payload_digest"]),
+                        payload["proposal_payload_digest"],
+                    )
+                if "operation_request" in payload:
+                    self.assertEqual(
+                        projection_digest(payload, projections["operation_payload_digest"]),
+                        payload["operation_request"]["payload_digest"],
+                    )
+
+    def test_empty_revision_creation_context_is_record_independent(self) -> None:
+        context = next(
+            item["payload"]
+            for item in self.examples
+            if item["name"] == "creation_context_empty_revision"
+        )
+        route = next(
+            item for item in self.routes["routes"] if item["id"] == "editor_creation_context_read"
+        )
+        self.assertEqual(route["response"], context["contract_name"])
+        self.assertEqual(context["viewed_revision"], context["head_revision"])
+        self.assertIn(
+            "editor_creation_context_binding",
+            {rule["id"] for rule in self.invariants["rules"]},
+        )
 
     def test_mutation_routes_advertise_structured_validation_errors(self) -> None:
         self.assertEqual("error_response", self.routes["error_response"])
@@ -267,6 +359,123 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 elif change_type == "delete":
                     source["after_source"] = "after"
                 self.assertTrue(list(self.validator.iter_errors(candidate)))
+
+    def test_source_snapshots_match_structured_records_and_connections(self) -> None:
+        for name in ("editor_proposal_view", "removal_proposal_with_outgoing_connections"):
+            proposal = next(item["payload"] for item in self.examples if item["name"] == name)
+            for source in proposal["diff"]["source_changes"]:
+                subject = source["subject_record_id"]
+                resolution = next(
+                    (
+                        card
+                        for card in proposal["diff"]["cards"]
+                        if card["kind"] == "reference_resolution"
+                        and card["subject_record_id"] == subject
+                    ),
+                    None,
+                )
+                for side, source_text in (
+                    ("before", source.get("before_source")),
+                    ("after", source.get("after_source")),
+                ):
+                    if source_text is None:
+                        continue
+                    with self.subTest(example=name, subject=subject, side=side):
+                        metadata = frontmatter(source_text)
+                        self.assertTrue(
+                            {
+                                "id",
+                                "type",
+                                "status",
+                                "ownership",
+                                "name",
+                                "visibility",
+                                "warden_only",
+                            }.issubset(metadata)
+                        )
+                        self.assertEqual(subject, metadata["id"])
+                        self.assertEqual(
+                            f"# {metadata['name']}",
+                            next(
+                                line
+                                for line in source_text.splitlines()
+                                if line.startswith("# ")
+                            ),
+                        )
+                        parsed_connections, errors = parse_connections(
+                            source_text,
+                            source_id=subject,
+                            path=Path("synthetic.md"),
+                        )
+                        self.assertEqual([], errors)
+
+                        structured = next(
+                            (
+                                card[side]
+                                for card in proposal["diff"]["cards"]
+                                if card["subject_record_id"] == subject
+                                and isinstance(card.get(side), dict)
+                                and "record_id" in card[side]
+                            ),
+                            None,
+                        )
+                        if structured is not None:
+                            self.assertEqual(structured["record_type"], metadata["type"])
+                            self.assertEqual(structured["displayed_name"], metadata["name"])
+                            self.assertEqual(structured["status"], metadata["status"])
+                            self.assertEqual(
+                                structured["visibility"]["audience"],
+                                metadata["visibility"],
+                            )
+                            self.assertEqual(
+                                str(structured["visibility"]["warden_only"]).lower(),
+                                metadata["warden_only"],
+                            )
+                            for field in structured["fields"]:
+                                self.assertEqual(str(field["value"]), metadata[field["field_id"]])
+                            for section in structured["sections"]:
+                                self.assertEqual(
+                                    section["body"].splitlines(),
+                                    [
+                                        line
+                                        for _, line in _section_lines(
+                                            source_text, section["section_id"]
+                                        )
+                                        if line.strip()
+                                    ],
+                                )
+                            expected_connections = [
+                                (
+                                    connection["target_record_id"],
+                                    connection["relationship"],
+                                    connection["state"],
+                                    connection["context"],
+                                )
+                                for connection in structured["connections"]
+                            ]
+                        else:
+                            self.assertIsNotNone(resolution)
+                            reference = resolution["before"]
+                            target = (
+                                resolution["after"]["replacement_target_record_id"]
+                                if side == "after"
+                                else reference["target_record_id"]
+                            )
+                            expected_connections = [
+                                (
+                                    target,
+                                    reference["relationship"],
+                                    reference["state"],
+                                    reference["context"],
+                                )
+                            ]
+                        self.assertEqual(
+                            expected_connections,
+                            [
+                                (item.target_id, item.relationship, item.state, item.context)
+                                for item in parsed_connections
+                            ],
+                        )
 
     def test_approval_requests_bind_changes_without_source_snapshots(self) -> None:
         approval = next(item["payload"] for item in self.examples if item["name"] == "approval_request")

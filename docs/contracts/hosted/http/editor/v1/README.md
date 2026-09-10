@@ -49,14 +49,15 @@ target, relationship, state, context, and occurrence ID. The server derives
 incoming backlinks from typed outgoing connections. The client cannot submit
 reverse backlinks or server edge IDs.
 
-The current editor read response also carries the revision-bound
+The current editor read response carries the revision-bound
 `adapter_definition`. It lists creatable record types, allowed relationship and
 connection-state values, and each record type's metadata, fields, defaults,
-sections, required values, and forbidden headings. PR #213 already returns this
-object from `editor_record_read`; this package describes that existing response
-field and does not add another discovery route. The definition comes from the
-committed adapter and campaign revision being viewed, so a browser must not
-silently replace it with build-time vocabulary when the response is present.
+sections, required values, and forbidden headings. A record-independent
+`editor_creation_context` read at
+`/campaigns/{campaign_id}/revisions/{revision_id}/editor/creation-context`
+returns that definition and the current editor workflow counter even when the
+revision has no records. It is current-head-only, so the create form does not
+depend on an existing record or silently reuse stale adapter metadata.
 
 Removal first returns an impact document. In v1 the impact set contains only
 typed entries from `## Connections`. Each required reference must be removed,
@@ -69,8 +70,11 @@ mutation. A removal correction repeats the exact impact binding and must
 resolve the complete impact document again, with exactly one action for each
 required reference. The proposal must contain exactly one matching resolution
 card, affected-record binding, and derived graph effect for each impact
-reference. Connection cards are derived from record before/after documents;
-omissions, extras, no-ops, and directionally inconsistent effects fail closed.
+reference. Ordinary connection cards are derived from record before/after
+documents; for a removal redirect, the reference-resolution card is the
+authoritative connection delta and replaces a duplicate surviving-record or
+connection card. Omissions, extras, no-ops, and directionally inconsistent
+effects fail closed.
 Duplicate, missing, extra, self, and unknown redirect targets fail closed.
 
 Validation findings carry a stable code, severity, target location, plain
