@@ -21,6 +21,12 @@
       "category": "proposal_validation_failure",
       "schema": "schemas/v2/proposal.schema.json",
       "rule": "Proposal changes are unique by change_id, even when duplicate change objects differ in another property."
+    },
+    {
+      "id": "proposal_correction_version",
+      "category": "proposal_validation_failure",
+      "schema": "schemas/v2/proposal.schema.json",
+      "rule": "When correction_of_version is present, it must identify an older immutable proposal version: correction_of_version is strictly less than proposal_version."
     }
   ]
 }

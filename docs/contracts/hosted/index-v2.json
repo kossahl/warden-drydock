@@ -7,7 +7,7 @@
   "semantic_invariants":"semantic-invariants-v1.json",
   "shared_definitions":["schemas/v1/common.schema.json"],
   "versioned_contracts":[
-    {"name":"canon_proposal","version":2,"schema":"schemas/v2/proposal.schema.json","semantic_invariants":"schemas/v2/semantic-invariants.json","example":"examples/v2/proposal.json","negative_fixtures":["negative/v2/proposal-approval-binding.json","negative/v2/proposal-approval-validation.json","negative/v2/proposal-approval-state.json","negative/v2/proposal-duplicate-logical-id.json"],"authority_owner":"proposal_service"}
+    {"name":"canon_proposal","version":2,"schema":"schemas/v2/proposal.schema.json","semantic_invariants":"schemas/v2/semantic-invariants.json","example":"examples/v2/proposal.json","negative_fixtures":["negative/v2/proposal-approval-binding.json","negative/v2/proposal-approval-validation.json","negative/v2/proposal-approval-state.json","negative/v2/proposal-duplicate-logical-id.json","negative/v2/proposal-correction-version.json"],"authority_owner":"proposal_service"}
   ],
   "http_registry":"http/index-v5.json",
   "families":[

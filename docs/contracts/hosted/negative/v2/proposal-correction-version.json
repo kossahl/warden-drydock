@@ -1,0 +1,46 @@
+{
+  "schema": "schemas/v2/proposal.schema.json",
+  "expected_category": "proposal_validation_failure",
+  "expected_path": "proposal.correction_of_version",
+  "expected_evidence": "correction_of_version",
+  "instance": {
+    "contract_name": "canon_proposal",
+    "contract_version": 2,
+    "draft": {
+      "draft_id": "draft_editor",
+      "authority": "draft",
+      "source_set_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "content_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "proposal": {
+      "proposal_id": "proposal_editor",
+      "proposal_version": 1,
+      "status": "draft",
+      "campaign_id": "campaign_alpha",
+      "base_revision": "revision_12",
+      "source_revision": "revision_12",
+      "expected_campaign_head": "revision_12",
+      "expected_editor_workflow_version": 7,
+      "diff_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "authority_change_ids": [],
+      "visibility_change_ids": [],
+      "changes": [
+        {
+          "change_id": "change_station",
+          "subject_id": "record-station",
+          "change_type": "update",
+          "from_authority": "preparation",
+          "to_authority": "preparation",
+          "content_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ],
+      "correction_of_version": 1
+    },
+    "validation": {
+      "status": "pending",
+      "validation_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "error_count": 0
+    },
+    "approval_binding": null
+  }
+}

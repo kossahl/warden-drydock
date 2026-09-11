@@ -304,6 +304,15 @@ def _semantic_errors(instance, schema):
                 identifiers = [item.get(identifier) for item in items]
                 if len(identifiers) != len(set(identifiers)):
                     yield ContractValidationError(f"{key}.{identifier}", "logical identifier is duplicated", "proposal_validation_failure")
+        if (
+            proposal.get("correction_of_version") is not None
+            and proposal["correction_of_version"] >= proposal["proposal_version"]
+        ):
+            yield ContractValidationError(
+                "proposal.correction_of_version",
+                "correction_of_version must be less than proposal_version",
+                "proposal_validation_failure",
+            )
         if proposal.get("status") in {"needs_review", "approving", "approved"} and (
             validation.get("status") != "passed" or validation.get("error_count") != 0
         ):
@@ -788,8 +797,8 @@ class HostedContractPackageTests(unittest.TestCase):
         schema = json.loads((CONTRACT_ROOT / contract["schema"]).read_text(encoding="utf-8"))
         invariants = json.loads((CONTRACT_ROOT / contract["semantic_invariants"]).read_text(encoding="utf-8"))
         example = json.loads((CONTRACT_ROOT / contract["example"]).read_text(encoding="utf-8"))
-        self.assertEqual(["proposal_exact_binding", "proposal_validation_gate", "proposal_logical_ids"], schema["x-invariants"])
-        self.assertEqual(["proposal_exact_binding", "proposal_validation_gate", "proposal_logical_ids"], [rule["id"] for rule in invariants["rules"]])
+        self.assertEqual(["proposal_exact_binding", "proposal_validation_gate", "proposal_logical_ids", "proposal_correction_version"], schema["x-invariants"])
+        self.assertEqual(["proposal_exact_binding", "proposal_validation_gate", "proposal_logical_ids", "proposal_correction_version"], [rule["id"] for rule in invariants["rules"]])
         self.assertEqual([], list(Draft202012Validator(schema).iter_errors(example)))
         for relative in contract["negative_fixtures"]:
             fixture = json.loads((CONTRACT_ROOT / relative).read_text(encoding="utf-8"))

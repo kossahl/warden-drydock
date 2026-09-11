@@ -766,6 +766,35 @@ def _removal_reference_policy_failure(instance: dict) -> tuple[str, str] | None:
 
 
 def _removal_impact_binding_failure(instance: dict) -> tuple[str, str] | None:
+    if (
+        instance.get("contract_name") == "editor_proposal_view"
+        and instance.get("mutation_kind") == "remove"
+    ):
+        impact_binding = instance.get("impact_binding")
+        if not isinstance(impact_binding, dict):
+            return "proposal_validation_failure", "impact_binding"
+        removed_card = next(
+            (
+                card
+                for card in instance.get("diff", {}).get("cards", [])
+                if card.get("kind") == "record_removed"
+            ),
+            None,
+        )
+        before = removed_card.get("before") if isinstance(removed_card, dict) else None
+        binding = impact_binding.get("binding")
+        if not isinstance(before, dict) or not isinstance(binding, dict):
+            return None
+        for key, expected in {
+            "campaign_id": instance.get("campaign_id"),
+            "base_revision": instance.get("base_revision"),
+            "record_id": before.get("record_id"),
+            "record_digest": before.get("content_digest"),
+        }.items():
+            if binding.get(key) != expected:
+                return "proposal_validation_failure", f"impact_binding.binding.{key}"
+        return None
+
     operation = instance.get("operation_request", {})
     if not (
         operation.get("operation") == "editor_record_remove"
@@ -2035,24 +2064,36 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     )
     if expected_head is not None and expected_head != base_revision:
         return "unsafe_binding", "expected_campaign_head"
-    current_head_binding = expected_head_id or base_revision.get("revision_id")
+    if instance.get("contract_name") == "editor_creation_context":
+        head_revision = instance.get("head_revision")
+        current_head_binding = (
+            head_revision.get("revision_id")
+            if isinstance(head_revision, dict)
+            else head_revision
+        )
+    else:
+        current_head_binding = expected_head_id or base_revision.get("revision_id")
     if context.get("current_head_revision") != current_head_binding:
         if "current_head_revision" in context:
             return "stale_revision", "binding.base_revision"
     if context.get("current_record_digest") != binding.get("record_digest"):
         if "current_record_digest" in context:
             return "stale_record_digest", "binding.record_digest"
-    expected_workflow_version = binding.get(
-        "expected_editor_workflow_version",
-        instance.get("expected_editor_workflow_version"),
-    )
+    if instance.get("contract_name") == "editor_creation_context":
+        expected_workflow_version = instance.get("editor_workflow_version")
+        workflow_path = "editor_workflow_version"
+    else:
+        expected_workflow_version = binding.get(
+            "expected_editor_workflow_version",
+            instance.get("expected_editor_workflow_version"),
+        )
+        workflow_path = (
+            "binding.expected_editor_workflow_version"
+            if "expected_editor_workflow_version" in binding
+            else "expected_editor_workflow_version"
+        )
     if context.get("current_editor_workflow_version") != expected_workflow_version:
         if "current_editor_workflow_version" in context:
-            workflow_path = (
-                "binding.expected_editor_workflow_version"
-                if "expected_editor_workflow_version" in binding
-                else "expected_editor_workflow_version"
-            )
             return "workflow_conflict", workflow_path
 
     if (
@@ -2256,6 +2297,18 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
             or record_connections != outgoing_connections
         ):
             return "mutation_consistency", "outgoing_connections"
+
+    if operation.get("operation") in {
+        "editor_proposal_approve",
+        "editor_proposal_reject",
+    }:
+        loaded = context.get("loaded_proposal")
+        if isinstance(loaded, dict) and isinstance(loaded.get("payload"), dict):
+            loaded = loaded["payload"]
+        if isinstance(loaded, dict):
+            digest_failure = _declared_digest_failure(loaded)
+            if digest_failure is not None:
+                return digest_failure
 
     digest_failure = _operation_payload_digest_failure(instance)
     if digest_failure is not None:
@@ -2761,6 +2814,22 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "semantic_context": {"loaded_proposal": loaded},
             }),
         )
+
+    def test_loaded_actions_recompute_declared_proposal_digests(self) -> None:
+        loaded = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        loaded["diff"]["summary"] = "Changed after the proposal was loaded."
+        for name in ("approval_request", "rejection_request"):
+            action = deepcopy(next(item["payload"] for item in self.examples if item["name"] == name))
+            with self.subTest(action=name):
+                self.assertEqual(
+                    ("idempotency_digest_conflict", "proposal_payload_digest"),
+                    evaluate_semantic_failure({
+                        "instance": action,
+                        "semantic_context": {"loaded_proposal": loaded},
+                    }),
+                )
 
     def test_operation_payload_digest_is_recomputed_before_first_submission(self) -> None:
         for name in (
@@ -3425,6 +3494,26 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         removal["resolutions"][0]["replacement_target_record_id"] = "record-company"
         self.assertEqual(
             ("unsafe_binding", "resolutions"),
+            evaluate_semantic_failure({"instance": removal}),
+        )
+
+        removal = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_proposal_with_outgoing_connections"
+            )
+        )
+        removal["impact_binding"]["binding"]["record_id"] = "record-station"
+        removal["impact_binding"]["binding"]["record_digest"] = removal["record_bindings"][1][
+            "record_digest"
+        ]
+        removal["proposal_payload_digest"] = projection_digest(
+            removal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            ("proposal_validation_failure", "impact_binding.binding.record_id"),
             evaluate_semantic_failure({"instance": removal}),
         )
 
@@ -4129,6 +4218,25 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         )
         self.assertEqual(route["response"], context["contract_name"])
         self.assertEqual(context["viewed_revision"], context["head_revision"])
+        self.assertIsNone(
+            evaluate_semantic_failure({
+                "instance": context,
+                "semantic_context": {
+                    "current_head_revision": "revision_empty",
+                    "current_editor_workflow_version": 1,
+                },
+            })
+        )
+        self.assertEqual(
+            ("workflow_conflict", "editor_workflow_version"),
+            evaluate_semantic_failure({
+                "instance": context,
+                "semantic_context": {
+                    "current_head_revision": "revision_empty",
+                    "current_editor_workflow_version": 2,
+                },
+            }),
+        )
         self.assertEqual(
             {"snapshot_integrity_failure", "snapshot_lineage_failure"},
             set(record_route["error_status"]["409"]),

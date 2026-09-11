@@ -2,7 +2,7 @@
   "$schema":"https://json-schema.org/draft/2020-12/schema",
   "$id":"https://warden-drydock.invalid/contracts/hosted/v2/proposal.schema.json",
   "title":"Generated Draft and immutable Canon Proposal contracts v2",
-  "x-invariants":["proposal_exact_binding","proposal_validation_gate","proposal_logical_ids"],
+  "x-invariants":["proposal_exact_binding","proposal_validation_gate","proposal_logical_ids","proposal_correction_version"],
   "description":"Additive proposal contract. Domain record identifiers retain the Atlas grammar, including hyphens.",
   "type":"object",
   "required":["contract_name","contract_version","draft","proposal","validation","approval_binding"],
