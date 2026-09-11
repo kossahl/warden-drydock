@@ -209,6 +209,28 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
     }
     for source in diff.get("source_changes", []):
         subject = source.get("subject_record_id")
+        record_kinds = {
+            card.get("kind")
+            for card in diff.get("cards", [])
+            if card.get("subject_record_id") == subject
+            and card.get("kind") in {"record_created", "record_updated", "record_removed"}
+        }
+        if len(record_kinds) > 1:
+            return False
+        expected_change_type = {
+            "record_created": "create",
+            "record_removed": "delete",
+        }.get(next(iter(record_kinds), "record_updated"), "update")
+        if source.get("change_type") != expected_change_type:
+            return False
+        before_source = source.get("before_source")
+        after_source = source.get("after_source")
+        if expected_change_type == "create" and (before_source is not None or after_source is None):
+            return False
+        if expected_change_type == "update" and (before_source is None or after_source is None):
+            return False
+        if expected_change_type == "delete" and (before_source is None or after_source is not None):
+            return False
         resolution_cards = [
             card
             for card in diff.get("cards", [])
@@ -322,8 +344,6 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
                 return False
 
         if resolution_cards and not has_structured_card:
-            before_source = source.get("before_source")
-            after_source = source.get("after_source")
             if before_source is None or after_source is None:
                 return False
             if _without_connection_lines(before_source) != _without_connection_lines(after_source):
@@ -376,7 +396,7 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     binding = instance.get("binding", {})
     candidate = instance.get("candidate")
 
-    bound_revision = binding.get("base_revision", {})
+    bound_revision = binding.get("base_revision")
     if not isinstance(bound_revision, dict):
         bound_revision = instance.get("base_revision", {})
     if isinstance(bound_revision, dict):
@@ -502,6 +522,15 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
                 and operation.get("intent_digest") != instance.get("diff_digest")
             ):
                 return "proposal_approval_conflict", "operation_request.intent_digest"
+            if operation.get("operation") == "editor_proposal_approve":
+                for key in (
+                    "diff_digest",
+                    "confirmed_change_ids",
+                    "confirmed_authority_change_ids",
+                    "confirmed_visibility_change_ids",
+                ):
+                    if diff.get(key) != instance.get(key):
+                        return "proposal_approval_conflict", f"diff.{key}"
         if instance.get("contract_name") == "editor_proposal_view":
             card_subjects = {card.get("subject_record_id") for card in diff.get("cards", [])}
             source_subjects = [source.get("subject_record_id") for source in diff.get("source_changes", [])]
@@ -780,6 +809,15 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({"instance": edit}),
         )
 
+        for name in ("approval_request", "rejection_request"):
+            action = deepcopy(next(item["payload"] for item in self.examples if item["name"] == name))
+            action["operation_request"]["expected_revision"] = "revision_11"
+            with self.subTest(action=f"{name}-revision"):
+                self.assertEqual(
+                    ("unsafe_binding", "operation_request.expected_revision"),
+                    evaluate_semantic_failure({"instance": action}),
+                )
+
         edit = deepcopy(
             next(
                 item["payload"]
@@ -802,6 +840,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                     evaluate_semantic_failure({"instance": action}),
                 )
 
+        for name in ("approval_request", "rejection_request"):
             action = deepcopy(next(item["payload"] for item in self.examples if item["name"] == name))
             action["operation_request"]["subject_id"] = "another-proposal"
             with self.subTest(action=name):
@@ -938,6 +977,11 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         proposal = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
         )
+        invalid_type = deepcopy(proposal)
+        invalid_type["diff"]["source_changes"][0]["change_type"] = "create"
+        invalid_type["diff"]["source_changes"][0]["before_source"] = None
+        self.assertFalse(source_snapshots_match(invalid_type["diff"]))
+
         source = proposal["diff"]["source_changes"][0]
         card = proposal["diff"]["cards"][0]
         card["before"]["sections"][0]["body"] = "First paragraph.\n\nSecond paragraph."
@@ -1388,6 +1432,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "cards": [{"subject_record_id": subject, "before": record, "after": record}],
                 "source_changes": [{
                     "subject_record_id": subject,
+                    "change_type": "update",
                     "before_source": source,
                     "after_source": source,
                 }],
@@ -1474,6 +1519,22 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             },
             set(approval["diff"]),
         )
+
+    def test_approval_diff_binding_matches_top_level_duplicates(self) -> None:
+        approval = next(item["payload"] for item in self.examples if item["name"] == "approval_request")
+        for key in (
+            "diff_digest",
+            "confirmed_change_ids",
+            "confirmed_authority_change_ids",
+            "confirmed_visibility_change_ids",
+        ):
+            invalid = deepcopy(approval)
+            invalid["diff"][key] = "different" if key == "diff_digest" else []
+            with self.subTest(key=key):
+                self.assertEqual(
+                    ("proposal_approval_conflict", f"diff.{key}"),
+                    evaluate_semantic_failure({"instance": invalid}),
+                )
 
 
 if __name__ == "__main__":

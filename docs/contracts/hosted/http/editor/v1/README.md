@@ -114,7 +114,10 @@ sort lexicographically, array order remains significant, and canonical text
 normalizes CRLF and CR to LF without trimming.
 
 Every `editor_diff` includes exactly one `source_changes` entry for each
-affected record, with the exact before and after Markdown source. Each source
+affected record, with the exact before and after Markdown source. Its
+`change_type` and before/after nullability match the corresponding record card:
+`create` is null-to-source, `update` is source-to-source, and `delete` is
+source-to-null. Each source
 snapshot is campaign-owned, and for a `remove_reference` resolution its after
 source omits the affected connection; `accept_unresolved` retains the original
 target; `redirect` uses the replacement target. Name presence follows the
@@ -134,7 +137,8 @@ directly during exact proposal review; they do not reconstruct source from
 parsed record documents.
 
 Approval requests carry only a closed diff binding: the diff digest and the
-confirmed change, authority-change, and visibility-change IDs. The full
+confirmed change, authority-change, and visibility-change IDs. The nested
+binding and its top-level duplicate values must match exactly. The full
 `source_changes` snapshots remain on the server-produced proposal view and are
 not copied into approval requests. Approval and rejection operation requests
 also carry an `intent_digest` equal to the top-level `diff_digest`; this binds
