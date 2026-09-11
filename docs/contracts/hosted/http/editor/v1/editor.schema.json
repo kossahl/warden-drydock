@@ -1231,6 +1231,9 @@
             },
             "connection": {
               "type": "null"
+            },
+            "resolution": {
+              "$ref": "#/$defs/resolution"
             }
           }
         }

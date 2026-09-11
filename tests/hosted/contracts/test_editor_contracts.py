@@ -384,12 +384,27 @@ def _logical_id_failure(instance: dict, diff: dict | None = None) -> str | None:
     return None
 
 
+def _reference_resolution_binding_failure(diff: dict) -> tuple[str, str] | None:
+    for index, card in enumerate(diff.get("cards", [])):
+        if (
+            card.get("kind") == "reference_resolution"
+            and card.get("resolution") != card.get("after")
+        ):
+            return "unsafe_binding", f"diff.cards.{index}.resolution"
+    return None
+
+
 def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str, str] | None:
     loaded = context.get("loaded_proposal")
     if not isinstance(loaded, dict):
         return None
     if isinstance(loaded.get("payload"), dict):
         loaded = loaded["payload"]
+
+    if isinstance(loaded.get("diff"), dict):
+        resolution_failure = _reference_resolution_binding_failure(loaded["diff"])
+        if resolution_failure is not None:
+            return resolution_failure
 
     expected = {}
     direct_action = "operation_request" in loaded or loaded.get("contract_name") in {
@@ -1022,6 +1037,9 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
 
     diff = instance.get("diff")
     if isinstance(diff, dict):
+        resolution_failure = _reference_resolution_binding_failure(diff)
+        if resolution_failure is not None:
+            return resolution_failure
         member_id_failure = _diff_record_member_id_failure(diff)
         if member_id_failure is not None:
             return "proposal_validation_failure", member_id_failure
@@ -2361,6 +2379,31 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                                 for item in parsed_connections
                             ],
                         )
+
+    def test_reference_resolution_cards_bind_resolution_to_after(self) -> None:
+        proposal = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_proposal_with_outgoing_connections"
+            )
+        )
+        card = next(
+            card
+            for card in proposal["diff"]["cards"]
+            if card["kind"] == "reference_resolution"
+        )
+
+        card["resolution"] = None
+        self.assertTrue(list(self.validator.iter_errors(proposal)))
+
+        card["resolution"] = deepcopy(card["after"])
+        card["resolution"]["action"] = "remove_reference"
+        card["resolution"]["replacement_target_record_id"] = None
+        self.assertEqual(
+            ("unsafe_binding", "diff.cards.2.resolution"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
 
     def test_source_snapshots_use_record_id_for_nameless_session_records(self) -> None:
         record_types = ("session", "session-prep", "debrief")
