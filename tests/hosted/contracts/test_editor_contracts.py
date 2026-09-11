@@ -428,6 +428,7 @@ def _record_property_changes(before: dict, after: dict) -> list[dict]:
         ("fields", "field_id", "value"),
         ("sections", "section_id", "body"),
     ):
+        missing = object()
         before_members = {
             item[member_id]: item[value_key] for item in before.get(collection, [])
         }
@@ -439,12 +440,14 @@ def _record_property_changes(before: dict, after: dict) -> list[dict]:
             member_id for member_id in after_members if member_id not in before_members
         )
         for member_id in member_ids:
-            if before_members.get(member_id) != after_members.get(member_id):
+            before_value = before_members.get(member_id, missing)
+            after_value = after_members.get(member_id, missing)
+            if before_value != after_value:
                 changes.append(
                     {
                         "property": f"{collection}.{member_id}",
-                        "before": before_members.get(member_id),
-                        "after": after_members.get(member_id),
+                        "before": None if before_value is missing else before_value,
+                        "after": None if after_value is missing else after_value,
                     }
                 )
     return changes
@@ -1032,6 +1035,81 @@ def _adapter_definition_failure(adapter_definition: object, path: str) -> str | 
     return None
 
 
+def _adapter_definition_binding_failure(
+    instance: dict,
+    context: dict,
+) -> tuple[str, str] | None:
+    returned = instance.get("adapter_definition")
+    bound = context.get("adapter_definition")
+    if isinstance(returned, dict) and isinstance(bound, dict) and returned != bound:
+        return "unsafe_binding", "adapter_definition"
+    return None
+
+
+def _proposal_validation_gate_failure(instance: dict) -> tuple[str, str] | None:
+    if instance.get("contract_name") != "editor_proposal_view":
+        return None
+    core = instance.get("core_proposal")
+    proposal = core.get("proposal") if isinstance(core, dict) else None
+    if not isinstance(proposal, dict) or proposal.get("status") != "approved":
+        return None
+    validation = instance.get("validation", {})
+    if not isinstance(validation, dict) or validation.get("status") != "passed":
+        return "proposal_validation_failure", "validation.status"
+    if validation.get("error_count") != 0:
+        return "proposal_validation_failure", "validation.error_count"
+    if any(
+        finding.get("severity") in {"error", "warning"}
+        for finding in validation.get("findings", [])
+        if isinstance(finding, dict)
+    ):
+        return "proposal_validation_failure", "validation.findings"
+    return None
+
+
+def _result_workflow_version_failure(
+    instance: dict,
+    fixture: dict,
+) -> tuple[str, str] | None:
+    if instance.get("contract_name") not in {
+        "editor_proposal_approval_result",
+        "editor_proposal_rejection_result",
+    }:
+        return None
+
+    context = fixture.get("semantic_context", {})
+    expected = context.get("expected_result_editor_workflow_version")
+    if expected is None:
+        expected = context.get("result_editor_workflow_version")
+    if expected is None:
+        for source in (
+            context.get("accepted_request"),
+            context.get("accepted_operation_request"),
+            fixture.get("accepted_request"),
+        ):
+            if not isinstance(source, dict):
+                continue
+            request = source.get("operation_request")
+            if not isinstance(request, dict):
+                request = source
+            if "expected_editor_workflow_version" in request:
+                expected = request["expected_editor_workflow_version"] + 1
+                break
+    if expected is None:
+        receipt = context.get("stored_receipt") or fixture.get("stored_receipt")
+        if isinstance(receipt, dict):
+            expected = receipt.get("result_editor_workflow_version")
+            if expected is None:
+                expected = receipt.get("editor_workflow_version")
+            if expected is None:
+                expected = receipt.get("workflow_version")
+    if expected is None and "current_editor_workflow_version" in context:
+        expected = context["current_editor_workflow_version"]
+    if expected is not None and instance.get("editor_workflow_version") != expected:
+        return "unsafe_binding", "editor_workflow_version"
+    return None
+
+
 def _diff_record_member_id_failure(diff: dict) -> str | None:
     for index, card in enumerate(diff.get("cards", [])):
         path = f"diff.cards.{index}"
@@ -1357,6 +1435,9 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
 def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     """Return the first contract violation found in a negative fixture."""
     instance = fixture["instance"]
+    result_workflow_failure = _result_workflow_version_failure(instance, fixture)
+    if result_workflow_failure is not None:
+        return result_workflow_failure
     operation = instance.get("operation_request", {})
     binding = instance.get("binding", {})
     candidate = instance.get("candidate")
@@ -1422,6 +1503,12 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         failure = _adapter_definition_failure(adapter_definition, path)
         if failure is not None:
             return "unsafe_binding", failure
+    adapter_binding_failure = _adapter_definition_binding_failure(instance, context)
+    if adapter_binding_failure is not None:
+        return adapter_binding_failure
+    proposal_validation_failure = _proposal_validation_gate_failure(instance)
+    if proposal_validation_failure is not None:
+        return proposal_validation_failure
     if instance.get("contract_name") == "editor_record_view":
         record = instance.get("record")
         if isinstance(record, dict):
@@ -2254,6 +2341,29 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                     }),
                 )
 
+    def test_action_results_bind_the_completed_workflow_version(self) -> None:
+        for action_name, result_name in (
+            ("approval_request", "approval_success_response"),
+            ("rejection_request", "rejection_response"),
+        ):
+            action = next(item["payload"] for item in self.examples if item["name"] == action_name)
+            result = deepcopy(next(item["payload"] for item in self.examples if item["name"] == result_name))
+            with self.subTest(result=result_name):
+                self.assertIsNone(
+                    evaluate_semantic_failure({
+                        "instance": result,
+                        "semantic_context": {"accepted_request": action},
+                    })
+                )
+                result["editor_workflow_version"] += 1
+                self.assertEqual(
+                    ("unsafe_binding", "editor_workflow_version"),
+                    evaluate_semantic_failure({
+                        "instance": result,
+                        "semantic_context": {"accepted_request": action},
+                    }),
+                )
+
     def test_record_view_history_flags_bind_to_revision_objects(self) -> None:
         historical = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "historical_record_view")
@@ -2287,6 +2397,36 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({"instance": record_view}),
         )
 
+        bound_adapter = deepcopy(record_view["adapter_definition"])
+        changed_adapter = deepcopy(record_view)
+        changed_adapter["adapter_definition"]["record_types"].remove("faction")
+        del changed_adapter["adapter_definition"]["record_definitions"]["faction"]
+        self.assertEqual(
+            ("unsafe_binding", "adapter_definition"),
+            evaluate_semantic_failure({
+                "instance": changed_adapter,
+                "semantic_context": {"adapter_definition": bound_adapter},
+            }),
+        )
+
+        creation = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "creation_context_empty_revision"
+            )
+        )
+        bound_adapter = deepcopy(creation["adapter_definition"])
+        creation["adapter_definition"]["record_types"].remove("faction")
+        del creation["adapter_definition"]["record_definitions"]["faction"]
+        self.assertEqual(
+            ("unsafe_binding", "adapter_definition"),
+            evaluate_semantic_failure({
+                "instance": creation,
+                "semantic_context": {"adapter_definition": bound_adapter},
+            }),
+        )
+
     def test_record_mutation_cards_are_unique_per_subject(self) -> None:
         proposal = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
@@ -2306,6 +2446,47 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         proposal["diff"]["cards"][0]["property_changes"] = []
         self.assertEqual(
             ("mutation_consistency", "diff.cards.0.property_changes"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        card = proposal["diff"]["cards"][0]
+        card["after"]["fields"].append({"field_id": "optional", "value": None})
+        self.assertEqual(
+            ("mutation_consistency", "diff.cards.0.property_changes"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
+    def test_approved_proposal_views_require_passed_validation(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["core_proposal"]["proposal"]["status"] = "approved"
+        proposal["publication"] = {
+            "status": "published",
+            "published_revision": deepcopy(
+                next(item["payload"] for item in self.examples if item["name"] == "approval_success_response")[
+                    "published_revision"
+                ]
+            ),
+        }
+        proposal["validation"]["status"] = "failed"
+        proposal["validation"]["error_count"] = 1
+        proposal["validation"]["validation_digest"] = projection_digest(
+            proposal["validation"],
+            DIGEST_PROJECTIONS["validation_digest"],
+        )
+        proposal["core_proposal"]["validation"]["validation_digest"] = proposal["validation"][
+            "validation_digest"
+        ]
+        proposal["proposal_payload_digest"] = projection_digest(
+            proposal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            ("proposal_validation_failure", "validation.status"),
             evaluate_semantic_failure({"instance": proposal}),
         )
 
