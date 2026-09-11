@@ -111,7 +111,9 @@ In particular, `content_digest` excludes itself and normalizes section bodies,
 own digest and summary, `validation_digest` excludes its own digest, and
 `proposal_payload_digest` excludes only its own top-level field. Object keys
 sort lexicographically, array order remains significant, and canonical text
-normalizes CRLF and CR to LF without trimming.
+normalizes CRLF and CR to LF without trimming. On an idempotency replay, the
+server recomputes `operation_request.payload_digest` from the request body
+before comparing it with the stored receipt.
 
 Every `editor_diff` includes exactly one `source_changes` entry for each
 affected record, with the exact before and after Markdown source. Its

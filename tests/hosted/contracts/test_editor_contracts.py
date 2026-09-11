@@ -14,6 +14,9 @@ from warden_drydock.standalone import _section_lines, frontmatter, parse_connect
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_ROOT = ROOT / "docs" / "contracts" / "hosted" / "http" / "editor" / "v1"
+OPERATION_PAYLOAD_PROJECTION = json.loads(
+    (CONTRACT_ROOT / "semantic-invariants.json").read_text(encoding="utf-8")
+)["digest_projections"]["operation_payload_digest"]
 
 
 def canonical_digest(value: object, *, ensure_ascii: bool = True) -> str:
@@ -83,6 +86,33 @@ def projection_digest(value: dict, definition: dict) -> str:
     return canonical_digest(projection)
 
 
+def _record_member_id_failure(record: dict, path: str) -> str | None:
+    for collection, member_id in (
+        ("fields", "field_id"),
+        ("sections", "section_id"),
+        ("connections", "connection_id"),
+    ):
+        seen = set()
+        for index, member in enumerate(record.get(collection, [])):
+            value = member.get(member_id)
+            if value in seen:
+                return f"{path}.{collection}.{index}.{member_id}"
+            seen.add(value)
+    return None
+
+
+def _diff_record_member_id_failure(diff: dict) -> str | None:
+    for index, card in enumerate(diff.get("cards", [])):
+        path = f"diff.cards.{index}"
+        for side in ("before", "after"):
+            value = card.get(side)
+            if isinstance(value, dict) and "record_id" in value:
+                failure = _record_member_id_failure(value, f"{path}.{side}")
+                if failure is not None:
+                    return failure
+    return None
+
+
 def _without_connection_lines(source_text: str) -> str:
     parsed, errors = parse_connections(
         source_text,
@@ -104,6 +134,9 @@ def _adapter_record_vocabulary_failure(
     adapter_definition: dict,
     path: str,
 ) -> str | None:
+    member_id_failure = _record_member_id_failure(record, path)
+    if member_id_failure is not None:
+        return member_id_failure
     record_type = record.get("record_type")
     if record_type not in adapter_definition.get("record_types", []):
         return f"{path}.record_type"
@@ -399,13 +432,13 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     bound_revision = binding.get("base_revision")
     if not isinstance(bound_revision, dict):
         bound_revision = instance.get("base_revision", {})
-    if isinstance(bound_revision, dict):
-        bound_revision = bound_revision.get("revision_id")
+    bound_revision_id = (
+        bound_revision.get("revision_id") if isinstance(bound_revision, dict) else None
+    )
     if (
         "expected_revision" in operation
-        and
-        bound_revision is not None
-        and operation.get("expected_revision") != bound_revision
+        and bound_revision_id is not None
+        and operation.get("expected_revision") != bound_revision_id
     ):
         return "unsafe_binding", "operation_request.expected_revision"
 
@@ -437,11 +470,16 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
 
     receipt = fixture.get("stored_receipt")
     if receipt and receipt.get("idempotency_key") == operation.get("idempotency_key"):
+        if operation.get("payload_digest") != projection_digest(
+            instance,
+            OPERATION_PAYLOAD_PROJECTION,
+        ):
+            return "replay_mismatch", "operation_request.payload_digest"
         if receipt.get("payload_digest") != operation.get("payload_digest"):
             return "replay_mismatch", "operation_request.payload_digest"
 
     context = fixture.get("semantic_context", {})
-    base_revision = binding.get("base_revision", {})
+    base_revision = bound_revision if isinstance(bound_revision, dict) else {}
     if context.get("current_head_revision") != base_revision.get("revision_id"):
         if "current_head_revision" in context:
             return "stale_revision", "binding.base_revision"
@@ -461,6 +499,9 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         return "invalid_record_type", "candidate.record_type"
 
     if isinstance(candidate, dict):
+        member_id_failure = _record_member_id_failure(candidate, "candidate")
+        if member_id_failure is not None:
+            return "proposal_validation_failure", member_id_failure
         if candidate.get("ownership") != "campaign":
             return "proposal_validation_failure", "candidate.ownership"
         adapter_definition = context.get("adapter_definition")
@@ -505,12 +546,18 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
 
     impact = fixture.get("impact", {})
     required_reference_id = impact.get("required_reference_id")
-    resolutions = {item.get("reference_id") for item in instance.get("resolutions", [])}
+    resolution_ids = [item.get("reference_id") for item in instance.get("resolutions", [])]
+    if len(resolution_ids) != len(set(resolution_ids)):
+        return "proposal_validation_failure", "resolutions"
+    resolutions = set(resolution_ids)
     if required_reference_id and not impact.get("permitted_unresolved") and required_reference_id not in resolutions:
         return "incomplete_removal_resolution", "resolutions"
 
     diff = instance.get("diff")
     if isinstance(diff, dict):
+        member_id_failure = _diff_record_member_id_failure(diff)
+        if member_id_failure is not None:
+            return "proposal_validation_failure", member_id_failure
         adapter_definition = context.get("adapter_definition")
         if adapter_definition is not None:
             failure = _adapter_diff_vocabulary_failure(diff, adapter_definition)
@@ -795,6 +842,50 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({"instance": invalid, "semantic_context": context}),
         )
 
+    def test_record_member_ids_are_unique_in_candidates_and_cards(self) -> None:
+        edit = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "edit_record_with_connections_request"
+            )
+        )
+        for collection, member_id in (
+            ("fields", "field_id"),
+            ("sections", "section_id"),
+            ("connections", "connection_id"),
+        ):
+            invalid = deepcopy(edit)
+            invalid["candidate"][collection].append(deepcopy(invalid["candidate"][collection][0]))
+            with self.subTest(candidate=collection):
+                self.assertEqual(
+                    (
+                        "proposal_validation_failure",
+                        f"candidate.{collection}.{len(edit['candidate'][collection])}.{member_id}",
+                    ),
+                    evaluate_semantic_failure({"instance": invalid}),
+                )
+
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        for collection, member_id in (
+            ("fields", "field_id"),
+            ("sections", "section_id"),
+            ("connections", "connection_id"),
+        ):
+            invalid = deepcopy(proposal)
+            members = invalid["diff"]["cards"][0]["before"][collection]
+            members.append(deepcopy(members[0]))
+            with self.subTest(card=collection):
+                self.assertEqual(
+                    (
+                        "proposal_validation_failure",
+                        f"diff.cards.0.before.{collection}.{len(members) - 1}.{member_id}",
+                    ),
+                    evaluate_semantic_failure({"instance": invalid}),
+                )
+
     def test_operation_revision_workflow_and_empty_target_set_are_bound(self) -> None:
         edit = deepcopy(
             next(
@@ -817,6 +908,37 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                     ("unsafe_binding", "operation_request.expected_revision"),
                     evaluate_semantic_failure({"instance": action}),
                 )
+
+            action["operation_request"]["expected_revision"] = "revision_12"
+            with self.subTest(action=f"{name}-current-head"):
+                self.assertIsNone(
+                    evaluate_semantic_failure({
+                        "instance": action,
+                        "semantic_context": {"current_head_revision": "revision_12"},
+                    })
+                )
+            with self.subTest(action=f"{name}-stale-head"):
+                self.assertEqual(
+                    ("stale_revision", "binding.base_revision"),
+                    evaluate_semantic_failure({
+                        "instance": action,
+                        "semantic_context": {"current_head_revision": "revision_11"},
+                    }),
+                )
+
+        replay = deepcopy(edit)
+        replay["operation_request"]["expected_revision"] = "revision_12"
+        replay["candidate"]["displayed_name"] = "Changed after receipt"
+        self.assertEqual(
+            ("replay_mismatch", "operation_request.payload_digest"),
+            evaluate_semantic_failure({
+                "instance": replay,
+                "stored_receipt": {
+                    "idempotency_key": replay["operation_request"]["idempotency_key"],
+                    "payload_digest": replay["operation_request"]["payload_digest"],
+                },
+            }),
+        )
 
         edit = deepcopy(
             next(
@@ -1011,6 +1133,15 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             "First paragraph.\n\nSecond paragraph.",
         )
         self.assertFalse(source_snapshots_match(resolution["diff"]))
+
+        duplicate_resolution = deepcopy(resolution)
+        duplicate_resolution["resolutions"].append(
+            deepcopy(duplicate_resolution["resolutions"][0])
+        )
+        self.assertEqual(
+            ("proposal_validation_failure", "resolutions"),
+            evaluate_semantic_failure({"instance": duplicate_resolution}),
+        )
 
     def test_removal_correction_rebinds_current_impact(self) -> None:
         correction = deepcopy(
