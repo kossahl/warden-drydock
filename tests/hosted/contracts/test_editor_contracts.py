@@ -9,7 +9,12 @@ import unittest
 
 from jsonschema import Draft202012Validator
 
-from warden_drydock.standalone import _section_lines, frontmatter, parse_connections
+from warden_drydock.standalone import (
+    VALID_STATUSES,
+    _section_lines,
+    frontmatter,
+    parse_connections,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -180,14 +185,7 @@ def _source_record_digest(
     if not isinstance(source_text, str):
         return None
     metadata = frontmatter(source_text)
-    if not {
-        "id",
-        "type",
-        "status",
-        "ownership",
-        "visibility",
-        "warden_only",
-    }.issubset(metadata):
+    if not {"id", "type", "ownership", "visibility", "warden_only"}.issubset(metadata):
         return None
     parsed, errors = parse_connections(
         source_text,
@@ -245,13 +243,20 @@ def _source_record_digest(
     warden_only = metadata["warden_only"].casefold()
     if warden_only not in {"true", "false"}:
         return None
+    raw_status = metadata.get("status")
+    if raw_status is None:
+        read_status = {"classification": "missing", "value": None}
+    elif raw_status in VALID_STATUSES:
+        read_status = raw_status
+    else:
+        read_status = {"classification": "unknown", "value": raw_status}
     record = {
         "record_id": metadata["id"],
         "record_type": metadata["type"],
         "displayed_name": metadata.get("name") or metadata["id"],
         "ownership": metadata["ownership"],
-        "status": metadata["status"],
-        "authority": _authority_for_status(metadata["status"]),
+        "status": read_status,
+        "authority": _authority_for_status(read_status),
         "visibility": {
             "audience": metadata["visibility"],
             "warden_only": warden_only == "true",
@@ -1213,6 +1218,10 @@ def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str,
                 _record_binding_failure(loaded, loaded["diff"]),
                 _resolution_set_failure(loaded, loaded["diff"]),
                 _removal_redirect_failure(loaded["diff"], context),
+                None if source_snapshots_match(
+                    loaded["diff"],
+                    adapter_definition=context.get("adapter_definition"),
+                ) else ("mutation_consistency", "diff.source_changes"),
                 _connection_delta_failure(loaded["diff"]),
                 _backlink_binding_failure(loaded["diff"]),
                 _core_change_failure(loaded, loaded["diff"]),
@@ -1412,14 +1421,14 @@ def _proposal_validation_gate_failure(instance: dict) -> tuple[str, str] | None:
             if published_revision is None:
                 return "proposal_approval_conflict", "publication.published_revision"
 
-    if proposal_status not in {"needs_review", "approved"}:
+    if proposal_status not in {"needs_review", "approving", "approved"}:
         return None
     validation = instance.get("validation", {})
     if not isinstance(validation, dict) or validation.get("status") != "passed":
         return "proposal_validation_failure", "validation.status"
     if validation.get("error_count") != 0:
         return "proposal_validation_failure", "validation.error_count"
-    if any(
+    if proposal_status in {"approving", "approved"} and any(
         finding.get("severity") in {"error", "warning"}
         for finding in validation.get("findings", [])
         if isinstance(finding, dict)
@@ -1430,6 +1439,68 @@ def _proposal_validation_gate_failure(instance: dict) -> tuple[str, str] | None:
         return "proposal_validation_failure", "core_proposal.validation.status"
     if core_validation.get("error_count") != 0:
         return "proposal_validation_failure", "core_proposal.validation.error_count"
+    return None
+
+
+def _accepted_request(fixture: dict) -> dict | None:
+    context = fixture.get("semantic_context", {})
+    fallback = None
+    for source in (
+        context.get("accepted_request"),
+        context.get("accepted_operation_request"),
+        fixture.get("accepted_request"),
+    ):
+        if not isinstance(source, dict):
+            continue
+        if isinstance(source.get("payload"), dict):
+            source = source["payload"]
+        if "proposal" in source:
+            return source
+        fallback = fallback or source
+    return fallback
+
+
+def _stored_publication_revision(fixture: dict) -> tuple[bool, object]:
+    context = fixture.get("semantic_context", {})
+    receipt = context.get("stored_receipt") or fixture.get("stored_receipt")
+    if not isinstance(receipt, dict):
+        return False, None
+    candidates = [receipt]
+    for key in ("result", "result_payload", "response", "publication"):
+        value = receipt.get(key)
+        if isinstance(value, dict):
+            candidates.append(value)
+            if isinstance(value.get("payload"), dict):
+                candidates.append(value["payload"])
+    for candidate in candidates:
+        if "published_revision" in candidate:
+            return True, candidate["published_revision"]
+    return False, None
+
+
+def _result_binding_failure(instance: dict, fixture: dict) -> tuple[str, str] | None:
+    if instance.get("contract_name") not in {
+        "editor_proposal_approval_result",
+        "editor_proposal_rejection_result",
+    }:
+        return None
+
+    accepted = _accepted_request(fixture)
+    expected_proposal = accepted.get("proposal") if isinstance(accepted, dict) else None
+    actual_proposal = instance.get("proposal")
+    if isinstance(expected_proposal, dict):
+        for key in ("proposal_id", "proposal_version"):
+            if not isinstance(actual_proposal, dict) or actual_proposal.get(key) != expected_proposal.get(key):
+                return "unsafe_binding", f"proposal.{key}"
+
+    if instance.get("contract_name") == "editor_proposal_approval_result":
+        receipt_has_revision, expected_revision = _stored_publication_revision(fixture)
+        if receipt_has_revision and instance.get("published_revision") != expected_revision:
+            if isinstance(expected_revision, dict) and isinstance(instance.get("published_revision"), dict):
+                for key in ("revision_id", "ordinal", "tree_digest", "immutable"):
+                    if instance["published_revision"].get(key) != expected_revision.get(key):
+                        return "unsafe_binding", f"published_revision.{key}"
+            return "unsafe_binding", "published_revision"
     return None
 
 
@@ -1449,19 +1520,13 @@ def _result_workflow_version_failure(
     if expected is None:
         expected = context.get("result_editor_workflow_version")
     if expected is None:
-        for source in (
-            context.get("accepted_request"),
-            context.get("accepted_operation_request"),
-            fixture.get("accepted_request"),
-        ):
-            if not isinstance(source, dict):
-                continue
+        source = _accepted_request(fixture)
+        if isinstance(source, dict):
             request = source.get("operation_request")
             if not isinstance(request, dict):
                 request = source
             if "expected_editor_workflow_version" in request:
                 expected = request["expected_editor_workflow_version"] + 1
-                break
     if expected is None:
         receipt = context.get("stored_receipt") or fixture.get("stored_receipt")
         if isinstance(receipt, dict):
@@ -1631,11 +1696,28 @@ def _adapter_diff_vocabulary_failure(diff: dict, adapter_definition: dict) -> st
     return None
 
 
+def _source_status_matches(structured_status: object, metadata: dict[str, str], *, after: bool) -> bool:
+    if after and (
+        not isinstance(structured_status, str)
+        or structured_status not in VALID_STATUSES
+    ):
+        return False
+    if isinstance(structured_status, str):
+        return metadata.get("status") == structured_status
+    if not isinstance(structured_status, dict):
+        return False
+    classification = structured_status.get("classification")
+    if classification == "missing":
+        return "status" not in metadata
+    if classification in {"known", "unknown"}:
+        return metadata.get("status") == structured_status.get("value")
+    return False
+
+
 def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None) -> bool:
     required_metadata = {
         "id",
         "type",
-        "status",
         "ownership",
         "visibility",
         "warden_only",
@@ -1701,6 +1783,8 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
             if structured is not None:
                 has_structured_card = True
                 expected_metadata_keys = set(required_metadata)
+                if "status" in metadata:
+                    expected_metadata_keys.add("status")
                 expected_metadata_keys.update(field["field_id"] for field in structured["fields"])
                 if "name" in metadata or name_required:
                     expected_metadata_keys.add("name")
@@ -1711,11 +1795,16 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
                         structured["record_type"] != metadata["type"],
                         structured["ownership"] != metadata["ownership"],
                         structured["displayed_name"] != displayed_name,
-                        structured["status"] != metadata["status"],
                         structured["visibility"]["audience"] != metadata["visibility"],
                         str(structured["visibility"]["warden_only"]).lower()
                         != metadata["warden_only"],
                     )
+                ):
+                    return False
+                if not _source_status_matches(
+                    structured["status"],
+                    metadata,
+                    after=side == "after",
                 ):
                     return False
                 for field in structured["fields"]:
@@ -1829,6 +1918,9 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     result_replay_failure = _result_replay_failure(instance, fixture)
     if result_replay_failure is not None:
         return result_replay_failure
+    result_binding_failure = _result_binding_failure(instance, fixture)
+    if result_binding_failure is not None:
+        return result_binding_failure
     result_workflow_failure = _result_workflow_version_failure(instance, fixture)
     if result_workflow_failure is not None:
         return result_workflow_failure
@@ -2639,6 +2731,37 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             }),
         )
 
+    def test_loaded_approval_revalidates_source_snapshots(self) -> None:
+        action = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "approval_request")
+        )
+        loaded = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        source = loaded["diff"]["source_changes"][0]
+        source["after_source"] = source["after_source"].replace(
+            "# Synthetic Station Renamed", "# Wrong Station"
+        )
+        loaded["diff"]["diff_digest"] = projection_digest(
+            loaded["diff"], DIGEST_PROJECTIONS["diff_digest"]
+        )
+        loaded["core_proposal"]["proposal"]["diff_digest"] = loaded["diff"]["diff_digest"]
+        loaded["proposal_payload_digest"] = projection_digest(
+            loaded,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        action["proposal_payload_digest"] = loaded["proposal_payload_digest"]
+        action["diff_digest"] = loaded["diff"]["diff_digest"]
+        action["operation_request"]["intent_digest"] = loaded["diff"]["diff_digest"]
+        _refresh_operation_payload_digest(action)
+        self.assertEqual(
+            ("mutation_consistency", "diff.source_changes"),
+            evaluate_semantic_failure({
+                "instance": action,
+                "semantic_context": {"loaded_proposal": loaded},
+            }),
+        )
+
     def test_operation_payload_digest_is_recomputed_before_first_submission(self) -> None:
         for name in (
             "edit_record_with_connections_request",
@@ -2783,6 +2906,41 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                         "semantic_context": {"accepted_request": action},
                     }),
                 )
+
+    def test_action_results_bind_the_accepted_proposal_and_publication(self) -> None:
+        action = next(item["payload"] for item in self.examples if item["name"] == "approval_request")
+        result = next(
+            item["payload"]
+            for item in self.examples
+            if item["name"] == "approval_success_response"
+        )
+        receipt = {"published_revision": deepcopy(result["published_revision"])}
+
+        invalid = deepcopy(result)
+        invalid["proposal"]["proposal_id"] = "proposal-other"
+        self.assertEqual(
+            ("unsafe_binding", "proposal.proposal_id"),
+            evaluate_semantic_failure({
+                "instance": invalid,
+                "semantic_context": {
+                    "accepted_request": action,
+                    "stored_receipt": receipt,
+                },
+            }),
+        )
+
+        invalid = deepcopy(result)
+        invalid["published_revision"]["revision_id"] = "revision-other"
+        self.assertEqual(
+            ("unsafe_binding", "published_revision.revision_id"),
+            evaluate_semantic_failure({
+                "instance": invalid,
+                "semantic_context": {
+                    "accepted_request": action,
+                    "stored_receipt": receipt,
+                },
+            }),
+        )
 
     def test_proposal_views_bind_the_returned_workflow_version(self) -> None:
         accepted_request = deepcopy(
@@ -3040,6 +3198,63 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             ("proposal_validation_failure", "validation.status"),
             evaluate_semantic_failure({"instance": proposal}),
         )
+
+    def test_approving_proposal_views_require_error_free_validation(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        core_proposal = proposal["core_proposal"]["proposal"]
+        core_proposal["status"] = proposal["proposal_status"] = "approving"
+        proposal["publication"] = {"status": "quarantined", "published_revision": None}
+        proposal["validation"]["error_count"] = 1
+        proposal["validation"]["validation_digest"] = projection_digest(
+            proposal["validation"], DIGEST_PROJECTIONS["validation_digest"]
+        )
+        proposal["core_proposal"]["validation"]["error_count"] = 1
+        proposal["core_proposal"]["validation"]["validation_digest"] = proposal["validation"][
+            "validation_digest"
+        ]
+        proposal["core_proposal"]["approval_binding"] = {
+            "proposal_id": core_proposal["proposal_id"],
+            "proposal_version": core_proposal["proposal_version"],
+            "diff_digest": core_proposal["diff_digest"],
+            "base_revision": core_proposal["base_revision"],
+            "source_revision": core_proposal["source_revision"],
+            "expected_campaign_head": core_proposal["expected_campaign_head"],
+            "expected_editor_workflow_version": core_proposal[
+                "expected_editor_workflow_version"
+            ],
+            "validation_status": proposal["core_proposal"]["validation"]["status"],
+            "validation_digest": proposal["core_proposal"]["validation"]["validation_digest"],
+            "authority_change_ids": core_proposal["authority_change_ids"],
+            "visibility_change_ids": core_proposal["visibility_change_ids"],
+            "warden_confirmed": True,
+        }
+        proposal["proposal_payload_digest"] = projection_digest(
+            proposal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            ("proposal_validation_failure", "validation.error_count"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
+    def test_needs_review_proposal_views_retain_warning_findings(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["validation"]["findings"].append({"severity": "warning"})
+        proposal["validation"]["validation_digest"] = projection_digest(
+            proposal["validation"], DIGEST_PROJECTIONS["validation_digest"]
+        )
+        proposal["core_proposal"]["validation"]["validation_digest"] = proposal["validation"][
+            "validation_digest"
+        ]
+        proposal["proposal_payload_digest"] = projection_digest(
+            proposal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertIsNone(evaluate_semantic_failure({"instance": proposal}))
 
     def test_proposal_publication_matches_core_status(self) -> None:
         proposal = deepcopy(
@@ -4187,6 +4402,30 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             for side in ("before_source", "after_source"):
                 source[side] = source[side].replace("date: 2187-04-03", "date:")
         self.assertTrue(source_snapshots_match(proposal["diff"]))
+
+    def test_source_snapshots_match_raw_before_statuses(self) -> None:
+        proposal = next(
+            item["payload"] for item in self.examples if item["name"] == "editor_proposal_view"
+        )
+        for status, source_status in (
+            ({"classification": "unknown", "value": "legacy-state"}, "legacy-state"),
+            ({"classification": "missing", "value": None}, None),
+        ):
+            candidate = deepcopy(proposal)
+            card = candidate["diff"]["cards"][0]
+            source = candidate["diff"]["source_changes"][0]
+            card["before"]["status"] = status
+            card["before"]["authority"] = "preparation"
+            if source_status is None:
+                source["before_source"] = source["before_source"].replace(
+                    "status: review\n", ""
+                )
+            else:
+                source["before_source"] = source["before_source"].replace(
+                    "status: review", f"status: {source_status}"
+                )
+            with self.subTest(status=status):
+                self.assertTrue(source_snapshots_match(candidate["diff"]))
 
     def test_source_snapshots_use_record_id_for_nameless_session_records(self) -> None:
         record_types = ("session", "session-prep", "debrief")
