@@ -1116,6 +1116,79 @@ def _core_change_failure(instance: dict, diff: dict) -> tuple[str, str] | None:
     return None
 
 
+def _connection_delta_failure(diff: dict) -> tuple[str, str] | None:
+    expected_connections = {}
+    for record_card in diff.get("cards", []):
+        if record_card.get("kind") not in {
+            "record_created",
+            "record_updated",
+            "record_removed",
+        }:
+            continue
+        before = record_card.get("before")
+        after = record_card.get("after")
+        before_connections = {
+            connection["connection_id"]: connection
+            for connection in (before or {}).get("connections", [])
+        }
+        after_connections = {
+            connection["connection_id"]: connection
+            for connection in (after or {}).get("connections", [])
+        }
+        for connection_id in before_connections.keys() - after_connections.keys():
+            expected_connections[
+                (record_card["subject_record_id"], "connection_removed", connection_id)
+            ] = before_connections[connection_id]
+        for connection_id in after_connections.keys() - before_connections.keys():
+            expected_connections[
+                (record_card["subject_record_id"], "connection_added", connection_id)
+            ] = after_connections[connection_id]
+        for connection_id in before_connections.keys() & after_connections.keys():
+            if before_connections[connection_id] != after_connections[connection_id]:
+                expected_connections[
+                    (record_card["subject_record_id"], "connection_updated", connection_id)
+                ] = {
+                    "before": before_connections[connection_id],
+                    "after": after_connections[connection_id],
+                }
+
+    actual_connections = {}
+    for card in diff.get("cards", []):
+        if card.get("kind") not in {
+            "connection_added",
+            "connection_updated",
+            "connection_removed",
+        }:
+            continue
+        connection = card.get("connection", {})
+        if card["kind"] == "connection_updated":
+            connection_id = connection.get("before", {}).get("connection_id")
+        else:
+            connection_id = connection.get("connection_id")
+        actual_connections[
+            (card["subject_record_id"], card["kind"], connection_id)
+        ] = connection
+    connection_card_count = sum(
+        card.get("kind") in {
+            "connection_added",
+            "connection_updated",
+            "connection_removed",
+        }
+        for card in diff.get("cards", [])
+    )
+    if (
+        len(actual_connections) != connection_card_count
+        or set(expected_connections) != set(actual_connections)
+    ):
+        return "mutation_consistency", "diff.cards.connection_delta"
+    if any(
+        expected_connections[key] != actual_connections[key]
+        for key in expected_connections
+    ):
+        return "mutation_consistency", "diff.cards.connection"
+    return None
+
+
 def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str, str] | None:
     loaded = context.get("loaded_proposal")
     if not isinstance(loaded, dict):
@@ -1140,6 +1213,7 @@ def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str,
                 _record_binding_failure(loaded, loaded["diff"]),
                 _resolution_set_failure(loaded, loaded["diff"]),
                 _removal_redirect_failure(loaded["diff"], context),
+                _connection_delta_failure(loaded["diff"]),
                 _backlink_binding_failure(loaded["diff"]),
                 _core_change_failure(loaded, loaded["diff"]),
             ):
@@ -1314,7 +1388,31 @@ def _proposal_validation_gate_failure(instance: dict) -> tuple[str, str] | None:
         return None
     core = instance.get("core_proposal")
     proposal = core.get("proposal") if isinstance(core, dict) else None
-    if not isinstance(proposal, dict) or proposal.get("status") != "approved":
+    if not isinstance(proposal, dict):
+        return None
+
+    proposal_status = proposal.get("status")
+    publication = instance.get("publication")
+    if isinstance(publication, dict):
+        publication_status = publication.get("status")
+        published_revision = publication.get("published_revision")
+        if proposal_status in {"draft", "needs_review", "rejected", "conflict"}:
+            if publication_status != "not_published":
+                return "proposal_approval_conflict", "publication.status"
+            if published_revision is not None:
+                return "proposal_approval_conflict", "publication.published_revision"
+        elif proposal_status == "approving":
+            if publication_status not in {"not_published", "quarantined"}:
+                return "proposal_approval_conflict", "publication.status"
+            if published_revision is not None:
+                return "proposal_approval_conflict", "publication.published_revision"
+        elif proposal_status == "approved":
+            if publication_status != "published":
+                return "proposal_approval_conflict", "publication.status"
+            if published_revision is None:
+                return "proposal_approval_conflict", "publication.published_revision"
+
+    if proposal_status not in {"needs_review", "approved"}:
         return None
     validation = instance.get("validation", {})
     if not isinstance(validation, dict) or validation.get("status") != "passed":
@@ -1327,6 +1425,11 @@ def _proposal_validation_gate_failure(instance: dict) -> tuple[str, str] | None:
         if isinstance(finding, dict)
     ):
         return "proposal_validation_failure", "validation.findings"
+    core_validation = core.get("validation") if isinstance(core, dict) else None
+    if not isinstance(core_validation, dict) or core_validation.get("status") != "passed":
+        return "proposal_validation_failure", "core_proposal.validation.status"
+    if core_validation.get("error_count") != 0:
+        return "proposal_validation_failure", "core_proposal.validation.error_count"
     return None
 
 
@@ -1335,6 +1438,7 @@ def _result_workflow_version_failure(
     fixture: dict,
 ) -> tuple[str, str] | None:
     if instance.get("contract_name") not in {
+        "editor_proposal_view",
         "editor_proposal_approval_result",
         "editor_proposal_rejection_result",
     }:
@@ -2030,75 +2134,9 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
                 adapter_definition=context.get("adapter_definition"),
             ):
                 return "mutation_consistency", "diff.source_changes"
-        expected_connections = {}
-        for record_card in diff.get("cards", []):
-            if record_card.get("kind") not in {
-                "record_created",
-                "record_updated",
-                "record_removed",
-            }:
-                continue
-            before = record_card.get("before")
-            after = record_card.get("after")
-            before_connections = {
-                connection["connection_id"]: connection
-                for connection in (before or {}).get("connections", [])
-            }
-            after_connections = {
-                connection["connection_id"]: connection
-                for connection in (after or {}).get("connections", [])
-            }
-            for connection_id in before_connections.keys() - after_connections.keys():
-                expected_connections[
-                    (record_card["subject_record_id"], "connection_removed", connection_id)
-                ] = before_connections[connection_id]
-            for connection_id in after_connections.keys() - before_connections.keys():
-                expected_connections[
-                    (record_card["subject_record_id"], "connection_added", connection_id)
-                ] = after_connections[connection_id]
-            for connection_id in before_connections.keys() & after_connections.keys():
-                if before_connections[connection_id] != after_connections[connection_id]:
-                    expected_connections[
-                        (record_card["subject_record_id"], "connection_updated", connection_id)
-                    ] = {
-                        "before": before_connections[connection_id],
-                        "after": after_connections[connection_id],
-                    }
-
-        actual_connections = {}
-        for card in diff.get("cards", []):
-            if card.get("kind") not in {
-                "connection_added",
-                "connection_updated",
-                "connection_removed",
-            }:
-                continue
-            connection = card.get("connection", {})
-            if card["kind"] == "connection_updated":
-                connection_id = connection.get("before", {}).get("connection_id")
-            else:
-                connection_id = connection.get("connection_id")
-            actual_connections[
-                (card["subject_record_id"], card["kind"], connection_id)
-            ] = connection
-        connection_card_count = sum(
-            card.get("kind") in {
-                "connection_added",
-                "connection_updated",
-                "connection_removed",
-            }
-            for card in diff.get("cards", [])
-        )
-        if (
-            len(actual_connections) != connection_card_count
-            or set(expected_connections) != set(actual_connections)
-        ):
-            return "mutation_consistency", "diff.cards.connection_delta"
-        if any(
-            expected_connections[key] != actual_connections[key]
-            for key in expected_connections
-        ):
-            return "mutation_consistency", "diff.cards.connection"
+        connection_failure = _connection_delta_failure(diff)
+        if connection_failure is not None:
+            return connection_failure
 
         transition_failure = _transition_completeness_failure(instance, context)
         if transition_failure is not None:
@@ -2566,6 +2604,41 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             }),
         )
 
+    def test_loaded_approval_rejects_missing_connection_cards(self) -> None:
+        action = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "approval_request")
+        )
+        loaded = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        loaded["diff"]["cards"] = [
+            card for card in loaded["diff"]["cards"] if card["kind"] != "connection_added"
+        ]
+        loaded["core_proposal"]["proposal"]["changes"] = loaded["core_proposal"]["proposal"][
+            "changes"
+        ][:1]
+        loaded["diff"]["diff_digest"] = projection_digest(
+            loaded["diff"], DIGEST_PROJECTIONS["diff_digest"]
+        )
+        loaded["core_proposal"]["proposal"]["diff_digest"] = loaded["diff"]["diff_digest"]
+        loaded["proposal_payload_digest"] = projection_digest(
+            loaded,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        action["proposal_payload_digest"] = loaded["proposal_payload_digest"]
+        action["diff_digest"] = loaded["diff"]["diff_digest"]
+        action["operation_request"]["intent_digest"] = loaded["diff"]["diff_digest"]
+        action["confirmed_change_ids"] = ["change_edit_record"]
+        action["diff"]["confirmed_change_ids"] = ["change_edit_record"]
+        _refresh_operation_payload_digest(action)
+        self.assertEqual(
+            ("mutation_consistency", "diff.cards.connection_delta"),
+            evaluate_semantic_failure({
+                "instance": action,
+                "semantic_context": {"loaded_proposal": loaded},
+            }),
+        )
+
     def test_operation_payload_digest_is_recomputed_before_first_submission(self) -> None:
         for name in (
             "edit_record_with_connections_request",
@@ -2611,7 +2684,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         proposal = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
         )
-        proposal["validation"]["error_count"] = 1
+        proposal["validation"]["validation_digest"] = "f" * 64
         self.assertEqual(
             ("idempotency_digest_conflict", "validation.validation_digest"),
             evaluate_semantic_failure({"instance": proposal}),
@@ -2710,6 +2783,36 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                         "semantic_context": {"accepted_request": action},
                     }),
                 )
+
+    def test_proposal_views_bind_the_returned_workflow_version(self) -> None:
+        accepted_request = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "edit_record_with_connections_request"
+            )
+        )
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        self.assertIsNone(
+            evaluate_semantic_failure({
+                "instance": proposal,
+                "semantic_context": {"accepted_request": accepted_request},
+            })
+        )
+        proposal["editor_workflow_version"] += 1
+        proposal["proposal_payload_digest"] = projection_digest(
+            proposal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            ("unsafe_binding", "editor_workflow_version"),
+            evaluate_semantic_failure({
+                "instance": proposal,
+                "semantic_context": {"accepted_request": accepted_request},
+            }),
+        )
 
     def test_replayed_action_results_bind_the_stored_result(self) -> None:
         result = deepcopy(
@@ -2913,6 +3016,52 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({"instance": proposal}),
         )
 
+    def test_needs_review_proposal_views_require_passed_validation(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["validation"]["status"] = "failed"
+        proposal["validation"]["error_count"] = 1
+        proposal["validation"]["findings"] = [{"severity": "error"}]
+        proposal["core_proposal"]["validation"]["status"] = "failed"
+        proposal["core_proposal"]["validation"]["error_count"] = 1
+        proposal["validation"]["validation_digest"] = projection_digest(
+            proposal["validation"],
+            DIGEST_PROJECTIONS["validation_digest"],
+        )
+        proposal["core_proposal"]["validation"]["validation_digest"] = proposal["validation"][
+            "validation_digest"
+        ]
+        proposal["proposal_payload_digest"] = projection_digest(
+            proposal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            ("proposal_validation_failure", "validation.status"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
+    def test_proposal_publication_matches_core_status(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["publication"] = {
+            "status": "published",
+            "published_revision": deepcopy(
+                next(item["payload"] for item in self.examples if item["name"] == "approval_success_response")[
+                    "published_revision"
+                ]
+            ),
+        }
+        proposal["proposal_payload_digest"] = projection_digest(
+            proposal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            ("proposal_approval_conflict", "publication.status"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
     def test_embedded_proposals_bind_approval_state_and_identity(self) -> None:
         proposal = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
@@ -2936,6 +3085,14 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             "visibility_change_ids": core_proposal["visibility_change_ids"],
             "warden_confirmed": True,
         }
+        proposal["publication"] = {
+            "status": "published",
+            "published_revision": deepcopy(
+                next(item["payload"] for item in self.examples if item["name"] == "approval_success_response")[
+                    "published_revision"
+                ]
+            ),
+        }
         proposal["proposal_payload_digest"] = projection_digest(
             proposal,
             DIGEST_PROJECTIONS["proposal_payload_digest"],
@@ -2958,6 +3115,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
 
         invalid = deepcopy(proposal)
         invalid["core_proposal"]["proposal"]["status"] = "needs_review"
+        invalid["publication"] = {"status": "not_published", "published_revision": None}
         invalid["proposal_payload_digest"] = projection_digest(
             invalid,
             DIGEST_PROJECTIONS["proposal_payload_digest"],
