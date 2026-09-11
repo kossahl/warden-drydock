@@ -61,6 +61,9 @@ sections, required values, and forbidden headings. A record-independent
 returns that definition and the current editor workflow counter even when the
 revision has no records. It is current-head-only, so the create form does not
 depend on an existing record or silently reuse stale adapter metadata.
+The same revision-bound definition validates mutation candidates and proposal
+cards: record types, field and section IDs, relationships, and connection
+states outside its vocabulary fail closed.
 
 Editor record and removal-impact reads return snapshot-integrity or
 snapshot-lineage failures as blocking HTTP 409 errors, so corruption is not
@@ -118,8 +121,12 @@ required, an omitted or blank name uses the record ID as the displayed name,
 matching the standalone/Atlas fallback. The frontmatter, headings, fields,
 sections, and typed connections in each
 non-null snapshot must agree with its structured record or reference-resolution
-card. Clients render these server-produced snapshots directly during exact
-proposal review; they do not reconstruct source from parsed record documents.
+card in both directions, so extra metadata or sections are invalid. For a
+reference-resolution card, every resolution card for that source contributes
+one remove, retain, or redirect delta; non-connection content and unrelated
+connections remain unchanged. Clients render these server-produced snapshots
+directly during exact proposal review; they do not reconstruct source from
+parsed record documents.
 
 Approval requests carry only a closed diff binding: the diff digest and the
 confirmed change, authority-change, and visibility-change IDs. The full

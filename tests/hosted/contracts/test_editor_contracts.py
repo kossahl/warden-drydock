@@ -98,6 +98,73 @@ def _without_connection_lines(source_text: str) -> str:
     )
 
 
+def _adapter_record_vocabulary_failure(
+    record: dict,
+    adapter_definition: dict,
+    path: str,
+) -> str | None:
+    record_type = record.get("record_type")
+    if record_type not in adapter_definition.get("record_types", []):
+        return f"{path}.record_type"
+    definition = adapter_definition.get("record_definitions", {}).get(record_type)
+    if not isinstance(definition, dict):
+        return f"{path}.record_type"
+    allowed_fields = set(definition.get("fields", []))
+    for index, field in enumerate(record.get("fields", [])):
+        if field.get("field_id") not in allowed_fields:
+            return f"{path}.fields.{index}.field_id"
+    allowed_sections = {section.get("id") for section in definition.get("sections", [])}
+    for index, section in enumerate(record.get("sections", [])):
+        if section.get("section_id") not in allowed_sections:
+            return f"{path}.sections.{index}.section_id"
+    relationships = set(adapter_definition.get("relationships", []))
+    connection_states = set(adapter_definition.get("connection_states", []))
+    for index, connection in enumerate(record.get("connections", [])):
+        if connection.get("relationship") not in relationships:
+            return f"{path}.connections.{index}.relationship"
+        if connection.get("state") not in connection_states:
+            return f"{path}.connections.{index}.state"
+    return None
+
+
+def _adapter_connection_vocabulary_failure(
+    connection: dict,
+    adapter_definition: dict,
+    path: str,
+) -> str | None:
+    if connection.get("relationship") not in set(adapter_definition.get("relationships", [])):
+        return f"{path}.relationship"
+    if connection.get("state") not in set(adapter_definition.get("connection_states", [])):
+        return f"{path}.state"
+    return None
+
+
+def _adapter_diff_vocabulary_failure(diff: dict, adapter_definition: dict) -> str | None:
+    for index, card in enumerate(diff.get("cards", [])):
+        path = f"diff.cards.{index}"
+        for side in ("before", "after"):
+            value = card.get(side)
+            if isinstance(value, dict) and "record_id" in value:
+                failure = _adapter_record_vocabulary_failure(
+                    value,
+                    adapter_definition,
+                    f"{path}.{side}",
+                )
+                if failure is not None:
+                    return failure
+        for key in ("connection", "before"):
+            value = card.get(key)
+            if isinstance(value, dict) and "relationship" in value and "state" in value:
+                failure = _adapter_connection_vocabulary_failure(
+                    value,
+                    adapter_definition,
+                    f"{path}.{key}",
+                )
+                if failure is not None:
+                    return failure
+    return None
+
+
 def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None) -> bool:
     required_metadata = {
         "id",
@@ -109,15 +176,12 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
     }
     for source in diff.get("source_changes", []):
         subject = source.get("subject_record_id")
-        resolution = next(
-            (
-                card
-                for card in diff.get("cards", [])
-                if card.get("kind") == "reference_resolution"
-                and card.get("subject_record_id") == subject
-            ),
-            None,
-        )
+        resolution_cards = [
+            card
+            for card in diff.get("cards", [])
+            if card.get("kind") == "reference_resolution"
+            and card.get("subject_record_id") == subject
+        ]
         connection_lists = {}
         has_structured_card = False
         for side in ("before", "after"):
@@ -148,6 +212,12 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
             )
             if structured is not None:
                 has_structured_card = True
+                expected_metadata_keys = set(required_metadata)
+                expected_metadata_keys.update(field["field_id"] for field in structured["fields"])
+                if "name" in metadata or name_required:
+                    expected_metadata_keys.add("name")
+                if set(metadata) != expected_metadata_keys:
+                    return False
                 if any(
                     (
                         structured["record_type"] != metadata["type"],
@@ -171,8 +241,18 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
                     ]
                     if section["body"].splitlines() != actual:
                         return False
+                expected_sections = [
+                    section["section_id"].casefold() for section in structured["sections"]
+                ] + ["connections"]
+                actual_sections = [
+                    line[3:].strip().casefold()
+                    for line in source_text.splitlines()
+                    if line.startswith("## ")
+                ]
+                if actual_sections != expected_sections:
+                    return False
             else:
-                if resolution is None:
+                if not resolution_cards:
                     return False
             parsed, errors = parse_connections(
                 source_text,
@@ -196,37 +276,49 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
             ]:
                 return False
 
-        if resolution is not None and not has_structured_card:
+        if resolution_cards and not has_structured_card:
             before_source = source.get("before_source")
             after_source = source.get("after_source")
             if before_source is None or after_source is None:
                 return False
             if _without_connection_lines(before_source) != _without_connection_lines(after_source):
                 return False
-            reference = resolution["before"]
-            affected = (
-                reference["target_record_id"],
-                reference["relationship"],
-                reference["state"],
-                reference["context"],
-            )
             before_connections = connection_lists["before"]
-            if affected not in before_connections:
-                return False
-            expected_after = list(before_connections)
-            affected_index = expected_after.index(affected)
-            action = resolution["after"]["action"]
-            if action == "remove_reference":
-                expected_after.pop(affected_index)
-            elif action == "redirect":
-                expected_after[affected_index] = (
-                    resolution["after"]["replacement_target_record_id"],
+            expected_slots = [{"connection": item, "resolved": False} for item in before_connections]
+            for resolution in resolution_cards:
+                reference = resolution["before"]
+                affected = (
+                    reference["target_record_id"],
                     reference["relationship"],
                     reference["state"],
                     reference["context"],
                 )
-            elif action != "accept_unresolved":
-                return False
+                slot = next(
+                    (
+                        item
+                        for item in expected_slots
+                        if not item["resolved"] and item["connection"] == affected
+                    ),
+                    None,
+                )
+                if slot is None:
+                    return False
+                slot["resolved"] = True
+                action = resolution["after"]["action"]
+                if action == "remove_reference":
+                    slot["connection"] = None
+                elif action == "redirect":
+                    slot["connection"] = (
+                        resolution["after"]["replacement_target_record_id"],
+                        reference["relationship"],
+                        reference["state"],
+                        reference["context"],
+                    )
+                elif action != "accept_unresolved":
+                    return False
+            expected_after = [
+                item["connection"] for item in expected_slots if item["connection"] is not None
+            ]
             if connection_lists["after"] != expected_after:
                 return False
     return True
@@ -277,6 +369,15 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     if isinstance(candidate, dict):
         if candidate.get("ownership") != "campaign":
             return "proposal_validation_failure", "candidate.ownership"
+        adapter_definition = context.get("adapter_definition")
+        if adapter_definition is not None:
+            failure = _adapter_record_vocabulary_failure(
+                candidate,
+                adapter_definition,
+                "candidate",
+            )
+            if failure is not None:
+                return "proposal_validation_failure", failure
         expected_authority = {
             "canon": "canon",
             "revealed": "revealed",
@@ -316,6 +417,11 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
 
     diff = instance.get("diff")
     if isinstance(diff, dict):
+        adapter_definition = context.get("adapter_definition")
+        if adapter_definition is not None:
+            failure = _adapter_diff_vocabulary_failure(diff, adapter_definition)
+            if failure is not None:
+                return "proposal_validation_failure", failure
         if operation.get("operation") in {"editor_proposal_approve", "editor_proposal_reject"}:
             if (
                 instance.get("diff_digest") is not None
@@ -488,6 +594,57 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({"instance": approval}),
         )
 
+    def test_adapter_vocabulary_binds_candidates_and_proposal_cards(self) -> None:
+        adapter_definition = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "head_record_view")[
+                "adapter_definition"
+            ]
+        )
+        adapter_definition["relationships"].append("signals")
+        context = {"adapter_definition": adapter_definition}
+        edit = next(
+            item["payload"]
+            for item in self.examples
+            if item["name"] == "edit_record_with_connections_request"
+        )
+        self.assertIsNone(
+            evaluate_semantic_failure({"instance": edit, "semantic_context": context})
+        )
+
+        invalid_candidates = (
+            ("record_type", "npc", "candidate.record_type"),
+            ("fields", [{"field_id": "unknown", "value": "value"}], "candidate.fields.0.field_id"),
+            ("sections", [{"section_id": "unknown", "body": "value"}], "candidate.sections.0.section_id"),
+        )
+        for field, value, path in invalid_candidates:
+            with self.subTest(path=path):
+                invalid = deepcopy(edit)
+                invalid["candidate"][field] = value
+                self.assertEqual(
+                    ("proposal_validation_failure", path),
+                    evaluate_semantic_failure({"instance": invalid, "semantic_context": context}),
+                )
+        for field, value, path in (
+            ("relationship", "unknown", "candidate.connections.0.relationship"),
+            ("state", "unknown", "candidate.connections.0.state"),
+        ):
+            with self.subTest(path=path):
+                invalid = deepcopy(edit)
+                invalid["candidate"]["connections"][0][field] = value
+                self.assertEqual(
+                    ("proposal_validation_failure", path),
+                    evaluate_semantic_failure({"instance": invalid, "semantic_context": context}),
+                )
+
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["diff"]["cards"][0]["before"]["record_type"] = "npc"
+        self.assertEqual(
+            ("proposal_validation_failure", "diff.cards.0.before.record_type"),
+            evaluate_semantic_failure({"instance": proposal, "semantic_context": context}),
+        )
+
     def test_non_redirect_resolution_snapshots_preserve_their_declared_action(self) -> None:
         removal = deepcopy(
             next(
@@ -555,6 +712,47 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             "## Summary\n\nAn unreviewed prose change.",
         )
         self.assertFalse(source_snapshots_match(invalid["diff"]))
+
+    def test_source_snapshots_apply_all_resolution_cards_for_a_subject(self) -> None:
+        removal = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_proposal_with_outgoing_connections"
+            )
+        )
+        resolution_card = next(
+            card for card in removal["diff"]["cards"] if card["kind"] == "reference_resolution"
+        )
+        source = next(
+            source
+            for source in removal["diff"]["source_changes"]
+            if source["subject_record_id"] == resolution_card["subject_record_id"]
+        )
+        source["before_source"] += (
+            "\n- `knows` → [[record-company|The Company]] (`former`) — The station knew the company."
+        )
+        source["after_source"] += (
+            "\n- `knows` → [[record-other|Other]] (`former`) — The station knew the company."
+        )
+        second = deepcopy(resolution_card)
+        second["change_id"] = "change_resolve_station_company_again"
+        second["before"] = {
+            **second["before"],
+            "reference_id": "reference_station_company_again",
+            "connection_id": "connection_two",
+            "relationship": "knows",
+            "state": "former",
+            "context": "The station knew the company.",
+        }
+        second["after"] = {
+            "reference_id": "reference_station_company_again",
+            "action": "redirect",
+            "replacement_target_record_id": "record-other",
+        }
+        second["resolution"] = deepcopy(second["after"])
+        removal["diff"]["cards"].append(second)
+        self.assertTrue(source_snapshots_match(removal["diff"]))
 
     def test_removal_correction_rebinds_current_impact(self) -> None:
         correction = deepcopy(
@@ -729,6 +927,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             with self.subTest(route=route_id):
                 self.assertIn("proposal_approval_conflict", route["error_status"]["409"])
                 self.assertNotIn("proposal_approval_conflict", route["error_status"]["422"])
+                self.assertIn("proposal_validation_failure", route["error_status"]["422"])
         approval_route = next(
             item for item in self.routes["routes"] if item["id"] == "editor_proposal_approve"
         )
@@ -1016,6 +1215,22 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 },
             )
         )
+
+        extra_metadata = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        extra_metadata["diff"]["source_changes"][0]["before_source"] = extra_metadata["diff"]["source_changes"][0]["before_source"].replace(
+            "date: 2187-04-03\n---", "date: 2187-04-03\nextra: value\n---"
+        )
+        self.assertFalse(source_snapshots_match(extra_metadata["diff"]))
+
+        extra_section = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        extra_section["diff"]["source_changes"][0]["before_source"] = extra_section["diff"]["source_changes"][0]["before_source"].replace(
+            "## Connections\n", "## Extra\n\nUnreviewed content.\n\n## Connections\n"
+        )
+        self.assertFalse(source_snapshots_match(extra_section["diff"]))
 
     def test_approval_requests_bind_changes_without_source_snapshots(self) -> None:
         approval = next(item["payload"] for item in self.examples if item["name"] == "approval_request")
