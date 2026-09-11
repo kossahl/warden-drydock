@@ -515,7 +515,7 @@
           "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "editor_workflow_version": 8,
-        "proposal_payload_digest": "ed5fe0640589fbc8f37b5612e85f5bae756fc8c737e1932be636d9ccecab104f",
+        "proposal_payload_digest": "8bccadaf9f5c7c06777ddfffda3c1eb303b39c25c32d4356dd24124b3fa516a4",
         "mutation_kind": "edit",
         "record_bindings": [
           {
@@ -548,7 +548,7 @@
             "source_revision": "revision_12",
             "expected_campaign_head": "revision_12",
             "expected_editor_workflow_version": 8,
-            "diff_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014",
+            "diff_digest": "dd931cf48c8d8867f83eb2d70f349fd2e1919d51e0e9b86098702b5f6e1faf97",
             "authority_change_ids": [
               "change_edit_record"
             ],
@@ -583,7 +583,7 @@
         },
         "correction_of": null,
         "diff": {
-          "diff_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014",
+          "diff_digest": "dd931cf48c8d8867f83eb2d70f349fd2e1919d51e0e9b86098702b5f6e1faf97",
           "cards": [
             {
               "change_id": "change_edit_record",
@@ -676,17 +676,23 @@
                 {
                   "property": "displayed_name",
                   "before": "Synthetic Station",
-                  "after": "Synthetic Station Renamed"
+                  "after": "Synthetic Station Renamed",
+                  "before_present": true,
+                  "after_present": true
                 },
                 {
                   "property": "status",
                   "before": "review",
-                  "after": "canon"
+                  "after": "canon",
+                  "before_present": true,
+                  "after_present": true
                 },
                 {
                   "property": "authority",
                   "before": "preparation",
-                  "after": "canon"
+                  "after": "canon",
+                  "before_present": true,
+                  "after_present": true
                 },
                 {
                   "property": "visibility",
@@ -697,12 +703,16 @@
                   "after": {
                     "audience": "shared",
                     "warden_only": false
-                  }
+                  },
+                  "before_present": true,
+                  "after_present": true
                 },
                 {
                   "property": "sections.summary",
                   "before": "A quiet station.",
-                  "after": "A station with a public dock."
+                  "after": "A station with a public dock.",
+                  "before_present": true,
+                  "after_present": true
                 }
               ],
               "connection": null,
@@ -891,11 +901,11 @@
           "request_id": "request_approve",
           "operation": "editor_proposal_approve",
           "idempotency_key": "idem_approve",
-          "payload_digest": "91aefac53cbc7272e0844e7720304d310e41bee570f80834f6b3efa5c4e9bebc",
+          "payload_digest": "096a1b1109b869a220a5ee8ac619e9212ded4f65bbc2cc0fda597810a22865d3",
           "expected_revision": "revision_12",
           "expected_editor_workflow_version": 8,
           "subject_id": "proposal_editor",
-          "intent_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014"
+          "intent_digest": "dd931cf48c8d8867f83eb2d70f349fd2e1919d51e0e9b86098702b5f6e1faf97"
         },
         "proposal": {
           "proposal_id": "proposal_editor",
@@ -919,8 +929,8 @@
           "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "expected_editor_workflow_version": 8,
-        "proposal_payload_digest": "ed5fe0640589fbc8f37b5612e85f5bae756fc8c737e1932be636d9ccecab104f",
-        "diff_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014",
+        "proposal_payload_digest": "8bccadaf9f5c7c06777ddfffda3c1eb303b39c25c32d4356dd24124b3fa516a4",
+        "diff_digest": "dd931cf48c8d8867f83eb2d70f349fd2e1919d51e0e9b86098702b5f6e1faf97",
         "validation_status": "passed",
         "validation_digest": "aaa5a55d8171462baf808a301b41d3b15b1d0aff74e60b66ef0520e9e3889007",
         "record_bindings": [
@@ -967,7 +977,7 @@
           }
         ],
         "warden_confirmed": true,
-        "diff": {"diff_digest":"25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014","confirmed_change_ids":["change_edit_record","change_conn_add"],"confirmed_authority_change_ids":["change_edit_record"],"confirmed_visibility_change_ids":["change_edit_record"]},
+        "diff": {"diff_digest":"dd931cf48c8d8867f83eb2d70f349fd2e1919d51e0e9b86098702b5f6e1faf97","confirmed_change_ids":["change_edit_record","change_conn_add"],"confirmed_authority_change_ids":["change_edit_record"],"confirmed_visibility_change_ids":["change_edit_record"]},
         "affected_record_count": 1,
         "confirmed_change_ids": [
           "change_edit_record",
@@ -992,11 +1002,11 @@
           "request_id": "request_reject",
           "operation": "editor_proposal_reject",
           "idempotency_key": "idem_reject",
-          "payload_digest": "695443e3c6f7ef330d447ee2fde61fda81599bfefa78ca3cd892f3e0f91a3136",
+          "payload_digest": "5c1dc93f37641b7552e806270b61ba4aa22b3d2cebb2ccfb794cc21041fbdb4b",
           "expected_revision": "revision_12",
           "expected_editor_workflow_version": 8,
           "subject_id": "proposal_editor",
-          "intent_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014"
+          "intent_digest": "dd931cf48c8d8867f83eb2d70f349fd2e1919d51e0e9b86098702b5f6e1faf97"
         },
         "proposal": {
           "proposal_id": "proposal_editor",
@@ -1021,8 +1031,8 @@
           "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "expected_editor_workflow_version": 8,
-        "proposal_payload_digest": "ed5fe0640589fbc8f37b5612e85f5bae756fc8c737e1932be636d9ccecab104f",
-        "diff_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014",
+        "proposal_payload_digest": "8bccadaf9f5c7c06777ddfffda3c1eb303b39c25c32d4356dd24124b3fa516a4",
+        "diff_digest": "dd931cf48c8d8867f83eb2d70f349fd2e1919d51e0e9b86098702b5f6e1faf97",
         "validation_status": "passed",
         "validation_digest": "aaa5a55d8171462baf808a301b41d3b15b1d0aff74e60b66ef0520e9e3889007",
         "record_bindings": [
@@ -1082,11 +1092,11 @@
           "request_id": "request_reject_draft",
           "operation": "editor_proposal_reject",
           "idempotency_key": "idem_reject_draft",
-          "payload_digest": "8bfcbf222f0ffa5c79c7f633a1fe351dd2eefb48e7d3c2d51f4612dbca195bc8",
+          "payload_digest": "3cde9719a8c899ff4f73b810623c2182a5e2e25f4c13cb6714b97b0cd1f5f89d",
           "expected_revision": "revision_12",
           "expected_editor_workflow_version": 8,
           "subject_id": "proposal_editor",
-          "intent_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014"
+          "intent_digest": "dd931cf48c8d8867f83eb2d70f349fd2e1919d51e0e9b86098702b5f6e1faf97"
         },
         "proposal": {
           "proposal_id": "proposal_editor",
@@ -1110,8 +1120,8 @@
           "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "expected_editor_workflow_version": 8,
-        "proposal_payload_digest": "ed5fe0640589fbc8f37b5612e85f5bae756fc8c737e1932be636d9ccecab104f",
-        "diff_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014",
+        "proposal_payload_digest": "8bccadaf9f5c7c06777ddfffda3c1eb303b39c25c32d4356dd24124b3fa516a4",
+        "diff_digest": "dd931cf48c8d8867f83eb2d70f349fd2e1919d51e0e9b86098702b5f6e1faf97",
         "validation_status": "passed",
         "validation_digest": "aaa5a55d8171462baf808a301b41d3b15b1d0aff74e60b66ef0520e9e3889007",
         "record_bindings": [
@@ -1492,17 +1502,23 @@
           {
             "property": "displayed_name",
             "before": "Synthetic Station",
-            "after": "Synthetic Station Renamed"
+            "after": "Synthetic Station Renamed",
+            "before_present": true,
+            "after_present": true
           },
           {
             "property": "status",
             "before": "review",
-            "after": "canon"
+            "after": "canon",
+            "before_present": true,
+            "after_present": true
           },
           {
             "property": "authority",
             "before": "preparation",
-            "after": "canon"
+            "after": "canon",
+            "before_present": true,
+            "after_present": true
           },
           {
             "property": "visibility",
@@ -1513,12 +1529,16 @@
             "after": {
               "audience": "shared",
               "warden_only": false
-            }
+            },
+            "before_present": true,
+            "after_present": true
           },
           {
             "property": "sections.summary",
             "before": "A quiet station.",
-            "after": "A station with a public dock."
+            "after": "A station with a public dock.",
+            "before_present": true,
+            "after_present": true
           }
         ],
         "connection": null,

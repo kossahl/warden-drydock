@@ -23,9 +23,24 @@ OPERATION_PAYLOAD_PROJECTION = SEMANTIC_INVARIANTS["digest_projections"][
 DIGEST_PROJECTIONS = SEMANTIC_INVARIANTS["digest_projections"]
 
 
+def _normalize_text_values(value: object) -> object:
+    if isinstance(value, str):
+        return value.replace("\r\n", "\n").replace("\r", "\n")
+    if isinstance(value, dict):
+        return {
+            _normalize_text_values(key): _normalize_text_values(child)
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [_normalize_text_values(child) for child in value]
+    if isinstance(value, tuple):
+        return tuple(_normalize_text_values(child) for child in value)
+    return value
+
+
 def canonical_digest(value: object, *, ensure_ascii: bool = True) -> str:
     encoded = json.dumps(
-        value,
+        _normalize_text_values(value),
         ensure_ascii=ensure_ascii,
         separators=(",", ":"),
         sort_keys=True,
@@ -405,6 +420,13 @@ def _logical_id_failure(instance: dict, diff: dict | None = None) -> str | None:
 
 def _reference_resolution_binding_failure(diff: dict) -> tuple[str, str] | None:
     for index, card in enumerate(diff.get("cards", [])):
+        if card.get("kind") == "reference_resolution":
+            before = card.get("before")
+            if (
+                isinstance(before, dict)
+                and before.get("source_record_id") != card.get("subject_record_id")
+            ):
+                return "unsafe_binding", f"diff.cards.{index}.before.source_record_id"
         if (
             card.get("kind") == "reference_resolution"
             and card.get("resolution") != card.get("after")
@@ -416,12 +438,19 @@ def _reference_resolution_binding_failure(diff: dict) -> tuple[str, str] | None:
 def _record_property_changes(before: dict, after: dict) -> list[dict]:
     changes = []
     for property_name in ("displayed_name", "status", "authority", "visibility"):
-        if before.get(property_name) != after.get(property_name):
+        before_present = property_name in before
+        after_present = property_name in after
+        if (
+            before.get(property_name) != after.get(property_name)
+            or before_present != after_present
+        ):
             changes.append(
                 {
                     "property": property_name,
                     "before": before.get(property_name),
                     "after": after.get(property_name),
+                    "before_present": before_present,
+                    "after_present": after_present,
                 }
             )
     for collection, member_id, value_key in (
@@ -442,12 +471,16 @@ def _record_property_changes(before: dict, after: dict) -> list[dict]:
         for member_id in member_ids:
             before_value = before_members.get(member_id, missing)
             after_value = after_members.get(member_id, missing)
-            if before_value != after_value:
+            before_present = before_value is not missing
+            after_present = after_value is not missing
+            if before_value != after_value or before_present != after_present:
                 changes.append(
                     {
                         "property": f"{collection}.{member_id}",
                         "before": None if before_value is missing else before_value,
                         "after": None if after_value is missing else after_value,
+                        "before_present": before_present,
+                        "after_present": after_present,
                     }
                 )
     return changes
@@ -528,6 +561,54 @@ def _removal_redirect_failure(
             return "proposal_validation_failure", f"diff.cards.{index}.after.replacement_target_record_id"
         if "available_record_ids" in context and target not in available_record_ids:
             return "proposal_validation_failure", f"diff.cards.{index}.after.replacement_target_record_id"
+    return None
+
+
+def _removal_request_redirect_failure(
+    instance: dict,
+    impact: dict,
+    context: dict,
+) -> tuple[str, str] | None:
+    operation = instance.get("operation_request", {})
+    if not (
+        operation.get("operation") == "editor_record_remove"
+        or (
+            operation.get("operation") == "editor_proposal_correct"
+            and instance.get("mutation_kind") == "remove"
+        )
+    ):
+        return None
+
+    references = {}
+    if isinstance(impact, dict):
+        references.update(
+            {
+                reference.get("reference_id"): reference
+                for reference in impact.get("incoming_references", [])
+                if isinstance(reference, dict) and reference.get("reference_id")
+            }
+        )
+    removal_impact = context.get("removal_impact")
+    if isinstance(removal_impact, dict):
+        references.update(
+            {
+                reference.get("reference_id"): reference
+                for reference in removal_impact.get("incoming_references", [])
+                if isinstance(reference, dict) and reference.get("reference_id")
+            }
+        )
+
+    removed_record_id = instance.get("binding", {}).get("record_id")
+    available_record_ids = set(context.get("available_record_ids", []))
+    for index, resolution in enumerate(instance.get("resolutions", [])):
+        if resolution.get("action") != "redirect":
+            continue
+        target = resolution.get("replacement_target_record_id")
+        reference = references.get(resolution.get("reference_id"), {})
+        if target == removed_record_id or target == reference.get("target_record_id"):
+            return "proposal_validation_failure", f"resolutions.{index}.replacement_target_record_id"
+        if "available_record_ids" in context and target not in available_record_ids:
+            return "proposal_validation_failure", f"resolutions.{index}.replacement_target_record_id"
     return None
 
 
@@ -782,6 +863,46 @@ def _core_identity_failure(instance: dict) -> tuple[str, str] | None:
     return None
 
 
+def _core_approval_binding_failure(instance: dict) -> tuple[str, str] | None:
+    core = instance.get("core_proposal")
+    if not isinstance(core, dict):
+        return None
+    proposal = core.get("proposal")
+    validation = core.get("validation")
+    if not isinstance(proposal, dict) or not isinstance(validation, dict):
+        return None
+
+    approval_binding = core.get("approval_binding")
+    approval_state = proposal.get("status") in {"approving", "approved"}
+    if approval_state != isinstance(approval_binding, dict):
+        return "proposal_approval_conflict", "core_proposal.approval_binding"
+    if not isinstance(approval_binding, dict):
+        return None
+
+    for key in (
+        "proposal_id",
+        "proposal_version",
+        "diff_digest",
+        "base_revision",
+        "source_revision",
+        "expected_campaign_head",
+        "expected_editor_workflow_version",
+        "authority_change_ids",
+        "visibility_change_ids",
+    ):
+        if approval_binding.get(key) != proposal.get(key):
+            return "proposal_approval_conflict", f"core_proposal.approval_binding.{key}"
+    for key, proposal_key in (
+        ("validation_status", "status"),
+        ("validation_digest", "validation_digest"),
+    ):
+        if approval_binding.get(key) != validation.get(proposal_key):
+            return "proposal_approval_conflict", f"core_proposal.approval_binding.{key}"
+    if approval_binding.get("warden_confirmed") is not True:
+        return "proposal_approval_conflict", "core_proposal.approval_binding.warden_confirmed"
+    return None
+
+
 def _core_change_failure(instance: dict, diff: dict) -> tuple[str, str] | None:
     core = instance.get("core_proposal", {})
     proposal = core.get("proposal", {}) if isinstance(core, dict) else {}
@@ -864,6 +985,10 @@ def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str,
         return None
     if isinstance(loaded.get("payload"), dict):
         loaded = loaded["payload"]
+
+    approval_binding_failure = _core_approval_binding_failure(loaded)
+    if approval_binding_failure is not None:
+        return approval_binding_failure
 
     if isinstance(loaded.get("diff"), dict):
         resolution_failure = _reference_resolution_binding_failure(loaded["diff"])
@@ -1509,6 +1634,9 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     proposal_validation_failure = _proposal_validation_gate_failure(instance)
     if proposal_validation_failure is not None:
         return proposal_validation_failure
+    approval_binding_failure = _core_approval_binding_failure(instance)
+    if approval_binding_failure is not None:
+        return approval_binding_failure
     if instance.get("contract_name") == "editor_record_view":
         record = instance.get("record")
         if isinstance(record, dict):
@@ -1631,19 +1759,38 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
             return "proposal_validation_failure", "record.ownership"
         if record.get("authority") != _authority_for_status(record.get("status")):
             return "proposal_validation_failure", "record.authority"
+        binding = instance.get("binding", {})
+        if binding.get("record_id") != record.get("record_id"):
+            return "proposal_validation_failure", "binding.record_id"
+        if binding.get("record_digest") != record.get("content_digest"):
+            return "proposal_validation_failure", "binding.record_digest"
         reference_policy_failure = _removal_reference_policy_failure(instance)
         if reference_policy_failure is not None:
             return reference_policy_failure
     logical_id_failure = _logical_id_failure(instance, instance.get("diff"))
     if logical_id_failure is not None:
         return "proposal_validation_failure", logical_id_failure
+    required_reference_ids = set()
     required_reference_id = impact.get("required_reference_id")
+    if required_reference_id and not impact.get("permitted_unresolved"):
+        required_reference_ids.add(required_reference_id)
+    for reference in impact.get("incoming_references", []):
+        if (
+            isinstance(reference, dict)
+            and reference.get("resolution_required") is True
+            and reference.get("permitted_unresolved") is not True
+        ):
+            required_reference_ids.add(reference.get("reference_id"))
     resolution_ids = [item.get("reference_id") for item in instance.get("resolutions", [])]
     if len(resolution_ids) != len(set(resolution_ids)):
         return "proposal_validation_failure", "resolutions"
     resolutions = set(resolution_ids)
-    if required_reference_id and not impact.get("permitted_unresolved") and required_reference_id not in resolutions:
+    if "resolutions" in instance and required_reference_ids - resolutions:
         return "incomplete_removal_resolution", "resolutions"
+
+    redirect_failure = _removal_request_redirect_failure(instance, impact, context)
+    if redirect_failure is not None:
+        return redirect_failure
 
     diff = instance.get("diff")
     resolution_policy_failure = _resolution_policy_failure(instance, impact, diff)
@@ -1889,6 +2036,8 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "property": "fields.current_status",
                 "before": "old",
                 "after": "new",
+                "before_present": True,
+                "after_present": True,
             })),
         )
         self.assertEqual(
@@ -1897,6 +2046,8 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "property": "status",
                 "before": {"classification": "unknown", "value": "legacy-state"},
                 "after": "review",
+                "before_present": True,
+                "after_present": True,
             })),
         )
 
@@ -2455,7 +2606,59 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         card = proposal["diff"]["cards"][0]
         card["after"]["fields"].append({"field_id": "optional", "value": None})
         self.assertEqual(
+            {
+                "property": "fields.optional",
+                "before": None,
+                "after": None,
+                "before_present": False,
+                "after_present": True,
+            },
+            next(
+                change
+                for change in _record_property_changes(card["before"], card["after"])
+                if change["property"] == "fields.optional"
+            ),
+        )
+        self.assertEqual(
             ("mutation_consistency", "diff.cards.0.property_changes"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
+        before = deepcopy(card["after"])
+        after = deepcopy(card["after"])
+        after["fields"] = [
+            field for field in after["fields"] if field["field_id"] != "optional"
+        ]
+        self.assertEqual(
+            {
+                "property": "fields.optional",
+                "before": None,
+                "after": None,
+                "before_present": True,
+                "after_present": False,
+            },
+            _record_property_changes(before, after)[-1],
+        )
+
+    def test_reference_resolution_cards_bind_source_subject(self) -> None:
+        proposal = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_proposal_with_outgoing_connections"
+            )
+        )
+        card_index = next(
+            index
+            for index, card in enumerate(proposal["diff"]["cards"])
+            if card["kind"] == "reference_resolution"
+        )
+        proposal["diff"]["cards"][card_index]["before"]["source_record_id"] = "record-other"
+        self.assertEqual(
+            (
+                "unsafe_binding",
+                f"diff.cards.{card_index}.before.source_record_id",
+            ),
             evaluate_semantic_failure({"instance": proposal}),
         )
 
@@ -2488,6 +2691,60 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         self.assertEqual(
             ("proposal_validation_failure", "validation.status"),
             evaluate_semantic_failure({"instance": proposal}),
+        )
+
+    def test_embedded_proposals_bind_approval_state_and_identity(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        core = proposal["core_proposal"]
+        core_proposal = core["proposal"]
+        core_proposal["status"] = "approved"
+        core["approval_binding"] = {
+            "proposal_id": core_proposal["proposal_id"],
+            "proposal_version": core_proposal["proposal_version"],
+            "diff_digest": core_proposal["diff_digest"],
+            "base_revision": core_proposal["base_revision"],
+            "source_revision": core_proposal["source_revision"],
+            "expected_campaign_head": core_proposal["expected_campaign_head"],
+            "expected_editor_workflow_version": core_proposal[
+                "expected_editor_workflow_version"
+            ],
+            "validation_status": core["validation"]["status"],
+            "validation_digest": core["validation"]["validation_digest"],
+            "authority_change_ids": core_proposal["authority_change_ids"],
+            "visibility_change_ids": core_proposal["visibility_change_ids"],
+            "warden_confirmed": True,
+        }
+        proposal["proposal_payload_digest"] = projection_digest(
+            proposal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertIsNone(evaluate_semantic_failure({"instance": proposal}))
+
+        invalid = deepcopy(proposal)
+        invalid["core_proposal"]["approval_binding"]["proposal_id"] = "proposal-other"
+        invalid["proposal_payload_digest"] = projection_digest(
+            invalid,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            (
+                "proposal_approval_conflict",
+                "core_proposal.approval_binding.proposal_id",
+            ),
+            evaluate_semantic_failure({"instance": invalid}),
+        )
+
+        invalid = deepcopy(proposal)
+        invalid["core_proposal"]["proposal"]["status"] = "needs_review"
+        invalid["proposal_payload_digest"] = projection_digest(
+            invalid,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            ("proposal_approval_conflict", "core_proposal.approval_binding"),
+            evaluate_semantic_failure({"instance": invalid}),
         )
 
         proposal = deepcopy(
@@ -2990,6 +3247,52 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             }),
         )
 
+        impact = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "removal_impact")
+        )
+        removal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "remove_record_request")
+        )
+        removal["resolutions"] = []
+        _refresh_operation_payload_digest(removal)
+        self.assertEqual(
+            ("incomplete_removal_resolution", "resolutions"),
+            evaluate_semantic_failure({"instance": removal, "impact": impact}),
+        )
+
+        for target in ("record-company", "record-missing"):
+            removal = deepcopy(
+                next(item["payload"] for item in self.examples if item["name"] == "remove_record_request")
+            )
+            removal["resolutions"][0]["replacement_target_record_id"] = target
+            _refresh_operation_payload_digest(removal)
+            with self.subTest(target=target):
+                self.assertEqual(
+                    (
+                        "proposal_validation_failure",
+                        "resolutions.0.replacement_target_record_id",
+                    ),
+                    evaluate_semantic_failure({
+                        "instance": removal,
+                        "impact": impact,
+                        "semantic_context": {
+                            "available_record_ids": ["record-station", "record-ship"]
+                        },
+                    }),
+                )
+
+        removal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "remove_record_request")
+        )
+        _refresh_operation_payload_digest(removal)
+        self.assertIsNone(evaluate_semantic_failure({
+            "instance": removal,
+            "impact": impact,
+            "semantic_context": {
+                "available_record_ids": ["record-station", "record-ship"]
+            },
+        }))
+
     def test_corrections_bind_prior_proposal_identity(self) -> None:
         correction = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "correction_request")
@@ -3062,6 +3365,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         impact["record"]["connections"] = [connection]
         impact["outgoing_connections"] = [deepcopy(connection)]
         impact["record"]["content_digest"] = record_content_digest(impact["record"])
+        impact["binding"]["record_digest"] = impact["record"]["content_digest"]
         impact["impact_digest"] = projection_digest(
             impact,
             DIGEST_PROJECTIONS["impact_digest"],
@@ -3117,6 +3421,24 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({"instance": impact}),
         )
 
+        impact = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "removal_impact")
+        )
+        impact["binding"]["record_id"] = "record-station"
+        self.assertEqual(
+            ("proposal_validation_failure", "binding.record_id"),
+            evaluate_semantic_failure({"instance": impact}),
+        )
+
+        impact = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "removal_impact")
+        )
+        impact["binding"]["record_digest"] = "f" * 64
+        self.assertEqual(
+            ("proposal_validation_failure", "binding.record_digest"),
+            evaluate_semantic_failure({"instance": impact}),
+        )
+
     def test_digest_projections_are_deterministic(self) -> None:
         head = next(item["payload"] for item in self.examples if item["name"] == "head_record_view")
         record = deepcopy(head["record"])
@@ -3127,6 +3449,10 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         self.assertEqual(first, record_content_digest(record))
         record["displayed_name"] = "A different station"
         self.assertNotEqual(first, record_content_digest(record))
+        self.assertEqual(
+            canonical_digest({"nested": {"body": "a\r\nb", "items": ["c\rd"]}}),
+            canonical_digest({"nested": {"body": "a\nb", "items": ["c\nd"]}}),
+        )
 
     def test_positive_examples_match_declared_digest_projections(self) -> None:
         projections = self.invariants["digest_projections"]

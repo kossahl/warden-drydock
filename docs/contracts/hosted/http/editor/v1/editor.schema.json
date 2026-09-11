@@ -893,7 +893,9 @@
       "required": [
         "property",
         "before",
-        "after"
+        "after",
+        "before_present",
+        "after_present"
       ],
       "properties": {
         "property": {
@@ -907,6 +909,12 @@
         },
         "after": {
           "$ref": "#/$defs/property_value"
+        },
+        "before_present": {
+          "type": "boolean"
+        },
+        "after_present": {
+          "type": "boolean"
         }
       }
     },
