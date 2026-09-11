@@ -276,6 +276,22 @@ def _declared_digest_failure(instance: dict) -> tuple[str, str] | None:
         ):
             return "idempotency_digest_conflict", "validation.validation_digest"
 
+    core = instance.get("core_proposal")
+    core_proposal = core.get("proposal") if isinstance(core, dict) else None
+    core_validation = core.get("validation") if isinstance(core, dict) else None
+    if (
+        isinstance(core_proposal, dict)
+        and isinstance(diff, dict)
+        and core_proposal.get("diff_digest") != diff.get("diff_digest")
+    ):
+        return "unsafe_binding", "core_proposal.proposal.diff_digest"
+    if (
+        isinstance(core_validation, dict)
+        and isinstance(validation, dict)
+        and core_validation.get("validation_digest") != validation.get("validation_digest")
+    ):
+        return "unsafe_binding", "core_proposal.validation.validation_digest"
+
     if instance.get("contract_name") == "editor_proposal_view":
         if instance.get("proposal_payload_digest") != projection_digest(
             instance, DIGEST_PROJECTIONS["proposal_payload_digest"]
@@ -394,6 +410,68 @@ def _reference_resolution_binding_failure(diff: dict) -> tuple[str, str] | None:
     return None
 
 
+def _record_property_changes(before: dict, after: dict) -> list[dict]:
+    changes = []
+    for property_name in ("displayed_name", "status", "authority", "visibility"):
+        if before.get(property_name) != after.get(property_name):
+            changes.append(
+                {
+                    "property": property_name,
+                    "before": before.get(property_name),
+                    "after": after.get(property_name),
+                }
+            )
+    for collection, member_id, value_key in (
+        ("fields", "field_id", "value"),
+        ("sections", "section_id", "body"),
+    ):
+        before_members = {
+            item[member_id]: item[value_key] for item in before.get(collection, [])
+        }
+        after_members = {
+            item[member_id]: item[value_key] for item in after.get(collection, [])
+        }
+        member_ids = list(before_members)
+        member_ids.extend(
+            member_id for member_id in after_members if member_id not in before_members
+        )
+        for member_id in member_ids:
+            if before_members.get(member_id) != after_members.get(member_id):
+                changes.append(
+                    {
+                        "property": f"{collection}.{member_id}",
+                        "before": before_members.get(member_id),
+                        "after": after_members.get(member_id),
+                    }
+                )
+    return changes
+
+
+def _record_property_change_failure(diff: dict) -> tuple[str, str] | None:
+    for index, card in enumerate(diff.get("cards", [])):
+        if card.get("kind") != "record_updated":
+            continue
+        before = card.get("before")
+        after = card.get("after")
+        if isinstance(before, dict) and isinstance(after, dict):
+            if card.get("property_changes") != _record_property_changes(before, after):
+                return "mutation_consistency", f"diff.cards.{index}.property_changes"
+    return None
+
+
+def _record_authority_failure(diff: dict) -> tuple[str, str] | None:
+    for index, card in enumerate(diff.get("cards", [])):
+        for side in ("before", "after"):
+            record = card.get(side)
+            if (
+                isinstance(record, dict)
+                and "record_id" in record
+                and record.get("authority") != _authority_for_status(record.get("status"))
+            ):
+                return "invalid_authority_transition", f"diff.cards.{index}.{side}.authority"
+    return None
+
+
 def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str, str] | None:
     loaded = context.get("loaded_proposal")
     if not isinstance(loaded, dict):
@@ -405,6 +483,20 @@ def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str,
         resolution_failure = _reference_resolution_binding_failure(loaded["diff"])
         if resolution_failure is not None:
             return resolution_failure
+
+    if instance.get("operation_request", {}).get("operation") == "editor_proposal_approve":
+        validation = loaded.get("validation")
+        if (
+            isinstance(validation, dict)
+            and validation.get("status") == "passed"
+            and validation.get("error_count") == 0
+            and any(
+                finding.get("severity") == "warning"
+                for finding in validation.get("findings", [])
+                if isinstance(finding, dict)
+            )
+        ):
+            return "proposal_validation_failure", "validation.findings"
 
     expected = {}
     direct_action = "operation_request" in loaded or loaded.get("contract_name") in {
@@ -1040,6 +1132,12 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         resolution_failure = _reference_resolution_binding_failure(diff)
         if resolution_failure is not None:
             return resolution_failure
+        property_change_failure = _record_property_change_failure(diff)
+        if property_change_failure is not None:
+            return property_change_failure
+        authority_failure = _record_authority_failure(diff)
+        if authority_failure is not None:
+            return authority_failure
         member_id_failure = _diff_record_member_id_failure(diff)
         if member_id_failure is not None:
             return "proposal_validation_failure", member_id_failure
@@ -1557,6 +1655,31 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             }),
         )
 
+    def test_loaded_approval_rejects_staged_warnings(self) -> None:
+        action = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "approval_request")
+        )
+        loaded = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        loaded["validation"]["findings"].append(
+            {
+                "finding_id": "finding-warning",
+                "code": "needs_review",
+                "severity": "warning",
+                "location": "record",
+                "message": "Review this staged warning before approval.",
+                "retryable": False,
+            }
+        )
+        self.assertEqual(
+            ("proposal_validation_failure", "validation.findings"),
+            evaluate_semantic_failure({
+                "instance": action,
+                "semantic_context": {"loaded_proposal": loaded},
+            }),
+        )
+
     def test_operation_payload_digest_is_recomputed_before_first_submission(self) -> None:
         for name in (
             "edit_record_with_connections_request",
@@ -1605,6 +1728,24 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         proposal["validation"]["error_count"] = 1
         self.assertEqual(
             ("idempotency_digest_conflict", "validation.validation_digest"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["core_proposal"]["proposal"]["diff_digest"] = "f" * 64
+        self.assertEqual(
+            ("unsafe_binding", "core_proposal.proposal.diff_digest"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["core_proposal"]["validation"]["validation_digest"] = "f" * 64
+        self.assertEqual(
+            ("unsafe_binding", "core_proposal.validation.validation_digest"),
             evaluate_semantic_failure({"instance": proposal}),
         )
 
@@ -1664,6 +1805,27 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         proposal["diff"]["cards"].append(duplicate)
         self.assertEqual(
             ("proposal_validation_failure", "diff.cards.record_mutation"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
+    def test_record_mutation_cards_derive_property_changes_and_authority(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["diff"]["cards"][0]["property_changes"] = []
+        self.assertEqual(
+            ("mutation_consistency", "diff.cards.0.property_changes"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        card = proposal["diff"]["cards"][0]
+        card["after"]["status"] = "review"
+        card["property_changes"] = _record_property_changes(card["before"], card["after"])
+        self.assertEqual(
+            ("invalid_authority_transition", "diff.cards.0.after.authority"),
             evaluate_semantic_failure({"instance": proposal}),
         )
 
