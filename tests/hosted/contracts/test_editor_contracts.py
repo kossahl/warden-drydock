@@ -86,6 +86,207 @@ def projection_digest(value: dict, definition: dict) -> str:
     return canonical_digest(projection)
 
 
+def _operation_payload_digest_failure(instance: dict) -> tuple[str, str] | None:
+    operation = instance.get("operation_request")
+    if not isinstance(operation, dict):
+        return None
+    if operation.get("payload_digest") != projection_digest(
+        instance,
+        OPERATION_PAYLOAD_PROJECTION,
+    ):
+        return "replay_mismatch", "operation_request.payload_digest"
+    return None
+
+
+def _refresh_operation_payload_digest(instance: dict) -> None:
+    instance["operation_request"]["payload_digest"] = projection_digest(
+        instance,
+        OPERATION_PAYLOAD_PROJECTION,
+    )
+
+
+def _duplicate_ids(items: object, member_id: str | None, path: str) -> str | None:
+    if not isinstance(items, list):
+        return None
+    seen = set()
+    for index, item in enumerate(items):
+        value = item if member_id is None else item.get(member_id)
+        if value in seen:
+            suffix = f".{member_id}" if member_id is not None else ""
+            return f"{path}.{index}{suffix}"
+        seen.add(value)
+    return None
+
+
+def _logical_id_failure(instance: dict, diff: dict | None = None) -> str | None:
+    core = instance.get("core_proposal", {})
+    core_proposal = core.get("proposal", {}) if isinstance(core, dict) else {}
+    approval_binding = core.get("approval_binding") if isinstance(core, dict) else None
+    if not isinstance(approval_binding, dict):
+        approval_binding = {}
+    for items, member_id, path in (
+        (instance.get("record_bindings"), "record_id", "record_bindings"),
+        (instance.get("incoming_references"), "reference_id", "incoming_references"),
+        (instance.get("authority_outcome"), "change_id", "authority_outcome"),
+        (instance.get("visibility_outcome"), "change_id", "visibility_outcome"),
+        (core_proposal.get("changes"), "change_id", "core_proposal.proposal.changes"),
+        (core_proposal.get("authority_change_ids"), None, "core_proposal.proposal.authority_change_ids"),
+        (core_proposal.get("visibility_change_ids"), None, "core_proposal.proposal.visibility_change_ids"),
+        (approval_binding.get("authority_change_ids"), None, "core_proposal.approval_binding.authority_change_ids"),
+        (approval_binding.get("visibility_change_ids"), None, "core_proposal.approval_binding.visibility_change_ids"),
+    ):
+        failure = _duplicate_ids(items, member_id, path)
+        if failure is not None:
+            return failure
+
+    if isinstance(diff, dict):
+        for items, member_id, path in (
+            (diff.get("cards"), "change_id", "diff.cards"),
+            (diff.get("source_changes"), "change_id", "diff.source_changes"),
+            (diff.get("authority_changes"), "change_id", "diff.authority_changes"),
+            (diff.get("visibility_changes"), "change_id", "diff.visibility_changes"),
+        ):
+            failure = _duplicate_ids(items, member_id, path)
+            if failure is not None:
+                return failure
+        resolution_references = [
+            card.get("before")
+            for card in diff.get("cards", [])
+            if card.get("kind") == "reference_resolution"
+        ]
+        failure = _duplicate_ids(
+            resolution_references,
+            "reference_id",
+            "diff.cards.reference_resolution.before",
+        )
+        if failure is not None:
+            return failure
+
+    for items, member_id, path in (
+        (instance.get("confirmed_change_ids"), None, "confirmed_change_ids"),
+        (instance.get("confirmed_authority_change_ids"), None, "confirmed_authority_change_ids"),
+        (instance.get("confirmed_visibility_change_ids"), None, "confirmed_visibility_change_ids"),
+    ):
+        failure = _duplicate_ids(items, member_id, path)
+        if failure is not None:
+            return failure
+    return None
+
+
+def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str, str] | None:
+    loaded = context.get("loaded_proposal")
+    if not isinstance(loaded, dict):
+        return None
+    if isinstance(loaded.get("payload"), dict):
+        loaded = loaded["payload"]
+
+    expected = {}
+    direct_action = "operation_request" in loaded or loaded.get("contract_name") in {
+        "editor_proposal_approval_request",
+        "editor_proposal_rejection_request",
+    }
+    direct_keys = (
+        "proposal",
+        "proposal_status",
+        "mutation_kind",
+        "source_revision",
+        "base_revision",
+        "expected_campaign_head",
+        "expected_editor_workflow_version",
+        "proposal_payload_digest",
+        "diff_digest",
+        "validation_status",
+        "validation_digest",
+        "record_bindings",
+        "impact_digest",
+        "impact_binding",
+        "resolutions",
+        "authority_outcome",
+        "visibility_outcome",
+    )
+    if direct_action:
+        direct_keys += (
+            "diff",
+            "affected_record_count",
+            "confirmed_change_ids",
+            "confirmed_authority_change_ids",
+            "confirmed_visibility_change_ids",
+        )
+    for key in direct_keys:
+        if key in loaded:
+            expected[key] = loaded[key]
+
+    if "proposal" not in expected and {
+        "proposal_id",
+        "proposal_version",
+    }.issubset(loaded):
+        expected["proposal"] = {
+            "proposal_id": loaded["proposal_id"],
+            "proposal_version": loaded["proposal_version"],
+        }
+
+    core = loaded.get("core_proposal", {})
+    core_proposal = core.get("proposal", {}) if isinstance(core, dict) else {}
+    if isinstance(core_proposal, dict):
+        if "proposal_status" not in expected and "status" in core_proposal:
+            expected["proposal_status"] = core_proposal["status"]
+        if "proposal" not in expected and {
+            "proposal_id",
+            "proposal_version",
+        }.issubset(core_proposal):
+            expected["proposal"] = {
+                "proposal_id": core_proposal["proposal_id"],
+                "proposal_version": core_proposal["proposal_version"],
+            }
+
+    view_fields = {
+        "editor_workflow_version": "expected_editor_workflow_version",
+        "validation": "validation_status",
+    }
+    for loaded_key, action_key in view_fields.items():
+        value = loaded.get(loaded_key)
+        if loaded_key == "validation" and isinstance(value, dict):
+            expected[action_key] = value.get("status")
+            expected["validation_digest"] = value.get("validation_digest")
+        elif action_key not in expected and loaded_key in loaded:
+            expected[action_key] = value
+    if isinstance(loaded.get("diff"), dict):
+        loaded_diff = loaded["diff"]
+        if "diff_digest" not in expected:
+            expected["diff_digest"] = loaded_diff.get("diff_digest")
+        if "affected_record_count" not in expected:
+            expected["affected_record_count"] = loaded_diff.get("affected_record_count")
+        if not direct_action and "diff" not in expected:
+            expected["diff"] = {
+                "diff_digest": loaded_diff.get("diff_digest"),
+                "confirmed_change_ids": [
+                    card.get("change_id") for card in loaded_diff.get("cards", [])
+                ],
+                "confirmed_authority_change_ids": [
+                    change.get("change_id")
+                    for change in loaded.get("authority_outcome", [])
+                ],
+                "confirmed_visibility_change_ids": [
+                    change.get("change_id")
+                    for change in loaded.get("visibility_outcome", [])
+                ],
+            }
+
+    action_proposal = instance.get("proposal", {})
+    expected_proposal = expected.get("proposal")
+    if isinstance(action_proposal, dict) and isinstance(expected_proposal, dict):
+        if action_proposal.get("proposal_id") != expected_proposal.get("proposal_id"):
+            return "proposal_approval_conflict", "proposal.proposal_id"
+        if action_proposal.get("proposal_version") != expected_proposal.get("proposal_version"):
+            return "proposal_approval_conflict", "proposal.proposal_version"
+    for key, expected_value in expected.items():
+        if key == "proposal":
+            continue
+        if key in instance and instance[key] != expected_value:
+            return "proposal_approval_conflict", key
+    return None
+
+
 def _record_member_id_failure(record: dict, path: str) -> str | None:
     for collection, member_id in (
         ("fields", "field_id"),
@@ -468,17 +669,23 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     if isinstance(candidate, dict) and candidate.get("record_id") != binding.get("record_id"):
         return "unsafe_binding", "candidate.record_id"
 
+    context = fixture.get("semantic_context", {})
+    if operation.get("operation") in {
+        "editor_proposal_approve",
+        "editor_proposal_reject",
+    }:
+        failure = _loaded_proposal_action_failure(instance, context)
+        if failure is not None:
+            return failure
+
     receipt = fixture.get("stored_receipt")
     if receipt and receipt.get("idempotency_key") == operation.get("idempotency_key"):
-        if operation.get("payload_digest") != projection_digest(
-            instance,
-            OPERATION_PAYLOAD_PROJECTION,
-        ):
-            return "replay_mismatch", "operation_request.payload_digest"
+        digest_failure = _operation_payload_digest_failure(instance)
+        if digest_failure is not None:
+            return digest_failure
         if receipt.get("payload_digest") != operation.get("payload_digest"):
             return "replay_mismatch", "operation_request.payload_digest"
 
-    context = fixture.get("semantic_context", {})
     base_revision = bound_revision if isinstance(bound_revision, dict) else {}
     if context.get("current_head_revision") != base_revision.get("revision_id"):
         if "current_head_revision" in context:
@@ -545,6 +752,9 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
             return "proposal_validation_failure", "impact_digest"
 
     impact = fixture.get("impact", {})
+    logical_id_failure = _logical_id_failure(instance, instance.get("diff"))
+    if logical_id_failure is not None:
+        return "proposal_validation_failure", logical_id_failure
     required_reference_id = impact.get("required_reference_id")
     resolution_ids = [item.get("reference_id") for item in instance.get("resolutions", [])]
     if len(resolution_ids) != len(set(resolution_ids)):
@@ -588,26 +798,75 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
                 adapter_definition=context.get("adapter_definition"),
             ):
                 return "mutation_consistency", "diff.source_changes"
-        removed_card = next(
-            (card for card in diff.get("cards", []) if card.get("kind") == "record_removed"),
-            None,
-        )
-        if removed_card:
-            expected = {
+        expected_connections = {}
+        for record_card in diff.get("cards", []):
+            if record_card.get("kind") not in {
+                "record_created",
+                "record_updated",
+                "record_removed",
+            }:
+                continue
+            before = record_card.get("before")
+            after = record_card.get("after")
+            before_connections = {
                 connection["connection_id"]: connection
-                for connection in removed_card.get("before", {}).get("connections", [])
+                for connection in (before or {}).get("connections", [])
             }
-            actual_cards = [
-                card for card in diff.get("cards", []) if card.get("kind") == "connection_removed"
-            ]
-            actual = {
-                card["connection"]["connection_id"]: card["connection"]
-                for card in actual_cards
+            after_connections = {
+                connection["connection_id"]: connection
+                for connection in (after or {}).get("connections", [])
             }
-            if set(expected) != set(actual):
-                return "mutation_consistency", "diff.cards.connection_delta"
-            if any(expected[key] != actual[key] for key in expected):
-                return "mutation_consistency", "diff.cards.connection"
+            for connection_id in before_connections.keys() - after_connections.keys():
+                expected_connections[
+                    (record_card["subject_record_id"], "connection_removed", connection_id)
+                ] = before_connections[connection_id]
+            for connection_id in after_connections.keys() - before_connections.keys():
+                expected_connections[
+                    (record_card["subject_record_id"], "connection_added", connection_id)
+                ] = after_connections[connection_id]
+            for connection_id in before_connections.keys() & after_connections.keys():
+                if before_connections[connection_id] != after_connections[connection_id]:
+                    expected_connections[
+                        (record_card["subject_record_id"], "connection_updated", connection_id)
+                    ] = {
+                        "before": before_connections[connection_id],
+                        "after": after_connections[connection_id],
+                    }
+
+        actual_connections = {}
+        for card in diff.get("cards", []):
+            if card.get("kind") not in {
+                "connection_added",
+                "connection_updated",
+                "connection_removed",
+            }:
+                continue
+            connection = card.get("connection", {})
+            if card["kind"] == "connection_updated":
+                connection_id = connection.get("before", {}).get("connection_id")
+            else:
+                connection_id = connection.get("connection_id")
+            actual_connections[
+                (card["subject_record_id"], card["kind"], connection_id)
+            ] = connection
+        connection_card_count = sum(
+            card.get("kind") in {
+                "connection_added",
+                "connection_updated",
+                "connection_removed",
+            }
+            for card in diff.get("cards", [])
+        )
+        if (
+            len(actual_connections) != connection_card_count
+            or set(expected_connections) != set(actual_connections)
+        ):
+            return "mutation_consistency", "diff.cards.connection_delta"
+        if any(
+            expected_connections[key] != actual_connections[key]
+            for key in expected_connections
+        ):
+            return "mutation_consistency", "diff.cards.connection"
 
     if instance.get("contract_name") == "editor_removal_impact":
         record_connections = instance.get("record", {}).get("connections", [])
@@ -621,6 +880,9 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         ):
             return "mutation_consistency", "outgoing_connections"
 
+    digest_failure = _operation_payload_digest_failure(instance)
+    if digest_failure is not None:
+        return digest_failure
     return None
 
 
@@ -885,6 +1147,122 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                     ),
                     evaluate_semantic_failure({"instance": invalid}),
                 )
+
+    def test_logical_ids_are_unique_across_bindings_cards_outcomes_and_references(self) -> None:
+        proposal = next(
+            item["payload"] for item in self.examples if item["name"] == "editor_proposal_view"
+        )
+        duplicate_cases = []
+
+        invalid = deepcopy(proposal)
+        invalid["diff"]["cards"][1]["change_id"] = invalid["diff"]["cards"][0]["change_id"]
+        duplicate_cases.append((invalid, "diff.cards.1.change_id"))
+
+        for collection in ("authority_changes", "visibility_changes"):
+            invalid = deepcopy(proposal)
+            copied = deepcopy(invalid["diff"][collection][0])
+            copied["record_id"] = "record-other"
+            invalid["diff"][collection].append(copied)
+            duplicate_cases.append((invalid, f"diff.{collection}.1.change_id"))
+
+        for collection in ("authority_outcome", "visibility_outcome"):
+            invalid = deepcopy(proposal)
+            copied = deepcopy(invalid[collection][0])
+            copied["record_id"] = "record-other"
+            invalid[collection].append(copied)
+            duplicate_cases.append((invalid, f"{collection}.1.change_id"))
+
+        invalid = deepcopy(proposal)
+        invalid["core_proposal"]["proposal"]["changes"][1]["change_id"] = (
+            invalid["core_proposal"]["proposal"]["changes"][0]["change_id"]
+        )
+        invalid["core_proposal"]["proposal"]["changes"][1]["content_digest"] = "f" * 64
+        duplicate_cases.append((invalid, "core_proposal.proposal.changes.1.change_id"))
+
+        invalid = deepcopy(proposal)
+        copied = deepcopy(invalid["record_bindings"][0])
+        copied["record_digest"] = "f" * 64
+        invalid["record_bindings"].append(copied)
+        duplicate_cases.append((invalid, "record_bindings.1.record_id"))
+
+        impact = next(item["payload"] for item in self.examples if item["name"] == "removal_impact")
+        invalid = deepcopy(impact)
+        copied = deepcopy(invalid["incoming_references"][0])
+        copied["connection_id"] = "connection_two"
+        invalid["incoming_references"].append(copied)
+        duplicate_cases.append((invalid, "incoming_references.1.reference_id"))
+
+        for invalid, path in duplicate_cases:
+            with self.subTest(path=path):
+                self.assertEqual(
+                    ("proposal_validation_failure", path),
+                    evaluate_semantic_failure({"instance": invalid}),
+                )
+
+    def test_action_requests_bind_to_the_loaded_proposal(self) -> None:
+        loaded = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        for name in ("approval_request", "rejection_request"):
+            action = deepcopy(next(item["payload"] for item in self.examples if item["name"] == name))
+            with self.subTest(action=name):
+                self.assertIsNone(
+                    evaluate_semantic_failure({
+                        "instance": action,
+                        "semantic_context": {"loaded_proposal": loaded},
+                    })
+                )
+                mismatched = deepcopy(loaded)
+                mismatched["proposal_version"] += 1
+                self.assertEqual(
+                    ("proposal_approval_conflict", "proposal.proposal_version"),
+                    evaluate_semantic_failure({
+                        "instance": action,
+                        "semantic_context": {"loaded_proposal": mismatched},
+                    }),
+                )
+
+        action = deepcopy(next(item["payload"] for item in self.examples if item["name"] == "approval_request"))
+        mismatched = deepcopy(action)
+        mismatched["base_revision"] = {
+            **mismatched["base_revision"],
+            "revision_id": "revision_13",
+        }
+        self.assertEqual(
+            ("proposal_approval_conflict", "base_revision"),
+            evaluate_semantic_failure({
+                "instance": action,
+                "semantic_context": {"loaded_proposal": mismatched},
+            }),
+        )
+
+    def test_operation_payload_digest_is_recomputed_before_first_submission(self) -> None:
+        for name in (
+            "edit_record_with_connections_request",
+            "approval_request",
+            "rejection_request",
+        ):
+            invalid = deepcopy(next(item["payload"] for item in self.examples if item["name"] == name))
+            invalid["operation_request"]["payload_digest"] = "0" * 64
+            with self.subTest(operation=name):
+                self.assertEqual(
+                    ("replay_mismatch", "operation_request.payload_digest"),
+                    evaluate_semantic_failure({"instance": invalid}),
+                )
+
+    def test_ordinary_connection_cards_cover_every_record_delta(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["diff"]["cards"] = [
+            card
+            for card in proposal["diff"]["cards"]
+            if card["kind"] != "connection_added"
+        ]
+        self.assertEqual(
+            ("mutation_consistency", "diff.cards.connection_delta"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
 
     def test_operation_revision_workflow_and_empty_target_set_are_bound(self) -> None:
         edit = deepcopy(
@@ -1168,6 +1546,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             "current_head_revision": current_revision["revision_id"],
             "current_removal_impact_digest": current_impact_digest,
         }
+        _refresh_operation_payload_digest(correction)
         self.assertIsNone(evaluate_semantic_failure({"instance": correction, "semantic_context": context}))
 
         correction["impact_binding"]["binding"]["expected_editor_workflow_version"] = 7
