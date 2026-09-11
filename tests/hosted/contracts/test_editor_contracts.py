@@ -4,6 +4,7 @@ from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
+import re
 import unittest
 
 from jsonschema import Draft202012Validator
@@ -117,6 +118,38 @@ def _adapter_record_vocabulary_failure(
     for index, section in enumerate(record.get("sections", [])):
         if section.get("section_id") not in allowed_sections:
             return f"{path}.sections.{index}.section_id"
+    metadata = {
+        "id": record.get("record_id"),
+        "type": record_type,
+        "status": record.get("status"),
+        "ownership": record.get("ownership"),
+        "name": record.get("displayed_name"),
+        "visibility": record.get("visibility", {}).get("audience"),
+        "warden_only": str(record.get("visibility", {}).get("warden_only")).lower(),
+    }
+    metadata.update(
+        {
+            field["field_id"]: "" if field["value"] is None else str(field["value"])
+            for field in record.get("fields", [])
+        }
+    )
+    for field in definition.get("required_fields", []):
+        if field not in metadata:
+            return f"{path}.{field}"
+    for field in definition.get("nonempty_fields", []):
+        if not metadata.get(field, "").strip():
+            return f"{path}.{field}"
+    for field, required_value in definition.get("required_values", {}).items():
+        expected = str(required_value).lower() if isinstance(required_value, bool) else str(required_value)
+        if metadata.get(field) != expected:
+            return f"{path}.{field}"
+    forbidden_headings = {heading.casefold() for heading in definition.get("forbidden_headings", [])}
+    for index, section in enumerate(record.get("sections", [])):
+        if any(
+            heading.casefold() in forbidden_headings
+            for heading in re.findall(r"(?m)^#{1,6}\s+(.+?)\s*$", section.get("body", ""))
+        ):
+            return f"{path}.sections.{index}.body"
     relationships = set(adapter_definition.get("relationships", []))
     connection_states = set(adapter_definition.get("connection_states", []))
     for index, connection in enumerate(record.get("connections", [])):
@@ -251,6 +284,15 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
                 ]
                 if actual_sections != expected_sections:
                     return False
+                top_level_headings = [
+                    line[2:].strip()
+                    for line in source_text.splitlines()
+                    if line.startswith("# ")
+                ]
+                if len(top_level_headings) != 1:
+                    return False
+                if metadata.get("name") and top_level_headings[0] != metadata["name"]:
+                    return False
             else:
                 if not resolution_cards:
                     return False
@@ -331,6 +373,19 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     binding = instance.get("binding", {})
     candidate = instance.get("candidate")
 
+    bound_revision = binding.get("base_revision", {})
+    if not isinstance(bound_revision, dict):
+        bound_revision = instance.get("base_revision", {})
+    if isinstance(bound_revision, dict):
+        bound_revision = bound_revision.get("revision_id")
+    if (
+        "expected_revision" in operation
+        and
+        bound_revision is not None
+        and operation.get("expected_revision") != bound_revision
+    ):
+        return "unsafe_binding", "operation_request.expected_revision"
+
     if operation.get("operation") == "editor_proposal_correct":
         prior_ref = instance.get("prior_proposal", {})
         if operation.get("subject_id") != prior_ref.get("proposal_id"):
@@ -387,7 +442,7 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
 
         available_ids = set(context.get("available_record_ids", []))
         for index, connection in enumerate(candidate.get("connections", [])):
-            if available_ids and connection.get("target_record_id") not in available_ids:
+            if "available_record_ids" in context and connection.get("target_record_id") not in available_ids:
                 return "invalid_connections", f"candidate.connections.{index}.target_record_id"
 
     prior_proposal = context.get("prior_proposal")
@@ -601,6 +656,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             ]
         )
         adapter_definition["relationships"].append("signals")
+        adapter_definition["record_definitions"]["location"]["required_values"] = {}
         context = {"adapter_definition": adapter_definition}
         edit = next(
             item["payload"]
@@ -643,6 +699,81 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         self.assertEqual(
             ("proposal_validation_failure", "diff.cards.0.before.record_type"),
             evaluate_semantic_failure({"instance": proposal, "semantic_context": context}),
+        )
+
+    def test_adapter_record_definition_rules_are_enforced(self) -> None:
+        adapter_definition = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "head_record_view")[
+                "adapter_definition"
+            ]
+        )
+        context = {"adapter_definition": adapter_definition}
+        edit = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "edit_record_with_connections_request"
+            )
+        )
+        self.assertEqual(
+            ("proposal_validation_failure", "candidate.visibility"),
+            evaluate_semantic_failure({"instance": edit, "semantic_context": context}),
+        )
+
+        valid = deepcopy(edit)
+        valid["candidate"]["visibility"] = {"audience": "warden", "warden_only": True}
+        definition = adapter_definition["record_definitions"]["location"]
+        definition["required_fields"].append("date")
+        invalid = deepcopy(valid)
+        invalid["candidate"]["fields"] = []
+        self.assertEqual(
+            ("proposal_validation_failure", "candidate.date"),
+            evaluate_semantic_failure({"instance": invalid, "semantic_context": context}),
+        )
+
+        definition["nonempty_fields"] = ["date"]
+        invalid = deepcopy(valid)
+        invalid["candidate"]["fields"][0]["value"] = ""
+        self.assertEqual(
+            ("proposal_validation_failure", "candidate.date"),
+            evaluate_semantic_failure({"instance": invalid, "semantic_context": context}),
+        )
+
+        definition["forbidden_headings"] = ["Secrets"]
+        invalid = deepcopy(valid)
+        invalid["candidate"]["sections"][0]["body"] = "### Secrets\nHidden."
+        self.assertEqual(
+            ("proposal_validation_failure", "candidate.sections.0.body"),
+            evaluate_semantic_failure({"instance": invalid, "semantic_context": context}),
+        )
+
+    def test_operation_revision_and_empty_target_set_are_bound(self) -> None:
+        edit = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "edit_record_with_connections_request"
+            )
+        )
+        edit["operation_request"]["expected_revision"] = "revision_11"
+        self.assertEqual(
+            ("unsafe_binding", "operation_request.expected_revision"),
+            evaluate_semantic_failure({"instance": edit}),
+        )
+
+        edit = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "edit_record_with_connections_request"
+            )
+        )
+        self.assertEqual(
+            ("invalid_connections", "candidate.connections.0.target_record_id"),
+            evaluate_semantic_failure({
+                "instance": edit,
+                "semantic_context": {"available_record_ids": []},
+            }),
         )
 
     def test_non_redirect_resolution_snapshots_preserve_their_declared_action(self) -> None:
@@ -1231,6 +1362,14 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             "## Connections\n", "## Extra\n\nUnreviewed content.\n\n## Connections\n"
         )
         self.assertFalse(source_snapshots_match(extra_section["diff"]))
+
+        wrong_heading = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        wrong_heading["diff"]["source_changes"][0]["before_source"] = wrong_heading["diff"]["source_changes"][0]["before_source"].replace(
+            "# Synthetic Station", "# Unrelated Title"
+        )
+        self.assertFalse(source_snapshots_match(wrong_heading["diff"]))
 
     def test_approval_requests_bind_changes_without_source_snapshots(self) -> None:
         approval = next(item["payload"] for item in self.examples if item["name"] == "approval_request")
