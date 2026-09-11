@@ -13,6 +13,7 @@ from warden_drydock.standalone import _section_lines, frontmatter, parse_connect
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_ROOT = ROOT / "docs" / "contracts" / "hosted" / "http" / "editor" / "v1"
+NAMELESS_RECORD_TYPES = {"session", "session-prep", "debrief"}
 
 
 def canonical_digest(value: object, *, ensure_ascii: bool = True) -> str:
@@ -88,7 +89,6 @@ def source_snapshots_match(diff: dict) -> bool:
         "type",
         "status",
         "ownership",
-        "name",
         "visibility",
         "warden_only",
     }
@@ -110,8 +110,11 @@ def source_snapshots_match(diff: dict) -> bool:
             metadata = frontmatter(source_text)
             if not required_metadata.issubset(metadata) or metadata.get("id") != subject:
                 return False
+            if metadata["type"] not in NAMELESS_RECORD_TYPES and "name" not in metadata:
+                return False
             if metadata["ownership"] != "campaign":
                 return False
+            displayed_name = metadata.get("name") or subject
             structured = next(
                 (
                     card[side]
@@ -127,7 +130,7 @@ def source_snapshots_match(diff: dict) -> bool:
                     (
                         structured["record_type"] != metadata["type"],
                         structured["ownership"] != metadata["ownership"],
-                        structured["displayed_name"] != metadata["name"],
+                        structured["displayed_name"] != displayed_name,
                         structured["status"] != metadata["status"],
                         structured["visibility"]["audience"] != metadata["visibility"],
                         str(structured["visibility"]["warden_only"]).lower()
@@ -272,8 +275,8 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
             return "proposal_validation_failure", "impact_binding"
         if instance.get("impact_digest") != impact_binding.get("impact_digest"):
             return "proposal_validation_failure", "impact_digest"
-        if impact_binding.get("binding", {}).get("base_revision") != binding.get("base_revision"):
-            return "proposal_validation_failure", "impact_binding.binding.base_revision"
+        if impact_binding.get("binding") != binding:
+            return "proposal_validation_failure", "impact_binding.binding"
         current_impact_digest = context.get("current_removal_impact_digest")
         if current_impact_digest is not None and instance.get("impact_digest") != current_impact_digest:
             return "proposal_validation_failure", "impact_digest"
@@ -319,6 +322,18 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
                 return "mutation_consistency", "diff.cards.connection_delta"
             if any(expected[key] != actual[key] for key in expected):
                 return "mutation_consistency", "diff.cards.connection"
+
+    if instance.get("contract_name") == "editor_removal_impact":
+        record_connections = instance.get("record", {}).get("connections", [])
+        outgoing_connections = instance.get("outgoing_connections", [])
+        record_connection_ids = [item.get("connection_id") for item in record_connections]
+        outgoing_connection_ids = [item.get("connection_id") for item in outgoing_connections]
+        if (
+            len(record_connection_ids) != len(set(record_connection_ids))
+            or len(outgoing_connection_ids) != len(set(outgoing_connection_ids))
+            or record_connections != outgoing_connections
+        ):
+            return "mutation_consistency", "outgoing_connections"
 
     return None
 
@@ -514,7 +529,6 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         correction["impact_binding"] = {
             "binding": {
                 **correction["binding"],
-                "expected_editor_workflow_version": 7,
             },
             "impact_digest": current_impact_digest,
         }
@@ -524,11 +538,47 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         }
         self.assertIsNone(evaluate_semantic_failure({"instance": correction, "semantic_context": context}))
 
+        correction["impact_binding"]["binding"]["expected_editor_workflow_version"] = 7
+        self.assertEqual(
+            ("proposal_validation_failure", "impact_binding.binding"),
+            evaluate_semantic_failure({"instance": correction, "semantic_context": context}),
+        )
+
+        correction["impact_binding"]["binding"]["expected_editor_workflow_version"] = 8
         correction["impact_digest"] = "e" * 64
         correction["impact_binding"]["impact_digest"] = "e" * 64
         self.assertEqual(
             ("proposal_validation_failure", "impact_digest"),
             evaluate_semantic_failure({"instance": correction, "semantic_context": context}),
+        )
+
+    def test_removal_impact_outgoing_connections_are_exact_unique_projection(self) -> None:
+        impact = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "removal_impact")
+        )
+        removal = next(
+            item["payload"]
+            for item in self.examples
+            if item["name"] == "removal_proposal_with_outgoing_connections"
+        )
+        connection = deepcopy(
+            next(card for card in removal["diff"]["cards"] if card["kind"] == "connection_removed")["connection"]
+        )
+        impact["record"]["connections"] = [connection]
+        impact["outgoing_connections"] = [deepcopy(connection)]
+        self.assertIsNone(evaluate_semantic_failure({"instance": impact}))
+
+        impact["outgoing_connections"] = []
+        self.assertEqual(
+            ("mutation_consistency", "outgoing_connections"),
+            evaluate_semantic_failure({"instance": impact}),
+        )
+
+        impact["outgoing_connections"] = [deepcopy(connection), deepcopy(connection)]
+        impact["record"]["connections"] = [deepcopy(connection), deepcopy(connection)]
+        self.assertEqual(
+            ("mutation_consistency", "outgoing_connections"),
+            evaluate_semantic_failure({"instance": impact}),
         )
 
     def test_digest_projections_are_deterministic(self) -> None:
@@ -714,20 +764,22 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                                 "type",
                                 "status",
                                 "ownership",
-                                "name",
                                 "visibility",
                                 "warden_only",
                             }.issubset(metadata)
                         )
+                        if metadata["type"] not in NAMELESS_RECORD_TYPES:
+                            self.assertIn("name", metadata)
                         self.assertEqual(subject, metadata["id"])
-                        self.assertEqual(
-                            f"# {metadata['name']}",
-                            next(
-                                line
-                                for line in source_text.splitlines()
-                                if line.startswith("# ")
-                            ),
-                        )
+                        if metadata.get("name"):
+                            self.assertEqual(
+                                f"# {metadata['name']}",
+                                next(
+                                    line
+                                    for line in source_text.splitlines()
+                                    if line.startswith("# ")
+                                ),
+                            )
                         parsed_connections, errors = parse_connections(
                             source_text,
                             source_id=subject,
@@ -748,7 +800,10 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                         if structured is not None:
                             self.assertEqual(structured["record_type"], metadata["type"])
                             self.assertEqual(structured["ownership"], metadata["ownership"])
-                            self.assertEqual(structured["displayed_name"], metadata["name"])
+                            self.assertEqual(
+                                structured["displayed_name"],
+                                metadata.get("name") or subject,
+                            )
                             self.assertEqual(structured["status"], metadata["status"])
                             self.assertEqual(
                                 structured["visibility"]["audience"],
@@ -819,6 +874,66 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                                 for item in parsed_connections
                             ],
                         )
+
+    def test_source_snapshots_use_record_id_for_nameless_session_records(self) -> None:
+        headings = {
+            "session": "Session",
+            "session-prep": "Session Preparation",
+            "debrief": "Session Debrief",
+        }
+        for record_type, heading in headings.items():
+            subject = f"record-{record_type.replace('-', '')}"
+            source = "\n".join([
+                "---",
+                f"id: {subject}",
+                f"type: {record_type}",
+                "status: draft",
+                "ownership: campaign",
+                "date: 2187-04-03",
+                "visibility: warden",
+                "warden_only: true",
+                "---",
+                "",
+                f"# {heading}",
+                "",
+                "## Summary",
+                "",
+                "A session record.",
+                "",
+                "## Connections",
+                "",
+            ])
+            record = {
+                "record_id": subject,
+                "record_type": record_type,
+                "displayed_name": subject,
+                "ownership": "campaign",
+                "status": "draft",
+                "authority": "preparation",
+                "visibility": {"audience": "warden", "warden_only": True},
+                "fields": [{"field_id": "date", "value": "2187-04-03"}],
+                "sections": [{"section_id": "summary", "body": "A session record."}],
+                "connections": [],
+                "content_digest": "a" * 64,
+            }
+            diff = {
+                "cards": [{"subject_record_id": subject, "before": record, "after": record}],
+                "source_changes": [{
+                    "subject_record_id": subject,
+                    "before_source": source,
+                    "after_source": source,
+                }],
+            }
+            with self.subTest(record_type=record_type):
+                self.assertTrue(source_snapshots_match(diff))
+
+        named = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        named["diff"]["source_changes"][0]["before_source"] = named["diff"]["source_changes"][0]["before_source"].replace(
+            "name: Synthetic Station\n", ""
+        )
+        self.assertFalse(source_snapshots_match(named["diff"]))
 
     def test_approval_requests_bind_changes_without_source_snapshots(self) -> None:
         approval = next(item["payload"] for item in self.examples if item["name"] == "approval_request")

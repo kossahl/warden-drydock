@@ -111,8 +111,11 @@ Every `editor_diff` includes exactly one `source_changes` entry for each
 affected record, with the exact before and after Markdown source. Each source
 snapshot is campaign-owned, and for a `remove_reference` resolution its after
 source omits the affected connection; `accept_unresolved` retains the original
-target; `redirect` uses the replacement target. The frontmatter, headings,
-fields, sections, and typed connections in each
+target; `redirect` uses the replacement target. Named adapter record types
+carry frontmatter `name` matching `displayed_name`; Mothership `session`,
+`session-prep`, and `debrief` records may omit `name` and use the record ID as
+their displayed name, matching the standalone/Atlas fallback. The frontmatter,
+headings, fields, sections, and typed connections in each
 non-null snapshot must agree with its structured record or reference-resolution
 card. Clients render these server-produced snapshots directly during exact
 proposal review; they do not reconstruct source from parsed record documents.
