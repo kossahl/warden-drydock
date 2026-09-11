@@ -144,13 +144,127 @@ def _record_binding_digest_failure(instance: dict) -> tuple[str, str] | None:
         for card in diff.get("cards", [])
         if card.get("kind") in {"record_created", "record_updated", "record_removed"}
     }
+    for card in diff.get("cards", []):
+        if card.get("kind") != "reference_resolution":
+            continue
+        before = card.get("before")
+        if isinstance(before, dict) and before.get("source_record_id"):
+            record_cards.setdefault(before["source_record_id"], {"before": before})
+    source_changes = {
+        source.get("subject_record_id"): source
+        for source in diff.get("source_changes", [])
+    }
+    resolution_cards = {}
+    for card in diff.get("cards", []):
+        if card.get("kind") == "reference_resolution":
+            resolution_cards.setdefault(card.get("subject_record_id"), []).append(card)
     for index, binding in enumerate(instance.get("record_bindings", [])):
         card = record_cards.get(binding.get("record_id"))
         before = card.get("before") if isinstance(card, dict) else None
-        if isinstance(before, dict) and "content_digest" in before:
-            if binding.get("record_digest") != before["content_digest"]:
-                return "idempotency_digest_conflict", f"record_bindings.{index}.record_digest"
+        expected_digest = before.get("content_digest") if isinstance(before, dict) else None
+        if expected_digest is None:
+            source = source_changes.get(binding.get("record_id"), {})
+            expected_digest = _source_record_digest(
+                source.get("before_source"),
+                resolution_cards.get(binding.get("record_id"), []),
+            )
+        if expected_digest is not None and binding.get("record_digest") != expected_digest:
+            return "idempotency_digest_conflict", f"record_bindings.{index}.record_digest"
     return None
+
+
+def _source_record_digest(
+    source_text: object,
+    resolution_cards: list[dict],
+) -> str | None:
+    if not isinstance(source_text, str):
+        return None
+    metadata = frontmatter(source_text)
+    if not {
+        "id",
+        "type",
+        "status",
+        "ownership",
+        "visibility",
+        "warden_only",
+    }.issubset(metadata):
+        return None
+    parsed, errors = parse_connections(
+        source_text,
+        source_id=metadata["id"],
+        path=Path("synthetic.md"),
+    )
+    if errors:
+        return None
+    used_cards = set()
+    connections = []
+    for connection in parsed:
+        match = None
+        for index, card in enumerate(resolution_cards):
+            if index in used_cards:
+                continue
+            reference = card.get("before", {})
+            if (
+                reference.get("target_record_id") == connection.target_id
+                and reference.get("relationship") == connection.relationship
+                and reference.get("state") == connection.state
+                and reference.get("context") == connection.context
+            ):
+                match = reference
+                used_cards.add(index)
+                break
+        if match is None:
+            return None
+        connections.append(
+            {
+                "connection_id": match.get("connection_id"),
+                "target_record_id": connection.target_id,
+                "relationship": connection.relationship,
+                "state": connection.state,
+                "context": connection.context,
+            }
+        )
+    if len(used_cards) != len(resolution_cards):
+        return None
+
+    metadata_keys = {"id", "type", "status", "ownership", "name", "visibility", "warden_only"}
+    sections = []
+    for line in source_text.splitlines():
+        if not line.startswith("## "):
+            continue
+        section_id = line[3:].strip().casefold()
+        if section_id.casefold() == "connections":
+            continue
+        body_lines = [line for _, line in _section_lines(source_text, section_id)]
+        while body_lines and not body_lines[0].strip():
+            body_lines.pop(0)
+        while body_lines and not body_lines[-1].strip():
+            body_lines.pop()
+        sections.append({"section_id": section_id, "body": "\n".join(body_lines)})
+
+    warden_only = metadata["warden_only"].casefold()
+    if warden_only not in {"true", "false"}:
+        return None
+    record = {
+        "record_id": metadata["id"],
+        "record_type": metadata["type"],
+        "displayed_name": metadata.get("name") or metadata["id"],
+        "ownership": metadata["ownership"],
+        "status": metadata["status"],
+        "authority": _authority_for_status(metadata["status"]),
+        "visibility": {
+            "audience": metadata["visibility"],
+            "warden_only": warden_only == "true",
+        },
+        "fields": [
+            {"field_id": key, "value": value}
+            for key, value in metadata.items()
+            if key not in metadata_keys
+        ],
+        "sections": sections,
+        "connections": connections,
+    }
+    return record_content_digest(record)
 
 
 def _visibility_scope(visibility: dict) -> set[str]:
@@ -612,10 +726,33 @@ def _removal_request_redirect_failure(
     return None
 
 
+def _removal_resolution_set_failure(
+    instance: dict,
+    impact: dict,
+) -> tuple[str, str] | None:
+    if "resolutions" not in instance or not isinstance(impact, dict):
+        return None
+    expected_ids = {
+        reference.get("reference_id")
+        for reference in impact.get("incoming_references", [])
+        if isinstance(reference, dict) and reference.get("reference_id")
+    }
+    required_reference_id = impact.get("required_reference_id")
+    if required_reference_id:
+        expected_ids.add(required_reference_id)
+    if expected_ids and {
+        resolution.get("reference_id") for resolution in instance.get("resolutions", [])
+    } != expected_ids:
+        return "unsafe_binding", "resolutions"
+    return None
+
+
 def _removal_reference_policy_failure(instance: dict) -> tuple[str, str] | None:
     if instance.get("contract_name") != "editor_removal_impact":
         return None
     for index, reference in enumerate(instance.get("incoming_references", [])):
+        if reference.get("target_record_id") != instance.get("binding", {}).get("record_id"):
+            return "proposal_validation_failure", f"incoming_references.{index}.target_record_id"
         if reference.get("resolution_required") is not True:
             return "proposal_validation_failure", f"incoming_references.{index}.resolution_required"
         if reference.get("permitted_unresolved") is not False:
@@ -999,6 +1136,7 @@ def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str,
                 _record_property_change_failure(loaded["diff"]),
                 _record_subject_failure(loaded["diff"]),
                 _record_authority_failure(loaded["diff"]),
+                _record_binding_digest_failure(loaded),
                 _record_binding_failure(loaded, loaded["diff"]),
                 _resolution_set_failure(loaded, loaded["diff"]),
                 _removal_redirect_failure(loaded["diff"], context),
@@ -1010,17 +1148,17 @@ def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str,
 
     if instance.get("operation_request", {}).get("operation") == "editor_proposal_approve":
         validation = loaded.get("validation")
-        if (
-            isinstance(validation, dict)
-            and validation.get("status") == "passed"
-            and validation.get("error_count") == 0
-            and any(
+        if isinstance(validation, dict):
+            if validation.get("status") != "passed":
+                return "proposal_validation_failure", "validation.status"
+            if validation.get("error_count") != 0:
+                return "proposal_validation_failure", "validation.error_count"
+            if any(
                 finding.get("severity") in {"error", "warning"}
                 for finding in validation.get("findings", [])
                 if isinstance(finding, dict)
-            )
-        ):
-            return "proposal_validation_failure", "validation.findings"
+            ):
+                return "proposal_validation_failure", "validation.findings"
 
     expected = {}
     direct_action = "operation_request" in loaded or loaded.get("contract_name") in {
@@ -1232,6 +1370,30 @@ def _result_workflow_version_failure(
         expected = context["current_editor_workflow_version"]
     if expected is not None and instance.get("editor_workflow_version") != expected:
         return "unsafe_binding", "editor_workflow_version"
+    return None
+
+
+def _result_replay_failure(instance: dict, fixture: dict) -> tuple[str, str] | None:
+    if instance.get("contract_name") not in {
+        "editor_proposal_approval_result",
+        "editor_proposal_rejection_result",
+    }:
+        return None
+
+    context = fixture.get("semantic_context", {})
+    stored_result = context.get("stored_result")
+    if stored_result is None:
+        stored_result = fixture.get("stored_result")
+    receipt = context.get("stored_receipt") or fixture.get("stored_receipt")
+    if stored_result is None and isinstance(receipt, dict):
+        for key in ("result", "result_payload", "response"):
+            if key in receipt:
+                stored_result = receipt[key]
+                break
+    if isinstance(stored_result, dict) and isinstance(stored_result.get("payload"), dict):
+        stored_result = stored_result["payload"]
+    if isinstance(stored_result, dict) and stored_result != instance:
+        return "replay_mismatch", "result"
     return None
 
 
@@ -1560,6 +1722,9 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
 def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     """Return the first contract violation found in a negative fixture."""
     instance = fixture["instance"]
+    result_replay_failure = _result_replay_failure(instance, fixture)
+    if result_replay_failure is not None:
+        return result_replay_failure
     result_workflow_failure = _result_workflow_version_failure(instance, fixture)
     if result_workflow_failure is not None:
         return result_workflow_failure
@@ -1787,6 +1952,9 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     resolutions = set(resolution_ids)
     if "resolutions" in instance and required_reference_ids - resolutions:
         return "incomplete_removal_resolution", "resolutions"
+    resolution_set_failure = _removal_resolution_set_failure(instance, impact)
+    if resolution_set_failure is not None:
+        return resolution_set_failure
 
     redirect_failure = _removal_request_redirect_failure(instance, impact, context)
     if redirect_failure is not None:
@@ -2378,7 +2546,18 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "semantic_context": {"loaded_proposal": loaded},
             }),
         )
-        loaded["validation"]["findings"][0]["severity"] = "error"
+
+        loaded["validation"]["findings"] = []
+        loaded["validation"]["error_count"] = 1
+        self.assertEqual(
+            ("proposal_validation_failure", "validation.error_count"),
+            evaluate_semantic_failure({
+                "instance": action,
+                "semantic_context": {"loaded_proposal": loaded},
+            }),
+        )
+        loaded["validation"]["error_count"] = 0
+        loaded["validation"]["findings"].append({"severity": "error"})
         self.assertEqual(
             ("proposal_validation_failure", "validation.findings"),
             evaluate_semantic_failure({
@@ -2474,6 +2653,23 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({"instance": proposal}),
         )
 
+        removal = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_proposal_with_outgoing_connections"
+            )
+        )
+        removal["record_bindings"][1]["record_digest"] = "f" * 64
+        removal["proposal_payload_digest"] = projection_digest(
+            removal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            ("idempotency_digest_conflict", "record_bindings.1.record_digest"),
+            evaluate_semantic_failure({"instance": removal}),
+        )
+
     def test_action_workflow_conflicts_use_the_top_level_fallback(self) -> None:
         for name in ("approval_request", "rejection_request"):
             action = deepcopy(next(item["payload"] for item in self.examples if item["name"] == name))
@@ -2514,6 +2710,30 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                         "semantic_context": {"accepted_request": action},
                     }),
                 )
+
+    def test_replayed_action_results_bind_the_stored_result(self) -> None:
+        result = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "approval_success_response")
+        )
+        stored_result = deepcopy(result)
+        result["proposal"]["proposal_id"] = "proposal-other"
+        self.assertEqual(
+            ("replay_mismatch", "result"),
+            evaluate_semantic_failure({
+                "instance": result,
+                "semantic_context": {"stored_receipt": {"result": stored_result}},
+            }),
+        )
+
+        result = deepcopy(stored_result)
+        result["published_revision"]["revision_id"] = "revision-other"
+        self.assertEqual(
+            ("replay_mismatch", "result"),
+            evaluate_semantic_failure({
+                "instance": result,
+                "stored_result": stored_result,
+            }),
+        )
 
     def test_record_view_history_flags_bind_to_revision_objects(self) -> None:
         historical = deepcopy(
@@ -3260,6 +3480,20 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({"instance": removal, "impact": impact}),
         )
 
+        removal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "remove_record_request")
+        )
+        removal["resolutions"].append({
+            "reference_id": "reference-extra",
+            "action": "remove_reference",
+            "replacement_target_record_id": None,
+        })
+        _refresh_operation_payload_digest(removal)
+        self.assertEqual(
+            ("unsafe_binding", "resolutions"),
+            evaluate_semantic_failure({"instance": removal, "impact": impact}),
+        )
+
         for target in ("record-company", "record-missing"):
             removal = deepcopy(
                 next(item["payload"] for item in self.examples if item["name"] == "remove_record_request")
@@ -3417,6 +3651,18 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             (
                 "proposal_validation_failure",
                 "incoming_references.0.permitted_unresolved",
+            ),
+            evaluate_semantic_failure({"instance": impact}),
+        )
+
+        impact = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "removal_impact")
+        )
+        impact["incoming_references"][0]["target_record_id"] = "record-station"
+        self.assertEqual(
+            (
+                "proposal_validation_failure",
+                "incoming_references.0.target_record_id",
             ),
             evaluate_semantic_failure({"instance": impact}),
         )
