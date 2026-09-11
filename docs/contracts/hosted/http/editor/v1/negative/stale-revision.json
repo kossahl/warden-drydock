@@ -15,7 +15,7 @@
       "request_id": "request_stale_revision",
       "operation": "editor_record_edit",
       "idempotency_key": "idem_stale_revision",
-      "payload_digest": "6a2fa2ae4e5e804eadf96e70eed5f35259c7519b13c19e577c239d89d3c48f80",
+      "payload_digest": "117d61f60cf371f4a8677a7ce4b3ca4fb21e05010138dea21de09071bc467560",
       "expected_revision": "revision_11",
       "expected_editor_workflow_version": 7,
       "subject_id": "record-station"
@@ -34,6 +34,7 @@
     "candidate": {
       "record_id": "record-station",
       "record_type": "location",
+      "ownership": "campaign",
       "displayed_name": "Station",
       "status": "review",
       "authority": "preparation",
@@ -44,7 +45,7 @@
       "fields": [],
       "sections": [],
       "connections": [],
-      "content_digest": "333cd92f56b145a86ded1b07ff363ff39843efb4645dfdd72b9c6a1aca33c735"
+      "content_digest": "7106c4e918c717363ebe50b0c4f38d118f02d666a205e4cc10781db24014a4fb"
     }
   }
 }

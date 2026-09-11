@@ -50,6 +50,7 @@
         "record": {
           "record_id": "record-station",
           "record_type": "location",
+          "ownership": "campaign",
           "displayed_name": "Synthetic Station",
           "status": "review",
           "authority": "preparation",
@@ -82,7 +83,7 @@
               "context": "The station handles salvage contracts."
             }
           ],
-          "content_digest": "7dc96cbbf380c52e6e7915be47b568f8d5cc5d7f20f28a86b1b0d34390bac510"
+          "content_digest": "1942a52e8841f5f540124f29ea4495a2a65258d032c30adf69bd2fac94391d70"
         }
       }
     },
@@ -177,6 +178,7 @@
         "record": {
           "record_id": "record-station",
           "record_type": "location",
+          "ownership": "campaign",
           "displayed_name": "Synthetic Station",
           "status": {
             "classification": "unknown",
@@ -190,7 +192,7 @@
           "fields": [],
           "sections": [],
           "connections": [],
-          "content_digest": "32f86149ab3d2cdfc4d7ec7548aecdbe11eabcaf2fc8351f9433bd47d0314bd4"
+          "content_digest": "427f7e32a3fc7ae1f69f19b09068f759a2794226452db8c0fca55272f2f762b8"
         }
       }
     },
@@ -205,7 +207,7 @@
           "request_id": "request_create",
           "operation": "editor_record_create",
           "idempotency_key": "idem_create",
-          "payload_digest": "4c9d0d7a914cc893c1f8ec7a68164255559f22809e1071d90b554b222f3cbb22",
+          "payload_digest": "20d67b816255c2a51f6abe8d3596b379f5a0115b346f3314e3045170414dc452",
           "expected_revision": "revision_12",
           "expected_editor_workflow_version": 7,
           "subject_id": "record-new"
@@ -224,6 +226,7 @@
         "candidate": {
           "record_id": "record-new",
           "record_type": "npc",
+          "ownership": "campaign",
           "displayed_name": "New Keeper",
           "status": "draft",
           "authority": "preparation",
@@ -244,7 +247,7 @@
             }
           ],
           "connections": [],
-          "content_digest": "9346f2c1f65bdc21ad787ce774203031df55cf897e3b2b0c6ea639a40d323462"
+          "content_digest": "a44492a1f72aeeaff6187017b9d1f9ed69409d07f9ddcec5d1221c83dd18b4e6"
         }
       }
     },
@@ -259,7 +262,7 @@
           "request_id": "request_edit",
           "operation": "editor_record_edit",
           "idempotency_key": "idem_edit",
-          "payload_digest": "dcd072c7e25e8567d179ec4187a912a42b77ed8589a5b0f603bb55d8690956f7",
+          "payload_digest": "ecdc01ef7bde7fb62a240fd98eb1eac969c86be0ac5a6cb1017fb6988ff1e63b",
           "expected_revision": "revision_12",
           "expected_editor_workflow_version": 7,
           "subject_id": "record-station"
@@ -272,12 +275,13 @@
             "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           },
           "record_id": "record-station",
-          "record_digest": "7dc96cbbf380c52e6e7915be47b568f8d5cc5d7f20f28a86b1b0d34390bac510",
+          "record_digest": "1942a52e8841f5f540124f29ea4495a2a65258d032c30adf69bd2fac94391d70",
           "expected_editor_workflow_version": 7
         },
         "candidate": {
           "record_id": "record-station",
           "record_type": "location",
+          "ownership": "campaign",
           "displayed_name": "Synthetic Station Renamed",
           "status": "canon",
           "authority": "canon",
@@ -317,7 +321,7 @@
               "context": "The station signals the ship."
             }
           ],
-          "content_digest": "830de07252135c9db98d10856d2ca7934b8348201c92accafe652a11aef01609"
+          "content_digest": "cebacea34ceb7306a6b0b99e9aced71e89c61ed6d175c569714ca950d8a4128a"
         }
       }
     },
@@ -334,12 +338,13 @@
             "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           },
           "record_id": "record-company",
-          "record_digest": "ed1d65b9bd7be83dbed1367c3417697f9d931f87f6660f5c49f9f062321a9965",
+          "record_digest": "a9f8d4bade057fab52262a11b31dcdddbafb9b5984c31128488b6d97c0279281",
           "expected_editor_workflow_version": 7
         },
         "record": {
           "record_id": "record-company",
           "record_type": "faction",
+          "ownership": "campaign",
           "displayed_name": "The Company",
           "status": "canon",
           "authority": "canon",
@@ -355,7 +360,7 @@
             }
           ],
           "connections": [],
-          "content_digest": "ed1d65b9bd7be83dbed1367c3417697f9d931f87f6660f5c49f9f062321a9965"
+          "content_digest": "a9f8d4bade057fab52262a11b31dcdddbafb9b5984c31128488b6d97c0279281"
         },
         "outgoing_connections": [],
         "incoming_references": [
@@ -372,7 +377,7 @@
           }
         ],
         "backlink_policy": "server_derived_from_typed_connections",
-        "impact_digest": "5d96499bfa31f09df5eaf10ab144e5df1eb8cbb9147bd74cbfa245fce5c3d842"
+        "impact_digest": "30ebd7d2f93cf9f491a5b2b8338a69b98e9c7ab4c74fd0d357bea8780cb924b9"
       }
     },
     {
@@ -386,7 +391,7 @@
           "request_id": "request_remove",
           "operation": "editor_record_remove",
           "idempotency_key": "idem_remove",
-        "payload_digest": "2981e77d09989d317d15f0062f7364176f6ac5ff1e696822763477684401974a",
+        "payload_digest": "452bc2e5ae8da6875bb291fdb56035e0cfbad597f5374f58038bd88181945077",
           "expected_revision": "revision_12",
           "expected_editor_workflow_version": 7,
           "subject_id": "record-company"
@@ -399,10 +404,10 @@
             "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           },
           "record_id": "record-company",
-          "record_digest": "ed1d65b9bd7be83dbed1367c3417697f9d931f87f6660f5c49f9f062321a9965",
+          "record_digest": "a9f8d4bade057fab52262a11b31dcdddbafb9b5984c31128488b6d97c0279281",
           "expected_editor_workflow_version": 7
         },
-        "impact_digest": "5d96499bfa31f09df5eaf10ab144e5df1eb8cbb9147bd74cbfa245fce5c3d842",
+        "impact_digest": "30ebd7d2f93cf9f491a5b2b8338a69b98e9c7ab4c74fd0d357bea8780cb924b9",
         "impact_binding": {
           "binding": {
             "campaign_id": "campaign_alpha",
@@ -412,10 +417,10 @@
               "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             },
             "record_id": "record-company",
-            "record_digest": "ed1d65b9bd7be83dbed1367c3417697f9d931f87f6660f5c49f9f062321a9965",
+            "record_digest": "a9f8d4bade057fab52262a11b31dcdddbafb9b5984c31128488b6d97c0279281",
             "expected_editor_workflow_version": 7
           },
-          "impact_digest": "5d96499bfa31f09df5eaf10ab144e5df1eb8cbb9147bd74cbfa245fce5c3d842"
+          "impact_digest": "30ebd7d2f93cf9f491a5b2b8338a69b98e9c7ab4c74fd0d357bea8780cb924b9"
         },
         "resolutions": [
           {
@@ -450,7 +455,7 @@
           "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "editor_workflow_version": 8,
-        "proposal_payload_digest": "7a13c492f61d17a88850ed188eebb268b4a457b8d07018efec964ce91eedbf51",
+        "proposal_payload_digest": "ed5fe0640589fbc8f37b5612e85f5bae756fc8c737e1932be636d9ccecab104f",
         "mutation_kind": "edit",
         "record_bindings": [
           {
@@ -461,7 +466,7 @@
               "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             },
             "record_id": "record-station",
-            "record_digest": "7dc96cbbf380c52e6e7915be47b568f8d5cc5d7f20f28a86b1b0d34390bac510",
+            "record_digest": "1942a52e8841f5f540124f29ea4495a2a65258d032c30adf69bd2fac94391d70",
             "expected_editor_workflow_version": 8
           }
         ],
@@ -483,7 +488,7 @@
             "source_revision": "revision_12",
             "expected_campaign_head": "revision_12",
             "expected_editor_workflow_version": 8,
-            "diff_digest": "9cb560f39362b794b6da713bba28c53289273fa1eaf2f916c514a0db91d8992f",
+            "diff_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014",
             "authority_change_ids": [
               "change_edit_record"
             ],
@@ -497,7 +502,7 @@
                 "change_type": "update",
                 "from_authority": "preparation",
                 "to_authority": "canon",
-                "content_digest": "830de07252135c9db98d10856d2ca7934b8348201c92accafe652a11aef01609"
+                "content_digest": "cebacea34ceb7306a6b0b99e9aced71e89c61ed6d175c569714ca950d8a4128a"
               },
               {
                 "change_id": "change_conn_add",
@@ -505,7 +510,7 @@
                 "change_type": "update",
                 "from_authority": "preparation",
                 "to_authority": "canon",
-                "content_digest": "830de07252135c9db98d10856d2ca7934b8348201c92accafe652a11aef01609"
+                "content_digest": "cebacea34ceb7306a6b0b99e9aced71e89c61ed6d175c569714ca950d8a4128a"
               }
             ]
           },
@@ -518,7 +523,7 @@
         },
         "correction_of": null,
         "diff": {
-          "diff_digest": "9cb560f39362b794b6da713bba28c53289273fa1eaf2f916c514a0db91d8992f",
+          "diff_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014",
           "cards": [
             {
               "change_id": "change_edit_record",
@@ -527,6 +532,7 @@
               "before": {
                 "record_id": "record-station",
                 "record_type": "location",
+                "ownership": "campaign",
                 "displayed_name": "Synthetic Station",
                 "status": "review",
                 "authority": "preparation",
@@ -559,11 +565,12 @@
                     "context": "The station handles salvage contracts."
                   }
                 ],
-                "content_digest": "7dc96cbbf380c52e6e7915be47b568f8d5cc5d7f20f28a86b1b0d34390bac510"
+                "content_digest": "1942a52e8841f5f540124f29ea4495a2a65258d032c30adf69bd2fac94391d70"
               },
               "after": {
                 "record_id": "record-station",
                 "record_type": "location",
+                "ownership": "campaign",
                 "displayed_name": "Synthetic Station Renamed",
                 "status": "canon",
                 "authority": "canon",
@@ -603,7 +610,7 @@
                     "context": "The station signals the ship."
                   }
                 ],
-                "content_digest": "830de07252135c9db98d10856d2ca7934b8348201c92accafe652a11aef01609"
+                "content_digest": "cebacea34ceb7306a6b0b99e9aced71e89c61ed6d175c569714ca950d8a4128a"
               },
               "property_changes": [
                 {
@@ -702,8 +709,8 @@
               "change_id": "source_change_edit_record",
               "subject_record_id": "record-station",
               "change_type": "update",
-              "before_source": "---\nid: record-station\ntype: location\nstatus: review\nownership: shared\nname: Synthetic Station\nvisibility: warden\nwarden_only: true\ndate: 2187-04-03\n---\n\n# Synthetic Station\n\n## Summary\n\nA quiet station.\n\n## Notes\n\nThe locks cycle twice.\n\n## Connections\n\n- `works-for` → [[record-company|The Company]] (`current`) — The station handles salvage contracts.",
-              "after_source": "---\nid: record-station\ntype: location\nstatus: canon\nownership: shared\nname: Synthetic Station Renamed\nvisibility: shared\nwarden_only: false\ndate: 2187-04-03\n---\n\n# Synthetic Station Renamed\n\n## Summary\n\nA station with a public dock.\n\n## Notes\n\nThe locks cycle twice.\n\n## Connections\n\n- `works-for` → [[record-company|The Company]] (`current`) — The station handles salvage contracts.\n- `signals` → [[record-ship|The Ship]] (`current`) — The station signals the ship."
+              "before_source": "---\nid: record-station\ntype: location\nstatus: review\nownership: campaign\nname: Synthetic Station\nvisibility: warden\nwarden_only: true\ndate: 2187-04-03\n---\n\n# Synthetic Station\n\n## Summary\n\nA quiet station.\n\n## Notes\n\nThe locks cycle twice.\n\n## Connections\n\n- `works-for` → [[record-company|The Company]] (`current`) — The station handles salvage contracts.",
+              "after_source": "---\nid: record-station\ntype: location\nstatus: canon\nownership: campaign\nname: Synthetic Station Renamed\nvisibility: shared\nwarden_only: false\ndate: 2187-04-03\n---\n\n# Synthetic Station Renamed\n\n## Summary\n\nA station with a public dock.\n\n## Notes\n\nThe locks cycle twice.\n\n## Connections\n\n- `works-for` → [[record-company|The Company]] (`current`) — The station handles salvage contracts.\n- `signals` → [[record-ship|The Ship]] (`current`) — The station signals the ship."
             }
           ],
           "summary": "Rename station, publish its reviewed status, broaden visibility, and add one signal connection."
@@ -761,7 +768,7 @@
           "request_id": "request_correct",
           "operation": "editor_proposal_correct",
           "idempotency_key": "idem_correct",
-          "payload_digest": "2e168ec02884777ee35e21aeaa1303118f0d50d598841fb72408d307b544b3d8",
+          "payload_digest": "90d36cd708cd4ff40870c586bb67f2d16683bde94ac5e460fb8ca6a2527bbac2",
           "expected_revision": "revision_12",
           "expected_editor_workflow_version": 8,
           "subject_id": "proposal_editor"
@@ -778,13 +785,14 @@
             "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           },
           "record_id": "record-station",
-          "record_digest": "7dc96cbbf380c52e6e7915be47b568f8d5cc5d7f20f28a86b1b0d34390bac510",
+          "record_digest": "1942a52e8841f5f540124f29ea4495a2a65258d032c30adf69bd2fac94391d70",
           "expected_editor_workflow_version": 8
         },
         "mutation_kind": "edit",
         "candidate": {
           "record_id": "record-station",
           "record_type": "location",
+          "ownership": "campaign",
           "displayed_name": "Synthetic Station Renamed",
           "status": "review",
           "authority": "preparation",
@@ -805,7 +813,7 @@
             }
           ],
           "connections": [],
-          "content_digest": "c5854fab2099d14e72d03f631dc287b5929e443311fdb9140debd80f5ad34455"
+          "content_digest": "a99b2f726aefd610737db4aa144aba29c2a14e233a7d9c84ba4ae944f11e3f1e"
         },
         "resolutions": [],
         "impact_digest": null,
@@ -823,11 +831,11 @@
           "request_id": "request_approve",
           "operation": "editor_proposal_approve",
           "idempotency_key": "idem_approve",
-          "payload_digest": "e3a41d01f00c877ac260315472e3e73815c7c7dafee022e73da2f921e755d1b1",
+          "payload_digest": "91aefac53cbc7272e0844e7720304d310e41bee570f80834f6b3efa5c4e9bebc",
           "expected_revision": "revision_12",
           "expected_editor_workflow_version": 8,
           "subject_id": "proposal_editor",
-          "intent_digest": "9cb560f39362b794b6da713bba28c53289273fa1eaf2f916c514a0db91d8992f"
+          "intent_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014"
         },
         "proposal": {
           "proposal_id": "proposal_editor",
@@ -851,8 +859,8 @@
           "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "expected_editor_workflow_version": 8,
-        "proposal_payload_digest": "7a13c492f61d17a88850ed188eebb268b4a457b8d07018efec964ce91eedbf51",
-        "diff_digest": "9cb560f39362b794b6da713bba28c53289273fa1eaf2f916c514a0db91d8992f",
+        "proposal_payload_digest": "ed5fe0640589fbc8f37b5612e85f5bae756fc8c737e1932be636d9ccecab104f",
+        "diff_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014",
         "validation_status": "passed",
         "validation_digest": "aaa5a55d8171462baf808a301b41d3b15b1d0aff74e60b66ef0520e9e3889007",
         "record_bindings": [
@@ -864,7 +872,7 @@
               "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             },
             "record_id": "record-station",
-            "record_digest": "7dc96cbbf380c52e6e7915be47b568f8d5cc5d7f20f28a86b1b0d34390bac510",
+            "record_digest": "1942a52e8841f5f540124f29ea4495a2a65258d032c30adf69bd2fac94391d70",
             "expected_editor_workflow_version": 8
           }
         ],
@@ -899,7 +907,7 @@
           }
         ],
         "warden_confirmed": true,
-        "diff": {"diff_digest":"9cb560f39362b794b6da713bba28c53289273fa1eaf2f916c514a0db91d8992f","confirmed_change_ids":["change_edit_record","change_conn_add"],"confirmed_authority_change_ids":["change_edit_record"],"confirmed_visibility_change_ids":["change_edit_record"]},
+        "diff": {"diff_digest":"25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014","confirmed_change_ids":["change_edit_record","change_conn_add"],"confirmed_authority_change_ids":["change_edit_record"],"confirmed_visibility_change_ids":["change_edit_record"]},
         "affected_record_count": 1,
         "confirmed_change_ids": [
           "change_edit_record",
@@ -924,11 +932,11 @@
           "request_id": "request_reject",
           "operation": "editor_proposal_reject",
           "idempotency_key": "idem_reject",
-          "payload_digest": "70af1659c9028ba705bb13fc315c6613cfa59ca1584df91ffd6dfc914ce7d207",
+          "payload_digest": "695443e3c6f7ef330d447ee2fde61fda81599bfefa78ca3cd892f3e0f91a3136",
           "expected_revision": "revision_12",
           "expected_editor_workflow_version": 8,
           "subject_id": "proposal_editor",
-          "intent_digest": "9cb560f39362b794b6da713bba28c53289273fa1eaf2f916c514a0db91d8992f"
+          "intent_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014"
         },
         "proposal": {
           "proposal_id": "proposal_editor",
@@ -953,8 +961,8 @@
           "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "expected_editor_workflow_version": 8,
-        "proposal_payload_digest": "7a13c492f61d17a88850ed188eebb268b4a457b8d07018efec964ce91eedbf51",
-        "diff_digest": "9cb560f39362b794b6da713bba28c53289273fa1eaf2f916c514a0db91d8992f",
+        "proposal_payload_digest": "ed5fe0640589fbc8f37b5612e85f5bae756fc8c737e1932be636d9ccecab104f",
+        "diff_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014",
         "validation_status": "passed",
         "validation_digest": "aaa5a55d8171462baf808a301b41d3b15b1d0aff74e60b66ef0520e9e3889007",
         "record_bindings": [
@@ -966,7 +974,7 @@
               "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             },
             "record_id": "record-station",
-            "record_digest": "7dc96cbbf380c52e6e7915be47b568f8d5cc5d7f20f28a86b1b0d34390bac510",
+            "record_digest": "1942a52e8841f5f540124f29ea4495a2a65258d032c30adf69bd2fac94391d70",
             "expected_editor_workflow_version": 8
           }
         ],
@@ -1014,11 +1022,11 @@
           "request_id": "request_reject_draft",
           "operation": "editor_proposal_reject",
           "idempotency_key": "idem_reject_draft",
-          "payload_digest": "fef09be100d7a8adcc484783b4494bee642536f898a247ad1d181187b2c68933",
+          "payload_digest": "8bfcbf222f0ffa5c79c7f633a1fe351dd2eefb48e7d3c2d51f4612dbca195bc8",
           "expected_revision": "revision_12",
           "expected_editor_workflow_version": 8,
           "subject_id": "proposal_editor",
-          "intent_digest": "9cb560f39362b794b6da713bba28c53289273fa1eaf2f916c514a0db91d8992f"
+          "intent_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014"
         },
         "proposal": {
           "proposal_id": "proposal_editor",
@@ -1042,8 +1050,8 @@
           "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "expected_editor_workflow_version": 8,
-        "proposal_payload_digest": "7a13c492f61d17a88850ed188eebb268b4a457b8d07018efec964ce91eedbf51",
-        "diff_digest": "9cb560f39362b794b6da713bba28c53289273fa1eaf2f916c514a0db91d8992f",
+        "proposal_payload_digest": "ed5fe0640589fbc8f37b5612e85f5bae756fc8c737e1932be636d9ccecab104f",
+        "diff_digest": "25959bf805dbf47436b66f81b16f63c948cbf2f038264be8fa88515852a39014",
         "validation_status": "passed",
         "validation_digest": "aaa5a55d8171462baf808a301b41d3b15b1d0aff74e60b66ef0520e9e3889007",
         "record_bindings": [
@@ -1055,7 +1063,7 @@
               "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             },
             "record_id": "record-station",
-            "record_digest": "7dc96cbbf380c52e6e7915be47b568f8d5cc5d7f20f28a86b1b0d34390bac510",
+            "record_digest": "1942a52e8841f5f540124f29ea4495a2a65258d032c30adf69bd2fac94391d70",
             "expected_editor_workflow_version": 8
           }
         ],
@@ -1093,9 +1101,9 @@
         "reason_code": "draft_declined"
       }
     },
-    {"name":"removal_impact_with_outgoing_connections","payload":{"contract_name":"editor_removal_impact","contract_version":1,"binding":{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-company","record_digest":"8f5b1fb1e75a80fb7598b9a2f306aca77cf61bbdde05decc4dbc1c72a68c6918","expected_editor_workflow_version":7},"record":{"record_id":"record-company","record_type":"faction","displayed_name":"The Company","status":"canon","authority":"canon","visibility":{"audience":"warden","warden_only":true},"fields":[],"sections":[{"section_id":"summary","body":"A synthetic company."}],"connections":[{"connection_id":"connection_company_ship","target_record_id":"record-ship","relationship":"supplies","state":"current","context":"The company supplies the ship."}],"content_digest":"8f5b1fb1e75a80fb7598b9a2f306aca77cf61bbdde05decc4dbc1c72a68c6918"},"outgoing_connections":[{"connection_id":"connection_company_ship","target_record_id":"record-ship","relationship":"supplies","state":"current","context":"The company supplies the ship."}],"incoming_references":[{"reference_id":"reference_station_company","connection_id":"connection_one","source_record_id":"record-station","target_record_id":"record-company","relationship":"works-for","state":"current","context":"The station handles salvage contracts.","resolution_required":true,"permitted_unresolved":false}],"backlink_policy":"server_derived_from_typed_connections","impact_digest":"bcc6939297375e52b5f0b9b1b5be1524c2d4788523ab9b18423e9eee94a0abf0"}},
-    {"name":"removal_proposal_with_outgoing_connections","payload":{"contract_name":"editor_proposal_view","contract_version":1,"proposal_id":"proposal_remove_outgoing","proposal_version":1,"campaign_id":"campaign_alpha","source_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_campaign_head":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"editor_workflow_version":8,"proposal_payload_digest":"0cdb24c4241692915b04a8381a9b1f7c7a1b4622626048b75ad3ee212829a229","mutation_kind":"remove","record_bindings":[{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-company","record_digest":"8f5b1fb1e75a80fb7598b9a2f306aca77cf61bbdde05decc4dbc1c72a68c6918","expected_editor_workflow_version":8},{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-station","record_digest":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","expected_editor_workflow_version":8}],"core_proposal":{"contract_name":"canon_proposal","contract_version":2,"draft":{"draft_id":"draft_editor","authority":"draft","source_set_digest":"9999999999999999999999999999999999999999999999999999999999999999","content_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"proposal":{"proposal_id":"proposal_remove_outgoing","proposal_version":1,"status":"needs_review","campaign_id":"campaign_alpha","base_revision":"revision_12","source_revision":"revision_12","expected_campaign_head":"revision_12","expected_editor_workflow_version":8,"diff_digest":"24a4e7a9446cfbb1939abb000a676331ca6f20826279c3c25355579fca9fa334","authority_change_ids":[],"visibility_change_ids":[],"changes":[{"change_id":"change_remove_company","subject_id":"record-company","change_type":"remove","from_authority":"canon","to_authority":"absent","content_digest":"8f5b1fb1e75a80fb7598b9a2f306aca77cf61bbdde05decc4dbc1c72a68c6918"},{"change_id":"change_remove_company_connection","subject_id":"record-company","change_type":"update","from_authority":"canon","to_authority":"canon","content_digest":"40aeda8fb9e26d722a82978e8cbed016f9a5e350ffb62048d1863f1f1c7279db"},{"change_id":"change_resolve_station_company","subject_id":"record-station","change_type":"update","from_authority":"preparation","to_authority":"preparation","content_digest":"64a09fc6210949b3f419e2a7cdeb7f2ecfcfdd5ab3515369ec7784b07cd14c2d"}]},"validation":{"status":"passed","validation_digest":"aaa5a55d8171462baf808a301b41d3b15b1d0aff74e60b66ef0520e9e3889007","error_count":0},"approval_binding":null},"correction_of":null,"diff":{"diff_digest":"24a4e7a9446cfbb1939abb000a676331ca6f20826279c3c25355579fca9fa334","cards":[{"change_id":"change_remove_company","kind":"record_removed","subject_record_id":"record-company","before":{"record_id":"record-company","record_type":"faction","displayed_name":"The Company","status":"canon","authority":"canon","visibility":{"audience":"warden","warden_only":true},"fields":[],"sections":[{"section_id":"summary","body":"A synthetic company."}],"connections":[{"connection_id":"connection_company_ship","target_record_id":"record-ship","relationship":"supplies","state":"current","context":"The company supplies the ship."}],"content_digest":"8f5b1fb1e75a80fb7598b9a2f306aca77cf61bbdde05decc4dbc1c72a68c6918"},"after":null,"property_changes":[],"connection":null,"resolution":null,"derived_backlinks":[]},{"change_id":"change_remove_company_connection","kind":"connection_removed","subject_record_id":"record-company","before":null,"after":null,"property_changes":[],"connection":{"connection_id":"connection_company_ship","target_record_id":"record-ship","relationship":"supplies","state":"current","context":"The company supplies the ship."},"resolution":null,"derived_backlinks":[{"source_record_id":"record-company","target_record_id":"record-ship","connection_id":"connection_company_ship","effect":"removed"}]},{"change_id":"change_resolve_station_company","kind":"reference_resolution","subject_record_id":"record-station","before":{"reference_id":"reference_station_company","connection_id":"connection_one","source_record_id":"record-station","target_record_id":"record-company","relationship":"works-for","state":"current","context":"The station handles salvage contracts.","resolution_required":true,"permitted_unresolved":false},"after":{"reference_id":"reference_station_company","action":"redirect","replacement_target_record_id":"record-ship"},"property_changes":[],"connection":null,"resolution":{"reference_id":"reference_station_company","action":"redirect","replacement_target_record_id":"record-ship"},"derived_backlinks":[{"source_record_id":"record-station","target_record_id":"record-ship","connection_id":"connection_one","effect":"updated"}]}],"affected_record_count":2,"authority_changes":[],"visibility_changes":[],"unresolved_reference_count":0,"impact_digest":"bcc6939297375e52b5f0b9b1b5be1524c2d4788523ab9b18423e9eee94a0abf0","source_changes":[{"change_id":"source_change_remove_company","subject_record_id":"record-company","change_type":"delete","before_source":"---\nid: record-company\ntype: faction\nstatus: canon\nownership: shared\nname: The Company\nvisibility: warden\nwarden_only: true\n---\n\n# The Company\n\n## Summary\n\nA synthetic company.\n\n## Connections\n\n- `supplies` → [[record-ship|The Ship]] (`current`) — The company supplies the ship.","after_source":null},{"change_id":"source_change_update_station","subject_record_id":"record-station","change_type":"update","before_source":"---\nid: record-station\ntype: location\nstatus: review\nownership: shared\nname: Synthetic Station\nvisibility: warden\nwarden_only: true\n---\n\n# Synthetic Station\n\n## Summary\n\nThe station handles salvage contracts.\n\n## Connections\n\n- `works-for` → [[record-company|The Company]] (`current`) — The station handles salvage contracts.","after_source":"---\nid: record-station\ntype: location\nstatus: review\nownership: shared\nname: Synthetic Station\nvisibility: warden\nwarden_only: true\n---\n\n# Synthetic Station\n\n## Summary\n\nThe station handles salvage contracts.\n\n## Connections\n\n- `works-for` → [[record-ship|The Ship]] (`current`) — The station handles salvage contracts."}],"summary":"Remove the company, remove its outgoing supply connection, and redirect the station reference."},"impact_digest":"bcc6939297375e52b5f0b9b1b5be1524c2d4788523ab9b18423e9eee94a0abf0","impact_binding":{"binding":{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-company","record_digest":"8f5b1fb1e75a80fb7598b9a2f306aca77cf61bbdde05decc4dbc1c72a68c6918","expected_editor_workflow_version":7},"impact_digest":"bcc6939297375e52b5f0b9b1b5be1524c2d4788523ab9b18423e9eee94a0abf0"},"resolutions":[{"reference_id":"reference_station_company","action":"redirect","replacement_target_record_id":"record-ship"}],"validation":{"status":"passed","validation_digest":"aaa5a55d8171462baf808a301b41d3b15b1d0aff74e60b66ef0520e9e3889007","error_count":0,"findings":[]},"authority_outcome":[],"visibility_outcome":[],"publication":{"status":"not_published","published_revision":null}}},
-    {"name":"removal_approval_with_outgoing_connections","payload":{"contract_name":"editor_proposal_approval_request","contract_version":1,"operation_request":{"contract_name":"editor_operation_request","contract_version":1,"request_id":"request_approve_remove_outgoing","operation":"editor_proposal_approve","idempotency_key":"idem_approve_remove_outgoing","payload_digest":"aef0ee17ea41d45aac6233c667dce825a0414d7c0142612b92028f340d773aa5","expected_revision":"revision_12","expected_editor_workflow_version":8,"subject_id":"proposal_remove_outgoing","intent_digest":"24a4e7a9446cfbb1939abb000a676331ca6f20826279c3c25355579fca9fa334"},"proposal":{"proposal_id":"proposal_remove_outgoing","proposal_version":1},"proposal_status":"needs_review","mutation_kind":"remove","source_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_campaign_head":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_editor_workflow_version":8,"proposal_payload_digest":"0cdb24c4241692915b04a8381a9b1f7c7a1b4622626048b75ad3ee212829a229","diff_digest":"24a4e7a9446cfbb1939abb000a676331ca6f20826279c3c25355579fca9fa334","validation_status":"passed","validation_digest":"aaa5a55d8171462baf808a301b41d3b15b1d0aff74e60b66ef0520e9e3889007","record_bindings":[{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-company","record_digest":"8f5b1fb1e75a80fb7598b9a2f306aca77cf61bbdde05decc4dbc1c72a68c6918","expected_editor_workflow_version":8},{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-station","record_digest":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","expected_editor_workflow_version":8}],"impact_digest":"bcc6939297375e52b5f0b9b1b5be1524c2d4788523ab9b18423e9eee94a0abf0","impact_binding":{"binding":{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-company","record_digest":"8f5b1fb1e75a80fb7598b9a2f306aca77cf61bbdde05decc4dbc1c72a68c6918","expected_editor_workflow_version":7},"impact_digest":"bcc6939297375e52b5f0b9b1b5be1524c2d4788523ab9b18423e9eee94a0abf0"},"resolutions":[{"reference_id":"reference_station_company","action":"redirect","replacement_target_record_id":"record-ship"}],"authority_outcome":[],"visibility_outcome":[],"warden_confirmed":true,"diff":{"diff_digest":"24a4e7a9446cfbb1939abb000a676331ca6f20826279c3c25355579fca9fa334","confirmed_change_ids":["change_remove_company","change_remove_company_connection","change_resolve_station_company"],"confirmed_authority_change_ids":[],"confirmed_visibility_change_ids":[]},"affected_record_count":2,"confirmed_change_ids":["change_remove_company","change_remove_company_connection","change_resolve_station_company"],"confirmed_authority_change_ids":[],"confirmed_visibility_change_ids":[]}},
+    {"name":"removal_impact_with_outgoing_connections","payload":{"contract_name":"editor_removal_impact","contract_version":1,"binding":{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-company","record_digest":"54542e711ea719b445d748fd88fe06311a66207c3ee962ad2b9241425a73f08c","expected_editor_workflow_version":7},"record":{"record_id":"record-company","record_type":"faction","ownership":"campaign","displayed_name":"The Company","status":"canon","authority":"canon","visibility":{"audience":"warden","warden_only":true},"fields":[],"sections":[{"section_id":"summary","body":"A synthetic company."}],"connections":[{"connection_id":"connection_company_ship","target_record_id":"record-ship","relationship":"supplies","state":"current","context":"The company supplies the ship."}],"content_digest":"54542e711ea719b445d748fd88fe06311a66207c3ee962ad2b9241425a73f08c"},"outgoing_connections":[{"connection_id":"connection_company_ship","target_record_id":"record-ship","relationship":"supplies","state":"current","context":"The company supplies the ship."}],"incoming_references":[{"reference_id":"reference_station_company","connection_id":"connection_one","source_record_id":"record-station","target_record_id":"record-company","relationship":"works-for","state":"current","context":"The station handles salvage contracts.","resolution_required":true,"permitted_unresolved":false}],"backlink_policy":"server_derived_from_typed_connections","impact_digest":"612031c761592c32176579cc294ee8c54854590797d1aca2567853b501b9e378"}},
+    {"name":"removal_proposal_with_outgoing_connections","payload":{"contract_name":"editor_proposal_view","contract_version":1,"proposal_id":"proposal_remove_outgoing","proposal_version":1,"campaign_id":"campaign_alpha","source_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_campaign_head":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"editor_workflow_version":8,"proposal_payload_digest":"948ebbfb12de607caf8e232f5abe8032abe3da85f44f79789e9c9060ecd26a09","mutation_kind":"remove","record_bindings":[{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-company","record_digest":"54542e711ea719b445d748fd88fe06311a66207c3ee962ad2b9241425a73f08c","expected_editor_workflow_version":8},{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-station","record_digest":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","expected_editor_workflow_version":8}],"core_proposal":{"contract_name":"canon_proposal","contract_version":2,"draft":{"draft_id":"draft_editor","authority":"draft","source_set_digest":"9999999999999999999999999999999999999999999999999999999999999999","content_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"proposal":{"proposal_id":"proposal_remove_outgoing","proposal_version":1,"status":"needs_review","campaign_id":"campaign_alpha","base_revision":"revision_12","source_revision":"revision_12","expected_campaign_head":"revision_12","expected_editor_workflow_version":8,"diff_digest":"463a1d0bb36ee9d331f1106054ed75fd67bc1b633f9a4295d68416e2a0230ac8","authority_change_ids":[],"visibility_change_ids":[],"changes":[{"change_id":"change_remove_company","subject_id":"record-company","change_type":"remove","from_authority":"canon","to_authority":"absent","content_digest":"54542e711ea719b445d748fd88fe06311a66207c3ee962ad2b9241425a73f08c"},{"change_id":"change_remove_company_connection","subject_id":"record-company","change_type":"update","from_authority":"canon","to_authority":"canon","content_digest":"40aeda8fb9e26d722a82978e8cbed016f9a5e350ffb62048d1863f1f1c7279db"},{"change_id":"change_resolve_station_company","subject_id":"record-station","change_type":"update","from_authority":"preparation","to_authority":"preparation","content_digest":"64a09fc6210949b3f419e2a7cdeb7f2ecfcfdd5ab3515369ec7784b07cd14c2d"}]},"validation":{"status":"passed","validation_digest":"aaa5a55d8171462baf808a301b41d3b15b1d0aff74e60b66ef0520e9e3889007","error_count":0},"approval_binding":null},"correction_of":null,"diff":{"diff_digest":"463a1d0bb36ee9d331f1106054ed75fd67bc1b633f9a4295d68416e2a0230ac8","cards":[{"change_id":"change_remove_company","kind":"record_removed","subject_record_id":"record-company","before":{"record_id":"record-company","record_type":"faction","ownership":"campaign","displayed_name":"The Company","status":"canon","authority":"canon","visibility":{"audience":"warden","warden_only":true},"fields":[],"sections":[{"section_id":"summary","body":"A synthetic company."}],"connections":[{"connection_id":"connection_company_ship","target_record_id":"record-ship","relationship":"supplies","state":"current","context":"The company supplies the ship."}],"content_digest":"54542e711ea719b445d748fd88fe06311a66207c3ee962ad2b9241425a73f08c"},"after":null,"property_changes":[],"connection":null,"resolution":null,"derived_backlinks":[]},{"change_id":"change_remove_company_connection","kind":"connection_removed","subject_record_id":"record-company","before":null,"after":null,"property_changes":[],"connection":{"connection_id":"connection_company_ship","target_record_id":"record-ship","relationship":"supplies","state":"current","context":"The company supplies the ship."},"resolution":null,"derived_backlinks":[{"source_record_id":"record-company","target_record_id":"record-ship","connection_id":"connection_company_ship","effect":"removed"}]},{"change_id":"change_resolve_station_company","kind":"reference_resolution","subject_record_id":"record-station","before":{"reference_id":"reference_station_company","connection_id":"connection_one","source_record_id":"record-station","target_record_id":"record-company","relationship":"works-for","state":"current","context":"The station handles salvage contracts.","resolution_required":true,"permitted_unresolved":false},"after":{"reference_id":"reference_station_company","action":"redirect","replacement_target_record_id":"record-ship"},"property_changes":[],"connection":null,"resolution":{"reference_id":"reference_station_company","action":"redirect","replacement_target_record_id":"record-ship"},"derived_backlinks":[{"source_record_id":"record-station","target_record_id":"record-ship","connection_id":"connection_one","effect":"updated"}]}],"affected_record_count":2,"authority_changes":[],"visibility_changes":[],"unresolved_reference_count":0,"impact_digest":"612031c761592c32176579cc294ee8c54854590797d1aca2567853b501b9e378","source_changes":[{"change_id":"source_change_remove_company","subject_record_id":"record-company","change_type":"delete","before_source":"---\nid: record-company\ntype: faction\nstatus: canon\nownership: campaign\nname: The Company\nvisibility: warden\nwarden_only: true\n---\n\n# The Company\n\n## Summary\n\nA synthetic company.\n\n## Connections\n\n- `supplies` → [[record-ship|The Ship]] (`current`) — The company supplies the ship.","after_source":null},{"change_id":"source_change_update_station","subject_record_id":"record-station","change_type":"update","before_source":"---\nid: record-station\ntype: location\nstatus: review\nownership: campaign\nname: Synthetic Station\nvisibility: warden\nwarden_only: true\n---\n\n# Synthetic Station\n\n## Summary\n\nThe station handles salvage contracts.\n\n## Connections\n\n- `works-for` → [[record-company|The Company]] (`current`) — The station handles salvage contracts.","after_source":"---\nid: record-station\ntype: location\nstatus: review\nownership: campaign\nname: Synthetic Station\nvisibility: warden\nwarden_only: true\n---\n\n# Synthetic Station\n\n## Summary\n\nThe station handles salvage contracts.\n\n## Connections\n\n- `works-for` → [[record-ship|The Ship]] (`current`) — The station handles salvage contracts."}],"summary":"Remove the company, remove its outgoing supply connection, and redirect the station reference."},"impact_digest":"612031c761592c32176579cc294ee8c54854590797d1aca2567853b501b9e378","impact_binding":{"binding":{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-company","record_digest":"54542e711ea719b445d748fd88fe06311a66207c3ee962ad2b9241425a73f08c","expected_editor_workflow_version":7},"impact_digest":"612031c761592c32176579cc294ee8c54854590797d1aca2567853b501b9e378"},"resolutions":[{"reference_id":"reference_station_company","action":"redirect","replacement_target_record_id":"record-ship"}],"validation":{"status":"passed","validation_digest":"aaa5a55d8171462baf808a301b41d3b15b1d0aff74e60b66ef0520e9e3889007","error_count":0,"findings":[]},"authority_outcome":[],"visibility_outcome":[],"publication":{"status":"not_published","published_revision":null}}},
+    {"name":"removal_approval_with_outgoing_connections","payload":{"contract_name":"editor_proposal_approval_request","contract_version":1,"operation_request":{"contract_name":"editor_operation_request","contract_version":1,"request_id":"request_approve_remove_outgoing","operation":"editor_proposal_approve","idempotency_key":"idem_approve_remove_outgoing","payload_digest":"d4c0daefcc2a0356acead2bf9885b759cb8d35548f9c27795a2869116f3e1918","expected_revision":"revision_12","expected_editor_workflow_version":8,"subject_id":"proposal_remove_outgoing","intent_digest":"463a1d0bb36ee9d331f1106054ed75fd67bc1b633f9a4295d68416e2a0230ac8"},"proposal":{"proposal_id":"proposal_remove_outgoing","proposal_version":1},"proposal_status":"needs_review","mutation_kind":"remove","source_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_campaign_head":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expected_editor_workflow_version":8,"proposal_payload_digest":"948ebbfb12de607caf8e232f5abe8032abe3da85f44f79789e9c9060ecd26a09","diff_digest":"463a1d0bb36ee9d331f1106054ed75fd67bc1b633f9a4295d68416e2a0230ac8","validation_status":"passed","validation_digest":"aaa5a55d8171462baf808a301b41d3b15b1d0aff74e60b66ef0520e9e3889007","record_bindings":[{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-company","record_digest":"54542e711ea719b445d748fd88fe06311a66207c3ee962ad2b9241425a73f08c","expected_editor_workflow_version":8},{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-station","record_digest":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","expected_editor_workflow_version":8}],"impact_digest":"612031c761592c32176579cc294ee8c54854590797d1aca2567853b501b9e378","impact_binding":{"binding":{"campaign_id":"campaign_alpha","base_revision":{"revision_id":"revision_12","ordinal":12,"tree_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"record_id":"record-company","record_digest":"54542e711ea719b445d748fd88fe06311a66207c3ee962ad2b9241425a73f08c","expected_editor_workflow_version":7},"impact_digest":"612031c761592c32176579cc294ee8c54854590797d1aca2567853b501b9e378"},"resolutions":[{"reference_id":"reference_station_company","action":"redirect","replacement_target_record_id":"record-ship"}],"authority_outcome":[],"visibility_outcome":[],"warden_confirmed":true,"diff":{"diff_digest":"463a1d0bb36ee9d331f1106054ed75fd67bc1b633f9a4295d68416e2a0230ac8","confirmed_change_ids":["change_remove_company","change_remove_company_connection","change_resolve_station_company"],"confirmed_authority_change_ids":[],"confirmed_visibility_change_ids":[]},"affected_record_count":2,"confirmed_change_ids":["change_remove_company","change_remove_company_connection","change_resolve_station_company"],"confirmed_authority_change_ids":[],"confirmed_visibility_change_ids":[]}},
     {
       "name": "historical_record_view",
       "payload": {
@@ -1143,6 +1151,7 @@
         "record": {
           "record_id": "record-station",
           "record_type": "location",
+          "ownership": "campaign",
           "displayed_name": "Synthetic Station",
           "status": "review",
           "authority": "preparation",
@@ -1175,7 +1184,7 @@
               "context": "The station handles salvage contracts."
             }
           ],
-          "content_digest": "7dc96cbbf380c52e6e7915be47b568f8d5cc5d7f20f28a86b1b0d34390bac510"
+          "content_digest": "1942a52e8841f5f540124f29ea4495a2a65258d032c30adf69bd2fac94391d70"
         }
       }
     },
@@ -1281,6 +1290,7 @@
         "after": {
           "record_id": "record-new",
           "record_type": "npc",
+          "ownership": "campaign",
           "displayed_name": "New Keeper",
           "status": "draft",
           "authority": "preparation",
@@ -1301,7 +1311,7 @@
             }
           ],
           "connections": [],
-          "content_digest": "9346f2c1f65bdc21ad787ce774203031df55cf897e3b2b0c6ea639a40d323462"
+          "content_digest": "a44492a1f72aeeaff6187017b9d1f9ed69409d07f9ddcec5d1221c83dd18b4e6"
         },
         "property_changes": [],
         "connection": null,
@@ -1318,6 +1328,7 @@
         "before": {
           "record_id": "record-station",
           "record_type": "location",
+          "ownership": "campaign",
           "displayed_name": "Synthetic Station",
           "status": "review",
           "authority": "preparation",
@@ -1350,11 +1361,12 @@
               "context": "The station handles salvage contracts."
             }
           ],
-          "content_digest": "7dc96cbbf380c52e6e7915be47b568f8d5cc5d7f20f28a86b1b0d34390bac510"
+          "content_digest": "1942a52e8841f5f540124f29ea4495a2a65258d032c30adf69bd2fac94391d70"
         },
         "after": {
           "record_id": "record-station",
           "record_type": "location",
+          "ownership": "campaign",
           "displayed_name": "Synthetic Station Renamed",
           "status": "canon",
           "authority": "canon",
@@ -1394,7 +1406,7 @@
               "context": "The station signals the ship."
             }
           ],
-          "content_digest": "830de07252135c9db98d10856d2ca7934b8348201c92accafe652a11aef01609"
+          "content_digest": "cebacea34ceb7306a6b0b99e9aced71e89c61ed6d175c569714ca950d8a4128a"
         },
         "property_changes": [
           {
@@ -1443,6 +1455,7 @@
         "before": {
           "record_id": "record-company",
           "record_type": "faction",
+          "ownership": "campaign",
           "displayed_name": "The Company",
           "status": "canon",
           "authority": "canon",
@@ -1458,7 +1471,7 @@
             }
           ],
           "connections": [],
-          "content_digest": "ed1d65b9bd7be83dbed1367c3417697f9d931f87f6660f5c49f9f062321a9965"
+          "content_digest": "a9f8d4bade057fab52262a11b31dcdddbafb9b5984c31128488b6d97c0279281"
         },
         "after": null,
         "property_changes": [],

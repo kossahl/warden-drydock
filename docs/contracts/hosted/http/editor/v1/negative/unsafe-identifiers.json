@@ -12,7 +12,7 @@
       "request_id": "request_unsafe",
       "operation": "editor_record_create",
       "idempotency_key": "idem_unsafe",
-      "payload_digest": "9a8d04facb424826aaa49042920057c8a42f9821d2ccb6987339d77d53809b75",
+      "payload_digest": "c235a705d08f0f5847d0c690a2da10bdd3b3b1374810b5f80d98f291e420e054",
       "expected_revision": "revision_12",
       "expected_editor_workflow_version": 7,
       "subject_id": "record-other"
@@ -31,6 +31,7 @@
     "candidate": {
       "record_id": "record-new",
       "record_type": "npc",
+      "ownership": "campaign",
       "displayed_name": "New Keeper",
       "status": "draft",
       "authority": "preparation",
@@ -41,7 +42,7 @@
       "fields": [],
       "sections": [],
       "connections": [],
-      "content_digest": "bda0f2ab4152f83a9db205642b0e4280f1403013532a5fcc10832394a1bb220e"
+      "content_digest": "3235590614543fa24ba187e0926315208e8dd01f9d9845f9c1d3a330bfce9084"
     }
   }
 }

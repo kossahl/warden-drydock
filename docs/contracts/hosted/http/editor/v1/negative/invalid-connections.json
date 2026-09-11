@@ -15,7 +15,7 @@
       "request_id": "request_bad_connection",
       "operation": "editor_record_edit",
       "idempotency_key": "idem_bad_connection",
-      "payload_digest": "db7de305ff6680728d22b3f69f929f51bda57d8ed2681ff6051b5814eae89156",
+      "payload_digest": "14865856895e7640237a33f56bdee8dd7fb47e7fec5f1723df21dcf6a48d594d",
       "expected_revision": "revision_12",
       "expected_editor_workflow_version": 7,
       "subject_id": "record-station"
@@ -34,6 +34,7 @@
     "candidate": {
       "record_id": "record-station",
       "record_type": "location",
+      "ownership": "campaign",
       "displayed_name": "Station",
       "status": "review",
       "authority": "preparation",
@@ -52,7 +53,7 @@
           "context": "Unsafe target."
         }
       ],
-      "content_digest": "a01e172b9fd0c72a646590d795a3819aef999f62387dfc90531eb2051086e789"
+      "content_digest": "611565e4158e6f1294d9c854a95f614071721a6b7f223aed7941cf2d824ec80a"
     }
   }
 }

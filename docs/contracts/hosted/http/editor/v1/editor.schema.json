@@ -9,6 +9,7 @@
     "editor_record_member_ids",
     "editor_logical_ids",
     "editor_status_authority",
+    "editor_campaign_ownership",
     "editor_mutation_shapes",
     "editor_publication_binding",
     "editor_history_read_only",
@@ -468,6 +469,7 @@
         "record_id",
         "record_type",
         "displayed_name",
+        "ownership",
         "status",
         "authority",
         "visibility",
@@ -487,6 +489,9 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 200
+        },
+        "ownership": {
+          "const": "campaign"
         },
         "status": {
           "$ref": "#/$defs/read_status"

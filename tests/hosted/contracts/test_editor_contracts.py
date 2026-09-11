@@ -32,6 +32,7 @@ def record_content_digest(record: dict) -> str:
             "record_id",
             "record_type",
             "displayed_name",
+            "ownership",
             "status",
             "authority",
             "visibility",
@@ -109,6 +110,8 @@ def source_snapshots_match(diff: dict) -> bool:
             metadata = frontmatter(source_text)
             if not required_metadata.issubset(metadata) or metadata.get("id") != subject:
                 return False
+            if metadata["ownership"] != "campaign":
+                return False
             structured = next(
                 (
                     card[side]
@@ -123,6 +126,7 @@ def source_snapshots_match(diff: dict) -> bool:
                 if any(
                     (
                         structured["record_type"] != metadata["type"],
+                        structured["ownership"] != metadata["ownership"],
                         structured["displayed_name"] != metadata["name"],
                         structured["status"] != metadata["status"],
                         structured["visibility"]["audience"] != metadata["visibility"],
@@ -155,19 +159,36 @@ def source_snapshots_match(diff: dict) -> bool:
                 if resolution is None:
                     return False
                 reference = resolution["before"]
-                target = (
-                    resolution["after"]["replacement_target_record_id"]
-                    if side == "after"
-                    else reference["target_record_id"]
-                )
-                expected_connections = [
-                    (
-                        target,
-                        reference["relationship"],
-                        reference["state"],
-                        reference["context"],
-                    )
-                ]
+                if side == "before":
+                    target = reference["target_record_id"]
+                    expected_connections = [
+                        (
+                            target,
+                            reference["relationship"],
+                            reference["state"],
+                            reference["context"],
+                        )
+                    ]
+                elif resolution["after"]["action"] == "redirect":
+                    expected_connections = [
+                        (
+                            resolution["after"]["replacement_target_record_id"],
+                            reference["relationship"],
+                            reference["state"],
+                            reference["context"],
+                        )
+                    ]
+                elif resolution["after"]["action"] == "accept_unresolved":
+                    expected_connections = [
+                        (
+                            reference["target_record_id"],
+                            reference["relationship"],
+                            reference["state"],
+                            reference["context"],
+                        )
+                    ]
+                else:
+                    expected_connections = []
             parsed_connections, errors = parse_connections(
                 source_text,
                 source_id=subject,
@@ -224,6 +245,8 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         return "invalid_record_type", "candidate.record_type"
 
     if isinstance(candidate, dict):
+        if candidate.get("ownership") != "campaign":
+            return "proposal_validation_failure", "candidate.ownership"
         expected_authority = {
             "canon": "canon",
             "revealed": "revealed",
@@ -242,6 +265,18 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         or binding.get("record_id") != prior_proposal.get("record_id")
     ):
         return "invalid_correction", "prior_proposal"
+
+    if operation.get("operation") == "editor_proposal_correct" and instance.get("mutation_kind") == "remove":
+        impact_binding = instance.get("impact_binding")
+        if not isinstance(impact_binding, dict):
+            return "proposal_validation_failure", "impact_binding"
+        if instance.get("impact_digest") != impact_binding.get("impact_digest"):
+            return "proposal_validation_failure", "impact_digest"
+        if impact_binding.get("binding", {}).get("base_revision") != binding.get("base_revision"):
+            return "proposal_validation_failure", "impact_binding.binding.base_revision"
+        current_impact_digest = context.get("current_removal_impact_digest")
+        if current_impact_digest is not None and instance.get("impact_digest") != current_impact_digest:
+            return "proposal_validation_failure", "impact_digest"
 
     impact = fixture.get("impact", {})
     required_reference_id = impact.get("required_reference_id")
@@ -370,6 +405,11 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "semantic_context": {"current_record_type": "location"},
             }),
         )
+        edit["candidate"]["ownership"] = "shared"
+        self.assertEqual(
+            ("proposal_validation_failure", "candidate.ownership"),
+            evaluate_semantic_failure({"instance": edit}),
+        )
 
         correction = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "correction_request")
@@ -401,6 +441,94 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         self.assertEqual(
             ("proposal_approval_conflict", "operation_request.intent_digest"),
             evaluate_semantic_failure({"instance": approval}),
+        )
+
+    def test_non_redirect_resolution_snapshots_preserve_their_declared_action(self) -> None:
+        removal = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_proposal_with_outgoing_connections"
+            )
+        )
+        resolution_card = next(
+            card for card in removal["diff"]["cards"] if card["kind"] == "reference_resolution"
+        )
+        source = next(
+            source
+            for source in removal["diff"]["source_changes"]
+            if source["subject_record_id"] == resolution_card["subject_record_id"]
+        )
+        for action in ("remove_reference", "accept_unresolved"):
+            with self.subTest(action=action):
+                candidate = deepcopy(removal)
+                card = next(
+                    card
+                    for card in candidate["diff"]["cards"]
+                    if card["kind"] == "reference_resolution"
+                )
+                card["after"] = {
+                    "reference_id": card["after"]["reference_id"],
+                    "action": action,
+                    "replacement_target_record_id": None,
+                }
+                card["resolution"] = deepcopy(card["after"])
+                candidate_source = next(
+                    item
+                    for item in candidate["diff"]["source_changes"]
+                    if item["subject_record_id"] == card["subject_record_id"]
+                )
+                if action == "remove_reference":
+                    candidate_source["after_source"] = "\n".join(
+                        line
+                        for line in candidate_source["after_source"].splitlines()
+                        if "[[record-ship|The Ship]]" not in line
+                    )
+                else:
+                    candidate_source["after_source"] = candidate_source["after_source"].replace(
+                        "[[record-ship|The Ship]]", "[[record-company|The Company]]"
+                    )
+                self.assertTrue(source_snapshots_match(candidate["diff"]))
+
+        invalid = deepcopy(removal)
+        invalid["diff"]["source_changes"][1]["after_source"] = invalid["diff"]["source_changes"][1]["after_source"].replace(
+            "ownership: campaign", "ownership: shared"
+        )
+        self.assertFalse(source_snapshots_match(invalid["diff"]))
+
+    def test_removal_correction_rebinds_current_impact(self) -> None:
+        correction = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "correction_request")
+        )
+        current_revision = {
+            "revision_id": "revision_13",
+            "ordinal": 13,
+            "tree_digest": "c" * 64,
+        }
+        current_impact_digest = "d" * 64
+        correction["mutation_kind"] = "remove"
+        correction["candidate"] = None
+        correction["binding"]["base_revision"] = current_revision
+        correction["operation_request"]["expected_revision"] = current_revision["revision_id"]
+        correction["impact_digest"] = current_impact_digest
+        correction["impact_binding"] = {
+            "binding": {
+                **correction["binding"],
+                "expected_editor_workflow_version": 7,
+            },
+            "impact_digest": current_impact_digest,
+        }
+        context = {
+            "current_head_revision": current_revision["revision_id"],
+            "current_removal_impact_digest": current_impact_digest,
+        }
+        self.assertIsNone(evaluate_semantic_failure({"instance": correction, "semantic_context": context}))
+
+        correction["impact_digest"] = "e" * 64
+        correction["impact_binding"]["impact_digest"] = "e" * 64
+        self.assertEqual(
+            ("proposal_validation_failure", "impact_digest"),
+            evaluate_semantic_failure({"instance": correction, "semantic_context": context}),
         )
 
     def test_digest_projections_are_deterministic(self) -> None:
@@ -520,7 +648,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
     def test_digest_projections_name_every_source_field(self) -> None:
         projections = self.invariants["digest_projections"]
         expected_fields = {
-            "record_content_digest": {"record_id", "record_type", "displayed_name", "status", "authority", "visibility", "fields", "sections", "connections", "content_digest"},
+            "record_content_digest": {"record_id", "record_type", "displayed_name", "ownership", "status", "authority", "visibility", "fields", "sections", "connections", "content_digest"},
             "impact_digest": {"contract_name", "contract_version", "binding", "impact_digest", "record", "outgoing_connections", "incoming_references", "backlink_policy"},
             "diff_digest": {"diff_digest", "cards", "affected_record_count", "authority_changes", "visibility_changes", "unresolved_reference_count", "impact_digest", "source_changes", "summary"},
             "validation_digest": {"status", "validation_digest", "error_count", "findings"},
@@ -619,6 +747,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                         )
                         if structured is not None:
                             self.assertEqual(structured["record_type"], metadata["type"])
+                            self.assertEqual(structured["ownership"], metadata["ownership"])
                             self.assertEqual(structured["displayed_name"], metadata["name"])
                             self.assertEqual(structured["status"], metadata["status"])
                             self.assertEqual(
@@ -654,19 +783,35 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                         else:
                             self.assertIsNotNone(resolution)
                             reference = resolution["before"]
-                            target = (
-                                resolution["after"]["replacement_target_record_id"]
-                                if side == "after"
-                                else reference["target_record_id"]
-                            )
-                            expected_connections = [
-                                (
-                                    target,
-                                    reference["relationship"],
-                                    reference["state"],
-                                    reference["context"],
-                                )
-                            ]
+                            if side == "before":
+                                expected_connections = [
+                                    (
+                                        reference["target_record_id"],
+                                        reference["relationship"],
+                                        reference["state"],
+                                        reference["context"],
+                                    )
+                                ]
+                            elif resolution["after"]["action"] == "redirect":
+                                expected_connections = [
+                                    (
+                                        resolution["after"]["replacement_target_record_id"],
+                                        reference["relationship"],
+                                        reference["state"],
+                                        reference["context"],
+                                    )
+                                ]
+                            elif resolution["after"]["action"] == "accept_unresolved":
+                                expected_connections = [
+                                    (
+                                        reference["target_record_id"],
+                                        reference["relationship"],
+                                        reference["state"],
+                                        reference["context"],
+                                    )
+                                ]
+                            else:
+                                expected_connections = []
                         self.assertEqual(
                             expected_connections,
                             [

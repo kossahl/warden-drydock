@@ -42,12 +42,15 @@ revision. The server rejects a stale revision, stale record digest, or stale
 workflow counter without merging or rebasing.
 Approval or rejection against a changed head maps to HTTP 409 `stale_revision`.
 
-The editor document has typed identity, adapter fields, adapter sections,
-status, derived authority, explicit visibility metadata, the Warden-only flag,
-and directed outgoing connections. A connection names a selected domain
-target, relationship, state, context, and occurrence ID. The server derives
-incoming backlinks from typed outgoing connections. The client cannot submit
-reverse backlinks or server edge IDs.
+The editor document has typed identity, campaign ownership, adapter fields,
+adapter sections, status, derived authority, explicit visibility metadata, the
+Warden-only flag, and directed outgoing connections. Editor record documents
+always carry `ownership: campaign`; the server derives that value from the
+campaign revision so shared or framework-owned documents cannot bypass adapter
+validation. A connection names a selected domain target, relationship, state,
+context, and occurrence ID. The server derives incoming backlinks from typed
+outgoing connections. The client cannot submit reverse backlinks or server
+edge IDs.
 
 The current editor read response carries the revision-bound
 `adapter_definition`. It lists creatable record types, allowed relationship and
@@ -69,12 +72,13 @@ redirected to a selected existing record, or explicitly accepted unresolved
 when the validator marks that reference as permitted. The proposal binds the
 impact digest so the resolution list cannot be applied to a different graph.
 That exact binding and complete typed resolution set remain required on
-correction, rejection, and approval; an approval cannot confirm a different
-mutation. A removal correction repeats the exact impact binding and must
-resolve the complete impact document again, with exactly one action for each
-required reference. The proposal must contain exactly one matching resolution
-card, affected-record binding, and derived graph effect for each impact
-reference. Ordinary connection cards are derived from record before/after
+rejection and approval; an approval cannot confirm a different mutation. A
+removal correction preserves the prior proposal link but reruns impact analysis
+against the explicitly selected current-head base revision. Its new impact
+binding and digest, rather than the stale proposal's old impact, must be
+resolved completely with exactly one action for each required reference. The
+proposal must contain exactly one matching resolution card, affected-record
+binding, and derived graph effect for each impact reference. Ordinary connection cards are derived from record before/after
 documents; for a removal redirect, the reference-resolution card is the
 authoritative connection delta and replaces a duplicate surviving-record or
 connection card. Omissions, extras, no-ops, and directionally inconsistent
@@ -104,8 +108,11 @@ sort lexicographically, array order remains significant, and canonical text
 normalizes CRLF and CR to LF without trimming.
 
 Every `editor_diff` includes exactly one `source_changes` entry for each
-affected record, with the exact before and after Markdown source. The
-frontmatter, headings, fields, sections, and typed connections in each
+affected record, with the exact before and after Markdown source. Each source
+snapshot is campaign-owned, and for a `remove_reference` resolution its after
+source omits the affected connection; `accept_unresolved` retains the original
+target; `redirect` uses the replacement target. The frontmatter, headings,
+fields, sections, and typed connections in each
 non-null snapshot must agree with its structured record or reference-resolution
 card. Clients render these server-produced snapshots directly during exact
 proposal review; they do not reconstruct source from parsed record documents.

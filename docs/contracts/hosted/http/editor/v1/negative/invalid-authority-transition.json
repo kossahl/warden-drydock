@@ -12,7 +12,7 @@
       "request_id": "request_bad_authority",
       "operation": "editor_record_edit",
       "idempotency_key": "idem_bad_authority",
-      "payload_digest": "7f41c5ec0fd889d152958f92dd800d360f3b04226f117b3720b45d253881a082",
+      "payload_digest": "cace671e3abd34c01879fbf47fab37337d57ff96328ff98bd2b5fdf4db450886",
       "expected_revision": "revision_12",
       "expected_editor_workflow_version": 7,
       "subject_id": "record-station"
@@ -31,6 +31,7 @@
     "candidate": {
       "record_id": "record-station",
       "record_type": "location",
+      "ownership": "campaign",
       "displayed_name": "Station",
       "status": "review",
       "authority": "canon",
@@ -41,7 +42,7 @@
       "fields": [],
       "sections": [],
       "connections": [],
-      "content_digest": "488ae95a1cfce5b1601620742332f4bb6e4c1065ece4263b953a78f2fee171f8"
+      "content_digest": "de13098ce2dea4211c96c249689c3fd039f972ae7fc142fe504ed716a7e9ecac"
     }
   }
 }
