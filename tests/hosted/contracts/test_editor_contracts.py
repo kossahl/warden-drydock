@@ -13,7 +13,6 @@ from warden_drydock.standalone import _section_lines, frontmatter, parse_connect
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_ROOT = ROOT / "docs" / "contracts" / "hosted" / "http" / "editor" / "v1"
-NAMELESS_RECORD_TYPES = {"session", "session-prep", "debrief"}
 
 
 def canonical_digest(value: object, *, ensure_ascii: bool = True) -> str:
@@ -83,7 +82,23 @@ def projection_digest(value: dict, definition: dict) -> str:
     return canonical_digest(projection)
 
 
-def source_snapshots_match(diff: dict) -> bool:
+def _without_connection_lines(source_text: str) -> str:
+    parsed, errors = parse_connections(
+        source_text,
+        source_id="synthetic-source",
+        path=Path("synthetic.md"),
+    )
+    if errors:
+        return ""
+    connection_lines = {item.line for item in parsed}
+    return "\n".join(
+        line
+        for line_number, line in enumerate(source_text.splitlines(), start=1)
+        if line_number not in connection_lines and line.strip()
+    )
+
+
+def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None) -> bool:
     required_metadata = {
         "id",
         "type",
@@ -103,6 +118,8 @@ def source_snapshots_match(diff: dict) -> bool:
             ),
             None,
         )
+        connection_lists = {}
+        has_structured_card = False
         for side in ("before", "after"):
             source_text = source.get(f"{side}_source")
             if source_text is None:
@@ -110,7 +127,11 @@ def source_snapshots_match(diff: dict) -> bool:
             metadata = frontmatter(source_text)
             if not required_metadata.issubset(metadata) or metadata.get("id") != subject:
                 return False
-            if metadata["type"] not in NAMELESS_RECORD_TYPES and "name" not in metadata:
+            record_definition = (
+                (adapter_definition or {}).get("record_definitions", {}).get(metadata["type"])
+            )
+            name_required = adapter_definition is None or record_definition is None or "name" in record_definition.get("required_fields", [])
+            if name_required and "name" not in metadata:
                 return False
             if metadata["ownership"] != "campaign":
                 return False
@@ -126,6 +147,7 @@ def source_snapshots_match(diff: dict) -> bool:
                 None,
             )
             if structured is not None:
+                has_structured_card = True
                 if any(
                     (
                         structured["record_type"] != metadata["type"],
@@ -149,58 +171,63 @@ def source_snapshots_match(diff: dict) -> bool:
                     ]
                     if section["body"].splitlines() != actual:
                         return False
-                expected_connections = [
-                    (
-                        connection["target_record_id"],
-                        connection["relationship"],
-                        connection["state"],
-                        connection["context"],
-                    )
-                    for connection in structured["connections"]
-                ]
             else:
                 if resolution is None:
                     return False
-                reference = resolution["before"]
-                if side == "before":
-                    target = reference["target_record_id"]
-                    expected_connections = [
-                        (
-                            target,
-                            reference["relationship"],
-                            reference["state"],
-                            reference["context"],
-                        )
-                    ]
-                elif resolution["after"]["action"] == "redirect":
-                    expected_connections = [
-                        (
-                            resolution["after"]["replacement_target_record_id"],
-                            reference["relationship"],
-                            reference["state"],
-                            reference["context"],
-                        )
-                    ]
-                elif resolution["after"]["action"] == "accept_unresolved":
-                    expected_connections = [
-                        (
-                            reference["target_record_id"],
-                            reference["relationship"],
-                            reference["state"],
-                            reference["context"],
-                        )
-                    ]
-                else:
-                    expected_connections = []
-            parsed_connections, errors = parse_connections(
+            parsed, errors = parse_connections(
                 source_text,
                 source_id=subject,
                 path=Path("synthetic.md"),
             )
-            if errors or expected_connections != [
+            if errors:
+                return False
+            connection_lists[side] = [
                 (item.target_id, item.relationship, item.state, item.context)
-                for item in parsed_connections
+                for item in parsed
+            ]
+            if structured is not None and connection_lists[side] != [
+                (
+                    connection["target_record_id"],
+                    connection["relationship"],
+                    connection["state"],
+                    connection["context"],
+                )
+                for connection in structured["connections"]
             ]:
+                return False
+
+        if resolution is not None and not has_structured_card:
+            before_source = source.get("before_source")
+            after_source = source.get("after_source")
+            if before_source is None or after_source is None:
+                return False
+            if _without_connection_lines(before_source) != _without_connection_lines(after_source):
+                return False
+            reference = resolution["before"]
+            affected = (
+                reference["target_record_id"],
+                reference["relationship"],
+                reference["state"],
+                reference["context"],
+            )
+            before_connections = connection_lists["before"]
+            if affected not in before_connections:
+                return False
+            expected_after = list(before_connections)
+            affected_index = expected_after.index(affected)
+            action = resolution["after"]["action"]
+            if action == "remove_reference":
+                expected_after.pop(affected_index)
+            elif action == "redirect":
+                expected_after[affected_index] = (
+                    resolution["after"]["replacement_target_record_id"],
+                    reference["relationship"],
+                    reference["state"],
+                    reference["context"],
+                )
+            elif action != "accept_unresolved":
+                return False
+            if connection_lists["after"] != expected_after:
                 return False
     return True
 
@@ -300,7 +327,10 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
             source_subjects = [source.get("subject_record_id") for source in diff.get("source_changes", [])]
             if len(source_subjects) != len(set(source_subjects)) or set(source_subjects) != card_subjects:
                 return "mutation_consistency", "diff.source_changes"
-            if not source_snapshots_match(diff):
+            if not source_snapshots_match(
+                diff,
+                adapter_definition=context.get("adapter_definition"),
+            ):
                 return "mutation_consistency", "diff.source_changes"
         removed_card = next(
             (card for card in diff.get("cards", []) if card.get("kind") == "record_removed"),
@@ -474,6 +504,14 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             for source in removal["diff"]["source_changes"]
             if source["subject_record_id"] == resolution_card["subject_record_id"]
         )
+        unrelated_connection = "- `signals` → [[record-other|Other]] (`current`) — The station signals elsewhere."
+        second_removed_reference = "- `knows` → [[record-company|The Company]] (`former`) — The station knew the company."
+        for side in ("before_source", "after_source"):
+            source[side] = source[side].replace(
+                "## Connections\n",
+                f"## Connections\n\n{unrelated_connection}\n{second_removed_reference}\n",
+            )
+        self.assertTrue(source_snapshots_match(removal["diff"]))
         for action in ("remove_reference", "accept_unresolved"):
             with self.subTest(action=action):
                 candidate = deepcopy(removal)
@@ -508,6 +546,13 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         invalid = deepcopy(removal)
         invalid["diff"]["source_changes"][1]["after_source"] = invalid["diff"]["source_changes"][1]["after_source"].replace(
             "ownership: campaign", "ownership: shared"
+        )
+        self.assertFalse(source_snapshots_match(invalid["diff"]))
+
+        invalid = deepcopy(removal)
+        invalid["diff"]["source_changes"][1]["after_source"] = invalid["diff"]["source_changes"][1]["after_source"].replace(
+            "## Summary\n\nThe station handles salvage contracts.",
+            "## Summary\n\nAn unreviewed prose change.",
         )
         self.assertFalse(source_snapshots_match(invalid["diff"]))
 
@@ -768,8 +813,6 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                                 "warden_only",
                             }.issubset(metadata)
                         )
-                        if metadata["type"] not in NAMELESS_RECORD_TYPES:
-                            self.assertIn("name", metadata)
                         self.assertEqual(subject, metadata["id"])
                         if metadata.get("name"):
                             self.assertEqual(
@@ -881,6 +924,22 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             "session-prep": "Session Preparation",
             "debrief": "Session Debrief",
         }
+        adapter_definition = {
+            "record_definitions": {
+                record_type: {
+                    "required_fields": [
+                        "id",
+                        "type",
+                        "status",
+                        "ownership",
+                        "date",
+                        "visibility",
+                        "warden_only",
+                    ]
+                }
+                for record_type in headings
+            }
+        }
         for record_type, heading in headings.items():
             subject = f"record-{record_type.replace('-', '')}"
             source = "\n".join([
@@ -925,7 +984,12 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 }],
             }
             with self.subTest(record_type=record_type):
-                self.assertTrue(source_snapshots_match(diff))
+                self.assertTrue(
+                    source_snapshots_match(
+                        diff,
+                        adapter_definition=adapter_definition,
+                    )
+                )
 
         named = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
@@ -933,7 +997,25 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         named["diff"]["source_changes"][0]["before_source"] = named["diff"]["source_changes"][0]["before_source"].replace(
             "name: Synthetic Station\n", ""
         )
-        self.assertFalse(source_snapshots_match(named["diff"]))
+        self.assertFalse(
+            source_snapshots_match(
+                named["diff"],
+                adapter_definition={
+                    "record_definitions": {
+                        "location": {
+                            "required_fields": [
+                                "id",
+                                "type",
+                                "status",
+                                "name",
+                                "visibility",
+                                "warden_only",
+                            ]
+                        }
+                    }
+                },
+            )
+        )
 
     def test_approval_requests_bind_changes_without_source_snapshots(self) -> None:
         approval = next(item["payload"] for item in self.examples if item["name"] == "approval_request")
