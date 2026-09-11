@@ -95,7 +95,7 @@ def _without_connection_lines(source_text: str) -> str:
     return "\n".join(
         line
         for line_number, line in enumerate(source_text.splitlines(), start=1)
-        if line_number not in connection_lines and line.strip()
+        if line_number not in connection_lines
     )
 
 
@@ -270,8 +270,11 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
                     actual = [
                         line
                         for _, line in _section_lines(source_text, section["section_id"])
-                        if line.strip()
                     ]
+                    while actual and not actual[0].strip():
+                        actual.pop(0)
+                    while actual and not actual[-1].strip():
+                        actual.pop()
                     if section["body"].splitlines() != actual:
                         return False
                 expected_sections = [
@@ -291,7 +294,7 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
                 ]
                 if len(top_level_headings) != 1:
                     return False
-                if metadata.get("name") and top_level_headings[0] != metadata["name"]:
+                if top_level_headings[0] != displayed_name:
                     return False
             else:
                 if not resolution_cards:
@@ -386,9 +389,25 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     ):
         return "unsafe_binding", "operation_request.expected_revision"
 
+    if "expected_editor_workflow_version" in operation:
+        for binding_source in (binding, instance):
+            if (
+                "expected_editor_workflow_version" in binding_source
+                and operation["expected_editor_workflow_version"]
+                != binding_source["expected_editor_workflow_version"]
+            ):
+                return "unsafe_binding", "operation_request.expected_editor_workflow_version"
+
     if operation.get("operation") == "editor_proposal_correct":
         prior_ref = instance.get("prior_proposal", {})
         if operation.get("subject_id") != prior_ref.get("proposal_id"):
+            return "unsafe_binding", "operation_request.subject_id"
+    elif operation.get("operation") in {
+        "editor_proposal_approve",
+        "editor_proposal_reject",
+    }:
+        proposal = instance.get("proposal", {})
+        if operation.get("subject_id") != proposal.get("proposal_id"):
             return "unsafe_binding", "operation_request.subject_id"
     elif operation and operation.get("operation") in {"editor_record_create", "editor_record_edit", "editor_record_remove"} and operation.get("subject_id") != binding.get("record_id"):
         return "unsafe_binding", "operation_request.subject_id"
@@ -747,7 +766,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({"instance": invalid, "semantic_context": context}),
         )
 
-    def test_operation_revision_and_empty_target_set_are_bound(self) -> None:
+    def test_operation_revision_workflow_and_empty_target_set_are_bound(self) -> None:
         edit = deepcopy(
             next(
                 item["payload"]
@@ -760,6 +779,36 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             ("unsafe_binding", "operation_request.expected_revision"),
             evaluate_semantic_failure({"instance": edit}),
         )
+
+        edit = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "edit_record_with_connections_request"
+            )
+        )
+        edit["operation_request"]["expected_editor_workflow_version"] = 8
+        self.assertEqual(
+            ("unsafe_binding", "operation_request.expected_editor_workflow_version"),
+            evaluate_semantic_failure({"instance": edit}),
+        )
+
+        for name in ("approval_request", "rejection_request"):
+            action = deepcopy(next(item["payload"] for item in self.examples if item["name"] == name))
+            action["operation_request"]["expected_editor_workflow_version"] = 7
+            with self.subTest(action=f"{name}-workflow"):
+                self.assertEqual(
+                    ("unsafe_binding", "operation_request.expected_editor_workflow_version"),
+                    evaluate_semantic_failure({"instance": action}),
+                )
+
+            action = deepcopy(next(item["payload"] for item in self.examples if item["name"] == name))
+            action["operation_request"]["subject_id"] = "another-proposal"
+            with self.subTest(action=name):
+                self.assertEqual(
+                    ("unsafe_binding", "operation_request.subject_id"),
+                    evaluate_semantic_failure({"instance": action}),
+                )
 
         edit = deepcopy(
             next(
@@ -824,7 +873,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                         line
                         for line in candidate_source["after_source"].splitlines()
                         if "[[record-ship|The Ship]]" not in line
-                    )
+                    ) + "\n"
                 else:
                     candidate_source["after_source"] = candidate_source["after_source"].replace(
                         "[[record-ship|The Ship]]", "[[record-company|The Company]]"
@@ -884,6 +933,40 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         second["resolution"] = deepcopy(second["after"])
         removal["diff"]["cards"].append(second)
         self.assertTrue(source_snapshots_match(removal["diff"]))
+
+    def test_source_snapshot_comparisons_preserve_blank_lines(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        source = proposal["diff"]["source_changes"][0]
+        card = proposal["diff"]["cards"][0]
+        card["before"]["sections"][0]["body"] = "First paragraph.\n\nSecond paragraph."
+        card["after"]["sections"][0]["body"] = "First paragraph.\n\nSecond paragraph."
+        source["before_source"] = source["before_source"].replace(
+            "A quiet station.", "First paragraph.\n\nSecond paragraph."
+        )
+        source["after_source"] = source["after_source"].replace(
+            "A station with a public dock.", "First paragraph.\n\nSecond paragraph."
+        )
+        self.assertTrue(source_snapshots_match(proposal["diff"]))
+
+        resolution = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_proposal_with_outgoing_connections"
+            )
+        )
+        source = next(
+            source
+            for source in resolution["diff"]["source_changes"]
+            if source["subject_record_id"] == "record-station"
+        )
+        source["before_source"] = source["before_source"].replace(
+            "The station handles salvage contracts.",
+            "First paragraph.\n\nSecond paragraph.",
+        )
+        self.assertFalse(source_snapshots_match(resolution["diff"]))
 
     def test_removal_correction_rebinds_current_impact(self) -> None:
         correction = deepcopy(
@@ -1249,11 +1332,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                         )
 
     def test_source_snapshots_use_record_id_for_nameless_session_records(self) -> None:
-        headings = {
-            "session": "Session",
-            "session-prep": "Session Preparation",
-            "debrief": "Session Debrief",
-        }
+        record_types = ("session", "session-prep", "debrief")
         adapter_definition = {
             "record_definitions": {
                 record_type: {
@@ -1267,10 +1346,10 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                         "warden_only",
                     ]
                 }
-                for record_type in headings
+                for record_type in record_types
             }
         }
-        for record_type, heading in headings.items():
+        for record_type in record_types:
             subject = f"record-{record_type.replace('-', '')}"
             source = "\n".join([
                 "---",
@@ -1283,7 +1362,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "warden_only: true",
                 "---",
                 "",
-                f"# {heading}",
+                f"# {subject}",
                 "",
                 "## Summary",
                 "",
@@ -1320,6 +1399,17 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                         adapter_definition=adapter_definition,
                     )
                 )
+
+        wrong_heading = deepcopy(diff)
+        wrong_heading["source_changes"][0]["before_source"] = wrong_heading["source_changes"][0]["before_source"].replace(
+            f"# {subject}", "# Completely Wrong"
+        )
+        self.assertFalse(
+            source_snapshots_match(
+                wrong_heading,
+                adapter_definition=adapter_definition,
+            )
+        )
 
         named = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")

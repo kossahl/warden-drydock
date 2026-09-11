@@ -27,13 +27,16 @@ recovery semantics that the UX artifact leaves open.
 
 Every mutation uses an `editor_operation_request` with a request ID,
 idempotency key, canonical payload digest, exact expected revision, and exact
-campaign-wide `expected_editor_workflow_version`. A campaign has one editor
-workflow counter. An accepted operation compares that counter and increments
-it once. If the current counter is N, an accepted create, edit, remove, or
-correction returns a proposal stamped N+1. Approval or rejection of that exact
-proposal compares N+1 and completes at N+2. An exact replay returns its stored
-result and does not increment the counter. Stale, invalid, and failed
-operations also leave it unchanged.
+campaign-wide `expected_editor_workflow_version`. The operation's expected
+revision and workflow version must equal the corresponding bound values; for
+approval and rejection they must also equal the action's top-level values and
+the operation subject must equal the loaded proposal ID. A campaign has one
+editor workflow counter. An accepted operation compares that counter and
+increments it once. If the current counter is N, an accepted create, edit,
+remove, or correction returns a proposal stamped N+1. Approval or rejection of
+that exact proposal compares N+1 and completes at N+2. An exact replay returns
+its stored result and does not increment the counter. Stale, invalid, and
+failed operations also leave it unchanged.
 
 Create, edit, remove, correction, rejection, and approval bind the exact base
 revision. Edit and remove also bind the exact digest of every affected record.
@@ -118,7 +121,9 @@ target; `redirect` uses the replacement target. Name presence follows the
 revision-bound `adapter_definition`: when `name` is in the record type's
 `required_fields`, frontmatter `name` matches `displayed_name`; when it is not
 required, an omitted or blank name uses the record ID as the displayed name,
-matching the standalone/Atlas fallback. The frontmatter, headings, fields,
+matching the standalone/Atlas fallback. Every non-null snapshot has exactly
+one top-level H1, and it matches that structured `displayed_name`, including
+nameless adapter-defined record types. The frontmatter, headings, fields,
 sections, and typed connections in each
 non-null snapshot must agree with its structured record or reference-resolution
 card in both directions, so extra metadata or sections are invalid. For a
