@@ -343,13 +343,46 @@ def _source_record_digest(
 
 
 def _visibility_scope(visibility: dict) -> set[str]:
+    if not isinstance(visibility, dict):
+        return set()
     if visibility.get("warden_only"):
         return {"warden"}
     return {
         "warden": {"warden"},
         "players": {"players"},
         "shared": {"warden", "players"},
-    }[visibility["audience"]]
+    }.get(visibility.get("audience"), set())
+
+
+def _target_visibility(context: dict, record_id: object) -> dict | None:
+    visibilities = context.get("record_visibility")
+    if isinstance(visibilities, dict):
+        visibility = visibilities.get(record_id)
+        if isinstance(visibility, dict) and isinstance(visibility.get("visibility"), dict):
+            visibility = visibility["visibility"]
+        if isinstance(visibility, dict):
+            return visibility
+    record = _authoritative_before_record(context, record_id)
+    visibility = record.get("visibility") if isinstance(record, dict) else None
+    return visibility if isinstance(visibility, dict) else None
+
+
+def _player_visible_connection_failure(
+    candidate: dict,
+    context: dict,
+) -> tuple[str, str] | None:
+    if "record_visibility" not in context and "authoritative_before_records" not in context:
+        return None
+    if "players" not in _visibility_scope(candidate.get("visibility")):
+        return None
+    for index, connection in enumerate(candidate.get("connections", [])):
+        target_visibility = _target_visibility(context, connection.get("target_record_id"))
+        if (
+            isinstance(target_visibility, dict)
+            and "players" not in _visibility_scope(target_visibility)
+        ):
+            return "invalid_connections", f"candidate.connections.{index}.target_record_id"
+    return None
 
 
 def _expected_transitions(diff: dict) -> tuple[list[dict], list[dict]]:
@@ -385,8 +418,10 @@ def _expected_transitions(diff: dict) -> tuple[list[dict], list[dict]]:
                     "record_id": record_id,
                     "before": before.get("visibility"),
                     "after": after.get("visibility"),
-                    "audience_broadens": _visibility_scope(after["visibility"])
-                    > _visibility_scope(before["visibility"]),
+                    "audience_broadens": bool(
+                        _visibility_scope(after["visibility"])
+                        - _visibility_scope(before["visibility"])
+                    ),
                     "explicit_in_diff": True,
                     "warden_approval_required": True,
                 }
@@ -2724,6 +2759,9 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
             return "invalid_authority_transition", "candidate.authority"
 
         available_ids = set(context.get("available_record_ids", []))
+        player_visible_failure = _player_visible_connection_failure(candidate, context)
+        if player_visible_failure is not None:
+            return player_visible_failure
         if (
             operation.get("operation") in {"editor_record_create", "editor_proposal_correct"}
             and (
@@ -4974,6 +5012,36 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({
                 "instance": invalid,
                 "semantic_context": {"loaded_proposal": loaded},
+            }),
+        )
+
+        disjoint = deepcopy(proposal)
+        disjoint["diff"]["cards"][0]["after"]["visibility"] = {
+            "audience": "players",
+            "warden_only": False,
+        }
+        _, visibility_changes = _expected_transitions(disjoint["diff"])
+        self.assertTrue(visibility_changes[0]["audience_broadens"])
+
+    def test_player_visible_connections_reject_warden_only_targets(self) -> None:
+        edit = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "edit_record_with_connections_request"
+            )
+        )
+        self.assertEqual(
+            ("invalid_connections", "candidate.connections.0.target_record_id"),
+            evaluate_semantic_failure({
+                "instance": edit,
+                "semantic_context": {
+                    "available_record_ids": ["record-company", "record-ship"],
+                    "record_visibility": {
+                        "record-company": {"audience": "warden", "warden_only": True},
+                        "record-ship": {"audience": "shared", "warden_only": False},
+                    },
+                },
             }),
         )
 
