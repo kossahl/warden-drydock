@@ -368,20 +368,43 @@ def _target_visibility(context: dict, record_id: object) -> dict | None:
 
 
 def _player_visible_connection_failure(
-    candidate: dict,
+    record: dict,
     context: dict,
+    path: str = "candidate",
 ) -> tuple[str, str] | None:
     if "record_visibility" not in context and "authoritative_before_records" not in context:
         return None
-    if "players" not in _visibility_scope(candidate.get("visibility")):
+    if "players" not in _visibility_scope(record.get("visibility")):
         return None
-    for index, connection in enumerate(candidate.get("connections", [])):
+    for index, connection in enumerate(record.get("connections", [])):
         target_visibility = _target_visibility(context, connection.get("target_record_id"))
-        if (
-            isinstance(target_visibility, dict)
-            and "players" not in _visibility_scope(target_visibility)
-        ):
-            return "invalid_connections", f"candidate.connections.{index}.target_record_id"
+        if not isinstance(target_visibility, dict):
+            return "invalid_connections", f"{path}.connections.{index}.target_record_id"
+        if "players" not in _visibility_scope(target_visibility):
+            return "invalid_connections", f"{path}.connections.{index}.target_record_id"
+    return None
+
+
+def _proposal_target_visibility_failure(
+    proposal: dict,
+    context: dict,
+) -> tuple[str, str] | None:
+    diff = proposal.get("diff")
+    if not isinstance(diff, dict):
+        return None
+    for index, card in enumerate(diff.get("cards", [])):
+        if card.get("kind") not in {"record_created", "record_updated"}:
+            continue
+        after = card.get("after")
+        if not isinstance(after, dict):
+            continue
+        failure = _player_visible_connection_failure(
+            after,
+            context,
+            f"diff.cards.{index}.after",
+        )
+        if failure is not None:
+            return failure
     return None
 
 
@@ -1490,6 +1513,9 @@ def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str,
         proposal_validation_failure = _proposal_validation_gate_failure(loaded)
         if proposal_validation_failure is not None:
             return proposal_validation_failure
+        target_visibility_failure = _proposal_target_visibility_failure(loaded, context)
+        if target_visibility_failure is not None:
+            return target_visibility_failure
 
     approval_binding_failure = _core_approval_binding_failure(loaded)
     if approval_binding_failure is not None:
@@ -2646,6 +2672,9 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     proposal_validation_failure = _proposal_validation_gate_failure(instance)
     if proposal_validation_failure is not None:
         return proposal_validation_failure
+    target_visibility_failure = _proposal_target_visibility_failure(instance, context)
+    if target_visibility_failure is not None:
+        return target_visibility_failure
     approval_binding_failure = _core_approval_binding_failure(instance)
     if approval_binding_failure is not None:
         return approval_binding_failure
@@ -5041,6 +5070,48 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                         "record-company": {"audience": "warden", "warden_only": True},
                         "record-ship": {"audience": "shared", "warden_only": False},
                     },
+                },
+            }),
+        )
+
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        visibility_context = {
+            "record_visibility": {
+                "record-company": {"audience": "warden", "warden_only": True},
+                "record-ship": {"audience": "shared", "warden_only": False},
+            },
+        }
+        self.assertEqual(
+            ("invalid_connections", "diff.cards.0.after.connections.0.target_record_id"),
+            evaluate_semantic_failure({
+                "instance": proposal,
+                "semantic_context": visibility_context,
+            }),
+        )
+
+        approval = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "approval_request")
+        )
+        self.assertEqual(
+            ("invalid_connections", "diff.cards.0.after.connections.0.target_record_id"),
+            evaluate_semantic_failure({
+                "instance": approval,
+                "semantic_context": {
+                    **visibility_context,
+                    "loaded_proposal": proposal,
+                },
+            }),
+        )
+
+        self.assertEqual(
+            ("invalid_connections", "candidate.connections.0.target_record_id"),
+            evaluate_semantic_failure({
+                "instance": edit,
+                "semantic_context": {
+                    "available_record_ids": ["record-company", "record-ship"],
+                    "record_visibility": {},
                 },
             }),
         )
