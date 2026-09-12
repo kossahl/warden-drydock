@@ -2313,6 +2313,13 @@ def _result_workflow_version_failure(
     expected = context.get("expected_result_editor_workflow_version")
     if expected is None:
         expected = context.get("result_editor_workflow_version")
+    stored_result = context.get("stored_result")
+    if stored_result is None:
+        stored_result = fixture.get("stored_result")
+    if isinstance(stored_result, dict) and isinstance(stored_result.get("payload"), dict):
+        stored_result = stored_result["payload"]
+    if expected is None and isinstance(stored_result, dict):
+        expected = stored_result.get("editor_workflow_version")
     if expected is None:
         source = _accepted_request(fixture)
         if isinstance(source, dict):
@@ -4562,6 +4569,15 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "semantic_context": {
                     "current_editor_workflow_version": 10,
                     "stored_receipt": {"result": stored_result},
+                },
+            })
+        )
+        self.assertIsNone(
+            evaluate_semantic_failure({
+                "instance": stored_result,
+                "semantic_context": {
+                    "current_editor_workflow_version": 10,
+                    "stored_result": stored_result,
                 },
             })
         )
