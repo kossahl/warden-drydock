@@ -869,6 +869,8 @@ def _record_property_changes(before: dict, after: dict) -> list[dict]:
 def _record_property_change_failure(diff: dict) -> tuple[str, str] | None:
     for index, card in enumerate(diff.get("cards", [])):
         if card.get("kind") != "record_updated":
+            if card.get("property_changes") != []:
+                return "mutation_consistency", f"diff.cards.{index}.property_changes"
             continue
         before = card.get("before")
         after = card.get("after")
@@ -1918,6 +1920,10 @@ def _proposal_validation_gate_failure(instance: dict) -> tuple[str, str] | None:
         ]
         if len(primary_cards) != 1 or primary_cards[0].get("kind") != expected_kind:
             return "proposal_validation_failure", "diff.cards.record_mutation"
+    if instance.get("mutation_kind") == "create":
+        for index, binding in enumerate(instance.get("record_bindings", [])):
+            if binding.get("record_digest") is not None:
+                return "proposal_validation_failure", f"record_bindings.{index}.record_digest"
 
     proposal_status = proposal.get("status")
     publication = instance.get("publication")
@@ -3624,7 +3630,9 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         )
         duplicate_cases = []
 
-        invalid = deepcopy(proposal)
+        invalid = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
         invalid["diff"]["cards"][1]["change_id"] = invalid["diff"]["cards"][0]["change_id"]
         duplicate_cases.append((invalid, "diff.cards.1.change_id"))
 
@@ -5219,6 +5227,21 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({"instance": proposal}),
         )
 
+        invalid = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        invalid["diff"]["cards"][1]["property_changes"] = [{
+            "property": "status",
+            "before": "review",
+            "after": "canon",
+            "before_present": True,
+            "after_present": True,
+        }]
+        self.assertEqual(
+            ("mutation_consistency", "diff.cards.1.property_changes"),
+            evaluate_semantic_failure({"instance": invalid}),
+        )
+
         proposal = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
         )
@@ -6044,6 +6067,20 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         self.assertEqual(
             ("unsafe_binding", "record_bindings.0.record_digest"),
             _result_binding_failure(instance, fixture),
+        )
+
+    def test_standalone_create_proposals_require_null_base_digests(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["mutation_kind"] = "create"
+        proposal["diff"]["cards"][0]["kind"] = "record_created"
+        proposal["diff"]["cards"][0]["before"] = None
+        proposal["diff"]["source_changes"][0]["before_source"] = None
+        proposal["record_bindings"][0]["record_digest"] = "f" * 64
+        self.assertEqual(
+            ("proposal_validation_failure", "record_bindings.0.record_digest"),
+            evaluate_semantic_failure({"instance": proposal}),
         )
 
     def test_non_redirect_resolution_snapshots_preserve_their_declared_action(self) -> None:

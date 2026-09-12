@@ -12,6 +12,7 @@
     "negative/invalid-connections.json",
     "negative/invalid-correction.json",
     "negative/immediate-successor.json",
+    "negative/non-update-property-changes.json",
     "negative/primary-mutation-card.json",
     "negative/removal-outgoing-extra-card.json",
     "negative/removal-outgoing-mismatch-card.json",
