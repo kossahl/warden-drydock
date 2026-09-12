@@ -304,6 +304,17 @@ def _semantic_errors(instance, schema):
                 identifiers = [item.get(identifier) for item in items]
                 if len(identifiers) != len(set(identifiers)):
                     yield ContractValidationError(f"{key}.{identifier}", "logical identifier is duplicated", "proposal_validation_failure")
+            change_ids = {
+                item.get("change_id")
+                for item in proposal.get("changes", [])
+            }
+            for key in ("authority_change_ids", "visibility_change_ids"):
+                if any(change_id not in change_ids for change_id in proposal.get(key, [])):
+                    yield ContractValidationError(
+                        f"proposal.{key}",
+                        "transition ID must reference a declared proposal change",
+                        "proposal_validation_failure",
+                    )
         if (
             proposal.get("correction_of_version") is not None
             and proposal["correction_of_version"] >= proposal["proposal_version"]
@@ -833,6 +844,21 @@ class HostedContractPackageTests(unittest.TestCase):
             with self.subTest(status=status):
                 self.assertEqual([], list(Draft202012Validator(schema).iter_errors(value)))
                 self.assertEqual([], list(contract_errors(value, schema)))
+
+    def test_proposal_v2_transition_ids_reference_declared_changes(self):
+        contract = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))["versioned_contracts"][0]
+        schema = json.loads((CONTRACT_ROOT / contract["schema"]).read_text(encoding="utf-8"))
+        example = json.loads((CONTRACT_ROOT / contract["example"]).read_text(encoding="utf-8"))
+        for key in ("authority_change_ids", "visibility_change_ids"):
+            value = deepcopy(example)
+            value["proposal"][key] = ["change_missing"]
+            with self.subTest(key=key):
+                self.assertEqual([], list(Draft202012Validator(schema).iter_errors(value)))
+                failures = list(contract_errors(value, schema))
+                self.assertIn(
+                    ("proposal_validation_failure", f"proposal.{key}"),
+                    {(failure.category, failure.path) for failure in failures},
+                )
 
     def test_every_negative_fixture_fails_at_expected_binding(self):
         fixture_paths = [fixture for family in self.index["families"] for fixture in family["negative_fixtures"]]

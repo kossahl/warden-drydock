@@ -1365,6 +1365,8 @@ def _core_identity_failure(instance: dict) -> tuple[str, str] | None:
     correction_of = instance.get("correction_of")
     correction_of_present = isinstance(correction_of, dict)
     core_correction_present = "correction_of_version" in proposal
+    if proposal.get("proposal_version") != 1 and not correction_of_present and not core_correction_present:
+        return "unsafe_binding", "core_proposal.proposal.correction_of_version"
     if correction_of_present or core_correction_present:
         correction_of_version = (
             correction_of.get("proposal_version")
@@ -6153,6 +6155,21 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             "proposal_version": 1,
         }
         proposal["core_proposal"]["proposal"]["correction_of_version"] = 99
+        proposal["proposal_payload_digest"] = projection_digest(
+            proposal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            ("unsafe_binding", "core_proposal.proposal.correction_of_version"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["proposal_version"] = 2
+        proposal["core_proposal"]["proposal"]["proposal_version"] = 2
+        proposal["correction_of"] = None
         proposal["proposal_payload_digest"] = projection_digest(
             proposal,
             DIGEST_PROJECTIONS["proposal_payload_digest"],
