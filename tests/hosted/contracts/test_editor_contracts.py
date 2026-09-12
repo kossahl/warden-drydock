@@ -140,7 +140,23 @@ def _record_document_paths(value: object, path: str = ""):
             yield from _record_document_paths(child, f"{path}.{index}")
 
 
-def _record_binding_digest_failure(instance: dict) -> tuple[str, str] | None:
+def _authoritative_before_record(context: dict, record_id: object) -> dict | None:
+    records = context.get("authoritative_before_records")
+    if isinstance(records, dict):
+        record = records.get(record_id)
+        if isinstance(record, dict):
+            return record
+    elif isinstance(records, list):
+        for record in records:
+            if isinstance(record, dict) and record.get("record_id") == record_id:
+                return record
+    return None
+
+
+def _record_binding_digest_failure(
+    instance: dict,
+    context: dict | None = None,
+) -> tuple[str, str] | None:
     diff = instance.get("diff")
     if not isinstance(diff, dict):
         diff = {}
@@ -174,6 +190,10 @@ def _record_binding_digest_failure(instance: dict) -> tuple[str, str] | None:
                 expected_digest = _source_record_digest(
                     source_text,
                     resolution_cards.get(binding.get("record_id"), []),
+                    _authoritative_before_record(
+                        context or {},
+                        binding.get("record_id"),
+                    ),
                 )
                 if expected_digest is None:
                     return "idempotency_digest_conflict", f"record_bindings.{index}.record_digest"
@@ -185,6 +205,7 @@ def _record_binding_digest_failure(instance: dict) -> tuple[str, str] | None:
 def _source_record_digest(
     source_text: object,
     resolution_cards: list[dict],
+    authoritative_before: dict | None = None,
 ) -> str | None:
     if not isinstance(source_text, str):
         return None
@@ -198,7 +219,15 @@ def _source_record_digest(
     )
     if errors:
         return None
+    authoritative_connections = (
+        authoritative_before.get("connections", [])
+        if isinstance(authoritative_before, dict)
+        else []
+    )
+    if not isinstance(authoritative_connections, list):
+        authoritative_connections = []
     used_cards = set()
+    used_authoritative_connections = set()
     connections = []
     for connection in parsed:
         match = None
@@ -215,6 +244,32 @@ def _source_record_digest(
                 match = reference
                 used_cards.add(index)
                 break
+        if match is not None and authoritative_connections:
+            for index, authoritative in enumerate(authoritative_connections):
+                if index in used_authoritative_connections:
+                    continue
+                if (
+                    authoritative.get("connection_id") == match.get("connection_id")
+                    and authoritative.get("target_record_id") == connection.target_id
+                    and authoritative.get("relationship") == connection.relationship
+                    and authoritative.get("state") == connection.state
+                    and authoritative.get("context") == connection.context
+                ):
+                    used_authoritative_connections.add(index)
+                    break
+        if match is None and authoritative_connections:
+            for index, authoritative in enumerate(authoritative_connections):
+                if index in used_authoritative_connections:
+                    continue
+                if (
+                    authoritative.get("target_record_id") == connection.target_id
+                    and authoritative.get("relationship") == connection.relationship
+                    and authoritative.get("state") == connection.state
+                    and authoritative.get("context") == connection.context
+                ):
+                    match = authoritative
+                    used_authoritative_connections.add(index)
+                    break
         if match is None:
             return None
         connections.append(
@@ -227,6 +282,10 @@ def _source_record_digest(
             }
         )
     if len(used_cards) != len(resolution_cards):
+        return None
+    if authoritative_connections and len(used_authoritative_connections) != len(
+        authoritative_connections
+    ):
         return None
 
     metadata_keys = {"id", "type", "status", "ownership", "name", "visibility", "warden_only"}
@@ -385,12 +444,15 @@ def _transition_completeness_failure(
     return None
 
 
-def _declared_digest_failure(instance: dict) -> tuple[str, str] | None:
+def _declared_digest_failure(
+    instance: dict,
+    context: dict | None = None,
+) -> tuple[str, str] | None:
     for path, record in _record_document_paths(instance):
         if record["content_digest"] != record_content_digest(record):
             return "idempotency_digest_conflict", f"{path}.content_digest"
 
-    binding_failure = _record_binding_digest_failure(instance)
+    binding_failure = _record_binding_digest_failure(instance, context)
     if binding_failure is not None:
         return binding_failure
 
@@ -1451,7 +1513,7 @@ def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str,
                 _record_property_change_failure(loaded["diff"]),
                 _record_subject_failure(loaded["diff"]),
                 _record_authority_failure(loaded["diff"]),
-                _record_binding_digest_failure(loaded),
+                _record_binding_digest_failure(loaded, context),
                 _record_binding_failure(loaded, loaded["diff"]),
                 _resolution_set_failure(loaded, loaded["diff"]),
                 _removal_redirect_failure(loaded["diff"], context),
@@ -1748,7 +1810,7 @@ def _correction_result_binding_failure(
     accepted: dict,
 ) -> tuple[str, str] | None:
     accepted_mutation = accepted.get("mutation_kind")
-    if accepted_mutation not in {"edit", "remove"}:
+    if accepted_mutation not in {"create", "edit", "remove"}:
         return None
     request_binding = accepted.get("binding")
     if not isinstance(request_binding, dict):
@@ -1765,28 +1827,36 @@ def _correction_result_binding_failure(
         if expected is not None and instance.get(response_key) != expected:
             return "unsafe_binding", response_key
 
+    candidate = accepted.get("candidate")
     expected_record_id = request_binding.get("record_id")
+    if expected_record_id is None and isinstance(candidate, dict):
+        expected_record_id = candidate.get("record_id")
     record_cards = [
         (index, card)
         for index, card in enumerate(instance.get("diff", {}).get("cards", []))
-        if card.get("kind") == ("record_updated" if accepted_mutation == "edit" else "record_removed")
+        if card.get("kind")
+        == {
+            "create": "record_created",
+            "edit": "record_updated",
+            "remove": "record_removed",
+        }[accepted_mutation]
     ]
     if len(record_cards) != 1:
         return "unsafe_binding", "diff.cards"
     card_index, record_card = record_cards[0]
     if _proposal_subject_record_id(instance) != expected_record_id:
         return "unsafe_binding", "diff.cards.subject_record_id"
-    if accepted_mutation == "edit":
-        candidate = accepted.get("candidate")
-        before = record_card.get("before")
+    if accepted_mutation in {"create", "edit"}:
         if not isinstance(candidate, dict) or record_card.get("after") != candidate:
             return "unsafe_binding", f"diff.cards.{card_index}.after"
+    if accepted_mutation == "edit":
+        before = record_card.get("before")
         if (
             not isinstance(before, dict)
             or before.get("content_digest") != request_binding.get("record_digest")
         ):
             return "unsafe_binding", f"diff.cards.{card_index}.before.content_digest"
-    else:
+    elif accepted_mutation == "remove":
         before = record_card.get("before")
         if not isinstance(before, dict):
             return "unsafe_binding", f"diff.cards.{card_index}.before"
@@ -1812,7 +1882,12 @@ def _correction_result_binding_failure(
         "record_digest",
         "expected_editor_workflow_version",
     ):
-        if key in request_binding and response_binding.get(key) != request_binding.get(key):
+        expected = (
+            instance.get("editor_workflow_version")
+            if key == "expected_editor_workflow_version"
+            else request_binding.get(key)
+        )
+        if key in request_binding and response_binding.get(key) != expected:
             return "unsafe_binding", f"record_bindings.{binding_index}.{key}"
 
     if accepted_mutation == "remove":
@@ -2837,7 +2912,7 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         if isinstance(loaded, dict) and isinstance(loaded.get("payload"), dict):
             loaded = loaded["payload"]
         if isinstance(loaded, dict):
-            digest_failure = _declared_digest_failure(loaded)
+            digest_failure = _declared_digest_failure(loaded, context)
             if digest_failure is not None:
                 return digest_failure
             if isinstance(loaded.get("diff"), dict):
@@ -2848,7 +2923,7 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     digest_failure = _operation_payload_digest_failure(instance)
     if digest_failure is not None:
         return digest_failure
-    digest_failure = _declared_digest_failure(instance)
+    digest_failure = _declared_digest_failure(instance, context)
     if digest_failure is not None:
         return digest_failure
     if isinstance(diff, dict):
@@ -3707,6 +3782,73 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({"instance": removal}),
         )
 
+    def test_resolution_only_binding_digest_preserves_unchanged_connections(self) -> None:
+        removal = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_proposal_with_outgoing_connections"
+            )
+        )
+        unrelated = "- `signals` → [[record-other|Other]] (`current`) — The station signals elsewhere."
+        source = next(
+            source
+            for source in removal["diff"]["source_changes"]
+            if source["subject_record_id"] == "record-station"
+        )
+        for side in ("before_source", "after_source"):
+            source[side] = source[side].replace(
+                "## Connections\n",
+                f"## Connections\n\n{unrelated}\n",
+            )
+        authoritative_before = {
+            "record_id": "record-station",
+            "record_type": "location",
+            "displayed_name": "Synthetic Station",
+            "ownership": "campaign",
+            "status": "review",
+            "authority": "preparation",
+            "visibility": {"audience": "warden", "warden_only": True},
+            "fields": [],
+            "sections": [{"section_id": "summary", "body": "The station handles salvage contracts."}],
+            "connections": [
+                {
+                    "connection_id": "connection_unrelated",
+                    "target_record_id": "record-other",
+                    "relationship": "signals",
+                    "state": "current",
+                    "context": "The station signals elsewhere.",
+                },
+                {
+                    "connection_id": "connection_one",
+                    "target_record_id": "record-company",
+                    "relationship": "works-for",
+                    "state": "current",
+                    "context": "The station handles salvage contracts.",
+                },
+            ],
+        }
+        authoritative_before["content_digest"] = record_content_digest(authoritative_before)
+        removal["record_bindings"][1]["record_digest"] = authoritative_before["content_digest"]
+        removal["diff"]["diff_digest"] = projection_digest(
+            removal["diff"], DIGEST_PROJECTIONS["diff_digest"]
+        )
+        removal["core_proposal"]["proposal"]["diff_digest"] = removal["diff"]["diff_digest"]
+        removal["proposal_payload_digest"] = projection_digest(
+            removal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertIsNone(
+            evaluate_semantic_failure({
+                "instance": removal,
+                "semantic_context": {
+                    "authoritative_before_records": {
+                        "record-station": authoritative_before,
+                    },
+                },
+            })
+        )
+
     def test_action_workflow_conflicts_use_the_top_level_fallback(self) -> None:
         for name in ("approval_request", "rejection_request"):
             action = deepcopy(next(item["payload"] for item in self.examples if item["name"] == name))
@@ -4220,6 +4362,52 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "semantic_context": {"accepted_request": action},
             }),
         )
+
+        valid = deepcopy(proposal)
+        valid["editor_workflow_version"] = 9
+        valid["proposal_version"] = 2
+        valid["correction_of"] = deepcopy(action["prior_proposal"])
+        valid["diff"]["cards"][0]["after"] = deepcopy(action["candidate"])
+        valid["record_bindings"][0]["expected_editor_workflow_version"] = 9
+        self.assertIsNone(_correction_result_binding_failure(valid, action))
+
+    def test_corrected_create_proposals_bind_the_submitted_candidate(self) -> None:
+        create = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "create_record_request")
+        )
+        create["operation_request"]["operation"] = "editor_proposal_correct"
+        create["operation_request"]["expected_editor_workflow_version"] = 8
+        create["prior_proposal"] = {"proposal_id": "proposal_create", "proposal_version": 1}
+        create["binding"]["expected_editor_workflow_version"] = 8
+        create["mutation_kind"] = "create"
+
+        response = {
+            "contract_name": "editor_proposal_view",
+            "mutation_kind": "create",
+            "campaign_id": create["binding"]["campaign_id"],
+            "source_revision": deepcopy(create["binding"]["base_revision"]),
+            "base_revision": deepcopy(create["binding"]["base_revision"]),
+            "expected_campaign_head": deepcopy(create["binding"]["base_revision"]),
+            "editor_workflow_version": 9,
+            "proposal_id": "proposal_create",
+            "proposal_version": 2,
+            "correction_of": deepcopy(create["prior_proposal"]),
+            "diff": {
+                "cards": [{
+                    "kind": "record_created",
+                    "subject_record_id": "record-new",
+                    "after": deepcopy(create["candidate"]),
+                }],
+            },
+            "record_bindings": [{
+                "campaign_id": create["binding"]["campaign_id"],
+                "base_revision": deepcopy(create["binding"]["base_revision"]),
+                "record_id": "record-new",
+                "record_digest": None,
+                "expected_editor_workflow_version": 9,
+            }],
+        }
+        self.assertIsNone(_correction_result_binding_failure(response, create))
 
     def test_record_view_history_flags_bind_to_revision_objects(self) -> None:
         historical = deepcopy(
