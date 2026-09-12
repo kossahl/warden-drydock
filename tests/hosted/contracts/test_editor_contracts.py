@@ -332,7 +332,14 @@ def _source_record_digest(
         "sections": sections,
         "connections": connections,
     }
-    return record_content_digest(record)
+    reconstructed_digest = record_content_digest(record)
+    if (
+        isinstance(authoritative_before, dict)
+        and "content_digest" in authoritative_before
+        and authoritative_before.get("content_digest") != reconstructed_digest
+    ):
+        return None
+    return reconstructed_digest
 
 
 def _visibility_scope(visibility: dict) -> set[str]:
@@ -1716,6 +1723,21 @@ def _proposal_validation_gate_failure(instance: dict) -> tuple[str, str] | None:
     if not isinstance(proposal, dict):
         return None
 
+    expected_kind = {
+        "create": "record_created",
+        "edit": "record_updated",
+        "remove": "record_removed",
+    }.get(instance.get("mutation_kind"))
+    if expected_kind is not None:
+        primary_cards = [
+            card
+            for card in instance.get("diff", {}).get("cards", [])
+            if card.get("kind")
+            in {"record_created", "record_updated", "record_removed"}
+        ]
+        if len(primary_cards) != 1 or primary_cards[0].get("kind") != expected_kind:
+            return "proposal_validation_failure", "diff.cards.record_mutation"
+
     proposal_status = proposal.get("status")
     publication = instance.get("publication")
     if isinstance(publication, dict):
@@ -1917,6 +1939,22 @@ def _result_binding_failure(instance: dict, fixture: dict) -> tuple[str, str] | 
     accepted_operation = accepted.get("operation_request", {}) if isinstance(accepted, dict) else {}
     if not isinstance(accepted_operation, dict):
         accepted_operation = {}
+    expected_result = {
+        "editor_proposal_approve": (
+            "editor_proposal_approval_result",
+            "published",
+        ),
+        "editor_proposal_reject": (
+            "editor_proposal_rejection_result",
+            "rejected",
+        ),
+    }.get(accepted_operation.get("operation"))
+    if expected_result is not None:
+        expected_contract, expected_outcome = expected_result
+        if instance.get("contract_name") != expected_contract:
+            return "unsafe_binding", "contract_name"
+        if instance.get("outcome") != expected_outcome:
+            return "unsafe_binding", "outcome"
     operation_to_mutation = {
         "editor_record_create": "create",
         "editor_record_edit": "edit",
@@ -3925,6 +3963,50 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             }),
         )
 
+        rejection = next(
+            item["payload"]
+            for item in self.examples
+            if item["name"] == "rejection_response"
+        )
+        rejection_request = next(
+            item["payload"]
+            for item in self.examples
+            if item["name"] == "rejection_request"
+        )
+        self.assertEqual(
+            ("unsafe_binding", "contract_name"),
+            evaluate_semantic_failure({
+                "instance": result,
+                "semantic_context": {"accepted_request": rejection_request},
+            }),
+        )
+        self.assertEqual(
+            ("unsafe_binding", "contract_name"),
+            evaluate_semantic_failure({
+                "instance": rejection,
+                "semantic_context": {"accepted_request": action},
+            }),
+        )
+
+        invalid = deepcopy(result)
+        invalid["outcome"] = "rejected"
+        self.assertEqual(
+            ("unsafe_binding", "outcome"),
+            evaluate_semantic_failure({
+                "instance": invalid,
+                "semantic_context": {"accepted_request": action},
+            }),
+        )
+        invalid = deepcopy(rejection)
+        invalid["outcome"] = "published"
+        self.assertEqual(
+            ("unsafe_binding", "outcome"),
+            evaluate_semantic_failure({
+                "instance": invalid,
+                "semantic_context": {"accepted_request": rejection_request},
+            }),
+        )
+
     def test_proposal_views_bind_the_returned_workflow_version(self) -> None:
         accepted_request = deepcopy(
             next(
@@ -4528,6 +4610,17 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         duplicate = deepcopy(proposal["diff"]["cards"][0])
         duplicate["change_id"] = "change_edit_record_again"
         proposal["diff"]["cards"].append(duplicate)
+        self.assertEqual(
+            ("proposal_validation_failure", "diff.cards.record_mutation"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        extra = deepcopy(proposal["diff"]["cards"][0])
+        extra["subject_record_id"] = "record-other"
+        proposal["diff"]["cards"].append(extra)
         self.assertEqual(
             ("proposal_validation_failure", "diff.cards.record_mutation"),
             evaluate_semantic_failure({"instance": proposal}),
