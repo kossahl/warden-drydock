@@ -482,6 +482,41 @@ def _expected_transitions(diff: dict) -> tuple[list[dict], list[dict]]:
     for card in diff.get("cards", []):
         before = card.get("before")
         after = card.get("after")
+        if (
+            card.get("kind") == "record_created"
+            and isinstance(after, dict)
+            and "record_id" in after
+        ):
+            change_id = card.get("change_id")
+            record_id = card.get("subject_record_id")
+            if after.get("authority") != "preparation":
+                authority_changes.append(
+                    {
+                        "change_id": change_id,
+                        "record_id": record_id,
+                        "from": "preparation",
+                        "to": after.get("authority"),
+                        "explicit_in_diff": True,
+                        "warden_approval_required": True,
+                    }
+                )
+            default_visibility = {"audience": "warden", "warden_only": True}
+            if after.get("visibility") != default_visibility:
+                visibility_changes.append(
+                    {
+                        "change_id": change_id,
+                        "record_id": record_id,
+                        "before": default_visibility,
+                        "after": after.get("visibility"),
+                        "audience_broadens": bool(
+                            _visibility_scope(after["visibility"])
+                            - _visibility_scope(default_visibility)
+                        ),
+                        "explicit_in_diff": True,
+                        "warden_approval_required": True,
+                    }
+                )
+            continue
         if not (
             isinstance(before, dict)
             and isinstance(after, dict)
@@ -1813,11 +1848,22 @@ def _record_member_id_failure(record: dict, path: str) -> str | None:
         ("connections", "connection_id"),
     ):
         seen = set()
+        seen_edges = set()
         for index, member in enumerate(record.get(collection, [])):
             value = member.get(member_id)
             if value in seen:
                 return f"{path}.{collection}.{index}.{member_id}"
             seen.add(value)
+            if member_id == "connection_id":
+                edge = (
+                    record.get("record_id"),
+                    member.get("target_record_id"),
+                    member.get("relationship"),
+                    member.get("state"),
+                )
+                if edge in seen_edges:
+                    return f"{path}.{collection}.{index}"
+                seen_edges.add(edge)
     return None
 
 
@@ -2763,6 +2809,46 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         digest_failure = _operation_payload_digest_failure(instance)
         if digest_failure is not None:
             return digest_failure
+        if (
+            operation.get("operation") in {
+                "editor_proposal_approve",
+                "editor_proposal_reject",
+            }
+            and instance.get("diff_digest") is not None
+            and operation.get("intent_digest") != instance.get("diff_digest")
+        ):
+            return "proposal_approval_conflict", "operation_request.intent_digest"
+        expected_operation = receipt.get("operation") if isinstance(receipt, dict) else None
+        loaded = context.get("loaded_proposal")
+        if isinstance(loaded, dict) and isinstance(loaded.get("payload"), dict):
+            loaded = loaded["payload"]
+        if expected_operation is None and isinstance(loaded, dict):
+            loaded_core = loaded.get("core_proposal")
+            loaded_core_proposal = (
+                loaded_core.get("proposal")
+                if isinstance(loaded_core, dict)
+                else None
+            )
+            loaded_proposal = loaded.get("proposal")
+            loaded_status = (
+                loaded_core_proposal.get("status")
+                if isinstance(loaded_core_proposal, dict)
+                else loaded.get("proposal_status")
+            )
+            if loaded_status is None and isinstance(loaded_proposal, dict):
+                loaded_status = loaded_proposal.get("status")
+            expected_operation = {
+                "approved": "editor_proposal_approve",
+                "rejected": "editor_proposal_reject",
+            }.get(loaded_status)
+        if (
+            expected_operation in {
+                "editor_proposal_approve",
+                "editor_proposal_reject",
+            }
+            and operation.get("operation") != expected_operation
+        ):
+            return "proposal_approval_conflict", "operation_request.operation"
         return None
     if not exact_replay:
         for bound_instance in (instance, context.get("loaded_proposal")):
@@ -2854,7 +2940,21 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         )
     else:
         current_head_binding = expected_head_id or base_revision.get("revision_id")
-    if context.get("current_head_revision") != current_head_binding:
+    current_head_revision = context.get("current_head_revision")
+    if isinstance(current_head_revision, dict):
+        submitted_head_revision = (
+            instance.get("head_revision")
+            if instance.get("contract_name")
+            in {"editor_record_view", "editor_creation_context"}
+            else expected_head if isinstance(expected_head, dict) else base_revision
+        )
+        if submitted_head_revision != current_head_revision:
+            return "stale_revision", "binding.base_revision"
+        current_head_binding = current_head_revision.get("revision_id")
+    if (
+        not isinstance(current_head_revision, dict)
+        and current_head_revision != current_head_binding
+    ):
         if "current_head_revision" in context:
             return "stale_revision", "binding.base_revision"
     if instance.get("contract_name") == "editor_record_view":
@@ -3475,6 +3575,22 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                     ),
                     evaluate_semantic_failure({"instance": invalid}),
                 )
+
+    def test_record_connections_reject_duplicate_edge_occurrences(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        connections = proposal["diff"]["cards"][0]["before"]["connections"]
+        duplicate = deepcopy(connections[0])
+        duplicate["connection_id"] = "connection_parallel"
+        connections.append(duplicate)
+        self.assertEqual(
+            (
+                "proposal_validation_failure",
+                "diff.cards.0.before.connections.1",
+            ),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
 
     def test_logical_ids_are_unique_across_bindings_cards_outcomes_and_references(self) -> None:
         proposal = next(
@@ -5359,6 +5475,55 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         _, visibility_changes = _expected_transitions(disjoint["diff"])
         self.assertTrue(visibility_changes[0]["audience_broadens"])
 
+        create_card = {
+            "change_id": "change_create_record",
+            "kind": "record_created",
+            "subject_record_id": "record-new",
+            "before": None,
+            "after": {
+                "record_id": "record-new",
+                "authority": "canon",
+                "visibility": {"audience": "players", "warden_only": False},
+            },
+        }
+        create_diff = {"cards": [create_card]}
+        expected_authority, expected_visibility = _expected_transitions(create_diff)
+        create = {
+            "contract_name": "editor_proposal_view",
+            "diff": {
+                **create_diff,
+                "authority_changes": [],
+                "visibility_changes": [],
+            },
+            "authority_outcome": [],
+            "visibility_outcome": [],
+            "core_proposal": {
+                "proposal": {
+                    "authority_change_ids": [],
+                    "visibility_change_ids": [],
+                },
+            },
+        }
+        self.assertEqual(
+            ("proposal_validation_failure", "diff.authority_changes"),
+            _transition_completeness_failure(create, {}),
+        )
+        create["diff"]["authority_changes"] = expected_authority
+        create["authority_outcome"] = expected_authority
+        self.assertEqual(
+            ("proposal_validation_failure", "diff.visibility_changes"),
+            _transition_completeness_failure(create, {}),
+        )
+        create["diff"]["visibility_changes"] = expected_visibility
+        create["visibility_outcome"] = expected_visibility
+        create["core_proposal"]["proposal"]["authority_change_ids"] = [
+            item["change_id"] for item in expected_authority
+        ]
+        create["core_proposal"]["proposal"]["visibility_change_ids"] = [
+            item["change_id"] for item in expected_visibility
+        ]
+        self.assertIsNone(_transition_completeness_failure(create, {}))
+
     def test_player_visible_connections_reject_warden_only_targets(self) -> None:
         edit = deepcopy(
             next(
@@ -5676,6 +5841,70 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({
                 "instance": edit,
                 "semantic_context": {"available_record_ids": []},
+            }),
+        )
+
+    def test_current_revision_binding_compares_the_complete_revision(self) -> None:
+        edit = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "edit_record_with_connections_request"
+            )
+        )
+        current_revision = deepcopy(edit["binding"]["base_revision"])
+        context = {"current_head_revision": current_revision}
+        self.assertIsNone(
+            evaluate_semantic_failure({"instance": edit, "semantic_context": context})
+        )
+        for field, value in (
+            ("ordinal", current_revision["ordinal"] + 1),
+            ("tree_digest", "f" * 64),
+        ):
+            invalid = deepcopy(edit)
+            invalid["binding"]["base_revision"][field] = value
+            with self.subTest(field=field):
+                self.assertEqual(
+                    ("stale_revision", "binding.base_revision"),
+                    evaluate_semantic_failure({
+                        "instance": invalid,
+                        "semantic_context": context,
+                    }),
+                )
+
+    def test_exact_action_replays_bind_intent_and_operation(self) -> None:
+        action = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "approval_request")
+        )
+        loaded = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        loaded["core_proposal"]["proposal"]["status"] = "approved"
+        replay_context = {
+            "loaded_proposal": loaded,
+            "stored_receipt": {
+                "idempotency_key": action["operation_request"]["idempotency_key"],
+                "payload_digest": action["operation_request"]["payload_digest"],
+            },
+        }
+
+        invalid_intent = deepcopy(action)
+        invalid_intent["operation_request"]["intent_digest"] = "f" * 64
+        self.assertEqual(
+            ("proposal_approval_conflict", "operation_request.intent_digest"),
+            evaluate_semantic_failure({
+                "instance": invalid_intent,
+                "semantic_context": replay_context,
+            }),
+        )
+
+        invalid_operation = deepcopy(action)
+        invalid_operation["operation_request"]["operation"] = "editor_proposal_reject"
+        self.assertEqual(
+            ("proposal_approval_conflict", "operation_request.operation"),
+            evaluate_semantic_failure({
+                "instance": invalid_operation,
+                "semantic_context": replay_context,
             }),
         )
 
