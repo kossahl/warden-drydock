@@ -43,6 +43,12 @@ def _normalize_text_values(value: object) -> object:
     return value
 
 
+def _normalize_source_text(source_text: object) -> str | None:
+    if not isinstance(source_text, str):
+        return None
+    return source_text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def canonical_digest(value: object, *, ensure_ascii: bool = True) -> str:
     encoded = json.dumps(
         _normalize_text_values(value),
@@ -235,13 +241,14 @@ def _source_record_digest(
     resolution_cards: list[dict],
     authoritative_before: dict | None = None,
 ) -> str | None:
-    if not isinstance(source_text, str):
+    normalized_source_text = _normalize_source_text(source_text)
+    if normalized_source_text is None:
         return None
-    metadata = frontmatter(source_text)
+    metadata = frontmatter(normalized_source_text)
     if not {"id", "type", "ownership", "visibility", "warden_only"}.issubset(metadata):
         return None
     parsed, errors = parse_connections(
-        source_text,
+        normalized_source_text,
         source_id=metadata["id"],
         path=Path("synthetic.md"),
     )
@@ -318,13 +325,13 @@ def _source_record_digest(
 
     metadata_keys = {"id", "type", "status", "ownership", "name", "visibility", "warden_only"}
     sections = []
-    for line in source_text.splitlines():
+    for line in normalized_source_text.splitlines():
         if not line.startswith("## "):
             continue
         section_id = line[3:].strip().casefold()
         if section_id.casefold() == "connections":
             continue
-        body_lines = [line for _, line in _section_lines(source_text, section_id)]
+        body_lines = [line for _, line in _section_lines(normalized_source_text, section_id)]
         while body_lines and not body_lines[0].strip():
             body_lines.pop(0)
         while body_lines and not body_lines[-1].strip():
@@ -2508,9 +2515,12 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
             source_text = source.get(f"{side}_source")
             if source_text is None:
                 continue
-            if _frontmatter_has_duplicate_keys(source_text):
+            normalized_source_text = _normalize_source_text(source_text)
+            if normalized_source_text is None:
                 return False
-            metadata = frontmatter(source_text)
+            if _frontmatter_has_duplicate_keys(normalized_source_text):
+                return False
+            metadata = frontmatter(normalized_source_text)
             if not required_metadata.issubset(metadata) or metadata.get("id") != subject:
                 return False
             record_definition = (
@@ -2566,7 +2576,10 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
                 for section in structured["sections"]:
                     actual = [
                         line
-                        for _, line in _section_lines(source_text, section["section_id"])
+                        for _, line in _section_lines(
+                            normalized_source_text,
+                            section["section_id"],
+                        )
                     ]
                     while actual and not actual[0].strip():
                         actual.pop(0)
@@ -2579,14 +2592,14 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
                 ] + ["connections"]
                 actual_sections = [
                     line[3:].strip().casefold()
-                    for line in source_text.splitlines()
+                    for line in normalized_source_text.splitlines()
                     if line.startswith("## ")
                 ]
                 if actual_sections != expected_sections:
                     return False
                 top_level_headings = [
                     line[2:].strip()
-                    for line in source_text.splitlines()
+                    for line in normalized_source_text.splitlines()
                     if line.startswith("# ")
                 ]
                 if len(top_level_headings) != 1:
@@ -2597,7 +2610,7 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
                 if not resolution_cards:
                     return False
             parsed, errors = parse_connections(
-                source_text,
+                normalized_source_text,
                 source_id=subject,
                 path=Path("synthetic.md"),
             )
@@ -2621,7 +2634,10 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
         if resolution_cards and not has_structured_card:
             if before_source is None or after_source is None:
                 return False
-            if _without_connection_lines(before_source) != _without_connection_lines(after_source):
+            if (
+                _without_connection_lines(_normalize_source_text(before_source))
+                != _without_connection_lines(_normalize_source_text(after_source))
+            ):
                 return False
             before_connections = connection_lists["before"]
             expected_slots = [{"connection": item, "resolved": False} for item in before_connections]
@@ -6631,6 +6647,15 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         for source in proposal["diff"]["source_changes"]:
             for side in ("before_source", "after_source"):
                 source[side] = source[side].replace("date: 2187-04-03", "date:")
+        self.assertTrue(source_snapshots_match(proposal["diff"]))
+
+    def test_source_snapshots_accept_crlf_line_endings(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        for source in proposal["diff"]["source_changes"]:
+            for key in ("before_source", "after_source"):
+                source[key] = source[key].replace("\n", "\r\n")
         self.assertTrue(source_snapshots_match(proposal["diff"]))
 
     def test_source_snapshots_match_raw_before_statuses(self) -> None:
