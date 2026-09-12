@@ -1,0 +1,53 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "replay_mismatch",
+  "expected_path": "operation_request.payload_digest",
+  "description": "An idempotency key is reused with a different payload digest and cannot be treated as an exact replay.",
+  "stored_receipt": {
+    "idempotency_key": "idem_replay",
+    "payload_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "outcome": "accepted"
+  },
+  "instance": {
+    "contract_name": "editor_record_create_request",
+    "contract_version": 1,
+    "operation_request": {
+      "contract_name": "editor_operation_request",
+      "contract_version": 1,
+      "request_id": "request_replay",
+      "operation": "editor_record_create",
+      "idempotency_key": "idem_replay",
+      "payload_digest": "c235a705d08f0f5847d0c690a2da10bdd3b3b1374810b5f80d98f291e420e054",
+      "expected_revision": "revision_12",
+      "expected_editor_workflow_version": 7,
+      "subject_id": "record-new"
+    },
+    "binding": {
+      "campaign_id": "campaign_alpha",
+      "base_revision": {
+        "revision_id": "revision_12",
+        "ordinal": 12,
+        "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "record_id": "record-new",
+      "record_digest": null,
+      "expected_editor_workflow_version": 7
+    },
+    "candidate": {
+      "record_id": "record-new",
+      "record_type": "npc",
+      "ownership": "campaign",
+      "displayed_name": "New Keeper",
+      "status": "draft",
+      "authority": "preparation",
+      "visibility": {
+        "audience": "warden",
+        "warden_only": true
+      },
+      "fields": [],
+      "sections": [],
+      "connections": [],
+      "content_digest": "3235590614543fa24ba187e0926315208e8dd01f9d9845f9c1d3a330bfce9084"
+    }
+  }
+}

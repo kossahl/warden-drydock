@@ -1,0 +1,51 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "stale_revision",
+  "expected_path": "binding.base_revision",
+  "description": "The proposal base revision is not the current campaign head; no merge or publication is allowed.",
+  "semantic_context": {
+    "current_head_revision": "revision_12"
+  },
+  "instance": {
+    "contract_name": "editor_record_edit_request",
+    "contract_version": 1,
+    "operation_request": {
+      "contract_name": "editor_operation_request",
+      "contract_version": 1,
+      "request_id": "request_stale_revision",
+      "operation": "editor_record_edit",
+      "idempotency_key": "idem_stale_revision",
+      "payload_digest": "117d61f60cf371f4a8677a7ce4b3ca4fb21e05010138dea21de09071bc467560",
+      "expected_revision": "revision_11",
+      "expected_editor_workflow_version": 7,
+      "subject_id": "record-station"
+    },
+    "binding": {
+      "campaign_id": "campaign_alpha",
+      "base_revision": {
+        "revision_id": "revision_11",
+        "ordinal": 11,
+        "tree_digest": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "record_id": "record-station",
+      "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expected_editor_workflow_version": 7
+    },
+    "candidate": {
+      "record_id": "record-station",
+      "record_type": "location",
+      "ownership": "campaign",
+      "displayed_name": "Station",
+      "status": "review",
+      "authority": "preparation",
+      "visibility": {
+        "audience": "warden",
+        "warden_only": true
+      },
+      "fields": [],
+      "sections": [],
+      "connections": [],
+      "content_digest": "7106c4e918c717363ebe50b0c4f38d118f02d666a205e4cc10781db24014a4fb"
+    }
+  }
+}
