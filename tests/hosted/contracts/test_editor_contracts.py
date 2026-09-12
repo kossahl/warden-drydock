@@ -216,7 +216,8 @@ def _current_record_binding_failure(
     if not isinstance(bindings, list):
         return None
     current_digests = context.get("current_record_digests")
-    if not isinstance(current_digests, dict):
+    current_digests_enabled = isinstance(current_digests, dict)
+    if not current_digests_enabled:
         current_digests = {}
     for index, binding in enumerate(bindings):
         record_id = binding.get("record_id")
@@ -224,6 +225,12 @@ def _current_record_binding_failure(
         current_digest = current_digests.get(record_id)
         if isinstance(current_digest, dict):
             current_digest = current_digest.get("content_digest")
+        if (
+            current_digests_enabled
+            and binding.get("record_digest") is not None
+            and (record_id not in current_digests or current_digest is None)
+        ):
+            return "stale_record_digest", f"record_bindings.{index}.record_digest"
         if current_digest is not None:
             expected_digests.append(current_digest)
         authoritative = _authoritative_before_record(context, record_id)
@@ -2274,6 +2281,14 @@ def _result_workflow_version_failure(
                 expected = receipt.get("editor_workflow_version")
             if expected is None:
                 expected = receipt.get("workflow_version")
+            if expected is None:
+                for key in ("result", "result_payload", "response"):
+                    nested = receipt.get(key)
+                    if isinstance(nested, dict) and isinstance(nested.get("payload"), dict):
+                        nested = nested["payload"]
+                    if isinstance(nested, dict) and "editor_workflow_version" in nested:
+                        expected = nested["editor_workflow_version"]
+                        break
     if expected is None and "current_editor_workflow_version" in context:
         expected = context["current_editor_workflow_version"]
     if expected is not None and instance.get("editor_workflow_version") != expected:
@@ -4258,6 +4273,16 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "semantic_context": {"current_record_digests": current_digests},
             }),
         )
+        incomplete_digests = {
+            "record-company": current_digests["record-company"],
+        }
+        self.assertEqual(
+            ("stale_record_digest", "record_bindings.1.record_digest"),
+            evaluate_semantic_failure({
+                "instance": removal,
+                "semantic_context": {"current_record_digests": incomplete_digests},
+            }),
+        )
 
     def test_proposal_views_bind_the_returned_workflow_version(self) -> None:
         accepted_request = deepcopy(
@@ -4392,6 +4417,16 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "instance": result,
                 "stored_result": stored_result,
             }),
+        )
+
+        self.assertIsNone(
+            evaluate_semantic_failure({
+                "instance": stored_result,
+                "semantic_context": {
+                    "current_editor_workflow_version": 10,
+                    "stored_receipt": {"result": stored_result},
+                },
+            })
         )
 
     def test_replayed_proposal_views_bind_the_stored_result(self) -> None:
