@@ -2800,10 +2800,29 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
 
     context = fixture.get("semantic_context", {})
     receipt = context.get("stored_receipt") or fixture.get("stored_receipt")
+    stored_result = context.get("stored_result")
+    if stored_result is None:
+        stored_result = fixture.get("stored_result")
+    if stored_result is None and isinstance(receipt, dict):
+        for key in ("result", "result_payload", "response"):
+            if key in receipt:
+                stored_result = receipt[key]
+                break
+    if isinstance(stored_result, dict) and isinstance(stored_result.get("payload"), dict):
+        stored_result = stored_result["payload"]
+    exact_result_replay = isinstance(stored_result, dict) and stored_result == instance
     exact_replay = (
-        isinstance(receipt, dict)
-        and receipt.get("idempotency_key") == operation.get("idempotency_key")
-        and receipt.get("payload_digest") == operation.get("payload_digest")
+        exact_result_replay
+        or (
+            isinstance(operation, dict)
+            and operation.get("idempotency_key") is not None
+            and operation.get("payload_digest") is not None
+            and isinstance(receipt, dict)
+            and receipt.get("idempotency_key") is not None
+            and receipt.get("payload_digest") is not None
+            and receipt.get("idempotency_key") == operation.get("idempotency_key")
+            and receipt.get("payload_digest") == operation.get("payload_digest")
+        )
     )
     if exact_replay:
         digest_failure = _operation_payload_digest_failure(instance)
@@ -4562,6 +4581,23 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({
                 "instance": proposal,
                 "semantic_context": {"stored_receipt": {"result": stored_proposal}},
+            }),
+        )
+
+    def test_result_metadata_receipts_do_not_trigger_exact_proposal_replay(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["proposal_payload_digest"] = "f" * 64
+        self.assertEqual(
+            ("idempotency_digest_conflict", "proposal_payload_digest"),
+            evaluate_semantic_failure({
+                "instance": proposal,
+                "semantic_context": {
+                    "stored_receipt": {
+                        "published_revision": {"revision_id": "revision_13"},
+                    },
+                },
             }),
         )
 
