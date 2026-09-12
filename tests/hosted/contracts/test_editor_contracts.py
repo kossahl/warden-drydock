@@ -2126,6 +2126,17 @@ def _result_binding_failure(instance: dict, fixture: dict) -> tuple[str, str] | 
         if accepted_mutation in {"create", "edit"}:
             if not isinstance(candidate, dict) or record_card.get("after") != candidate:
                 return "unsafe_binding", f"diff.cards.{card_index}.after"
+            response_bindings = [
+                (index, binding)
+                for index, binding in enumerate(instance.get("record_bindings", []))
+                if binding.get("record_id") == request_binding.get("record_id")
+            ]
+            if len(response_bindings) != 1:
+                return "unsafe_binding", "record_bindings"
+            binding_index, response_binding = response_bindings[0]
+            for key in ("campaign_id", "base_revision", "record_digest"):
+                if response_binding.get(key) != request_binding.get(key):
+                    return "unsafe_binding", f"record_bindings.{binding_index}.{key}"
             if accepted_mutation == "edit":
                 expected_record_digest = request_binding.get("record_digest")
                 before = record_card.get("before")
@@ -2137,17 +2148,6 @@ def _result_binding_failure(instance: dict, fixture: dict) -> tuple[str, str] | 
                     )
                 ):
                     return "unsafe_binding", f"diff.cards.{card_index}.before.content_digest"
-                response_bindings = [
-                    (index, binding)
-                    for index, binding in enumerate(instance.get("record_bindings", []))
-                    if binding.get("record_id") == request_binding.get("record_id")
-                ]
-                if len(response_bindings) != 1:
-                    return "unsafe_binding", "record_bindings"
-                binding_index, response_binding = response_bindings[0]
-                for key in ("campaign_id", "base_revision", "record_digest"):
-                    if response_binding.get(key) != request_binding.get(key):
-                        return "unsafe_binding", f"record_bindings.{binding_index}.{key}"
         else:
             before = record_card.get("before")
             if not isinstance(before, dict):
@@ -2730,6 +2730,7 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         digest_failure = _operation_payload_digest_failure(instance)
         if digest_failure is not None:
             return digest_failure
+        return None
     if not exact_replay:
         for bound_instance in (instance, context.get("loaded_proposal")):
             if isinstance(bound_instance, dict) and isinstance(bound_instance.get("payload"), dict):
@@ -2795,8 +2796,6 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         if failure is not None:
             return failure
 
-    if exact_replay:
-        return None
     if receipt and receipt.get("idempotency_key") == operation.get("idempotency_key"):
         digest_failure = _operation_payload_digest_failure(instance)
         if digest_failure is not None:
@@ -5625,6 +5624,73 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "instance": edit,
                 "semantic_context": {"available_record_ids": []},
             }),
+        )
+
+    def test_exact_action_replays_return_before_terminal_proposal_validation(self) -> None:
+        for action_name, terminal_status in (
+            ("approval_request", "approved"),
+            ("rejection_request", "rejected"),
+        ):
+            action = deepcopy(next(item["payload"] for item in self.examples if item["name"] == action_name))
+            loaded = deepcopy(
+                next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+            )
+            loaded["core_proposal"]["proposal"]["status"] = terminal_status
+            if terminal_status == "approved":
+                loaded["publication"] = {
+                    "status": "published",
+                    "published_revision": {
+                        "revision_id": "revision_13",
+                        "ordinal": 13,
+                        "tree_digest": "d" * 64,
+                        "immutable": True,
+                    },
+                }
+            with self.subTest(action=action_name):
+                self.assertIsNone(
+                    evaluate_semantic_failure({
+                        "instance": action,
+                        "semantic_context": {
+                            "loaded_proposal": loaded,
+                            "stored_receipt": {
+                                "idempotency_key": action["operation_request"]["idempotency_key"],
+                                "payload_digest": action["operation_request"]["payload_digest"],
+                            },
+                        },
+                    })
+                )
+
+    def test_create_proposal_result_bindings_preserve_null_base_digest(self) -> None:
+        create = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "create_record_request")
+        )
+        candidate = deepcopy(create["candidate"])
+        instance = {
+            "contract_name": "editor_proposal_view",
+            "mutation_kind": "create",
+            "campaign_id": create["binding"]["campaign_id"],
+            "source_revision": create["binding"]["base_revision"],
+            "base_revision": create["binding"]["base_revision"],
+            "expected_campaign_head": create["binding"]["base_revision"],
+            "diff": {
+                "cards": [{
+                    "kind": "record_created",
+                    "subject_record_id": candidate["record_id"],
+                    "after": candidate,
+                }],
+            },
+            "record_bindings": [{
+                **create["binding"],
+                "expected_editor_workflow_version": 8,
+            }],
+        }
+        fixture = {"semantic_context": {"accepted_request": create}}
+        self.assertIsNone(_result_binding_failure(instance, fixture))
+
+        instance["record_bindings"][0]["record_digest"] = "f" * 64
+        self.assertEqual(
+            ("unsafe_binding", "record_bindings.0.record_digest"),
+            _result_binding_failure(instance, fixture),
         )
 
     def test_non_redirect_resolution_snapshots_preserve_their_declared_action(self) -> None:
