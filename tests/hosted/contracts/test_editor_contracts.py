@@ -202,6 +202,34 @@ def _record_binding_digest_failure(
     return None
 
 
+def _current_record_binding_failure(
+    instance: dict,
+    context: dict,
+) -> tuple[str, str] | None:
+    bindings = instance.get("record_bindings")
+    if not isinstance(bindings, list):
+        return None
+    current_digests = context.get("current_record_digests")
+    if not isinstance(current_digests, dict):
+        current_digests = {}
+    for index, binding in enumerate(bindings):
+        record_id = binding.get("record_id")
+        expected_digests = []
+        current_digest = current_digests.get(record_id)
+        if isinstance(current_digest, dict):
+            current_digest = current_digest.get("content_digest")
+        if current_digest is not None:
+            expected_digests.append(current_digest)
+        authoritative = _authoritative_before_record(context, record_id)
+        if isinstance(authoritative, dict) and authoritative.get("content_digest") is not None:
+            expected_digests.append(authoritative["content_digest"])
+        if len(bindings) == 1 and "current_record_digest" in context:
+            expected_digests.append(context["current_record_digest"])
+        if any(binding.get("record_digest") != expected for expected in expected_digests):
+            return "stale_record_digest", f"record_bindings.{index}.record_digest"
+    return None
+
+
 def _source_record_digest(
     source_text: object,
     resolution_cards: list[dict],
@@ -1294,14 +1322,18 @@ def _core_identity_failure(instance: dict) -> tuple[str, str] | None:
         if proposal.get(core_key) != outer_value:
             return "unsafe_binding", f"core_proposal.proposal.{core_key}"
 
-    if "correction_of" in instance:
-        correction_of = instance.get("correction_of")
+    correction_of = instance.get("correction_of")
+    correction_of_present = isinstance(correction_of, dict)
+    core_correction_present = "correction_of_version" in proposal
+    if correction_of_present or core_correction_present:
         correction_of_version = (
             correction_of.get("proposal_version")
             if isinstance(correction_of, dict)
             else None
         )
-        if proposal.get("correction_of_version") != correction_of_version:
+        if not correction_of_present or not core_correction_present or proposal.get(
+            "correction_of_version"
+        ) != correction_of_version:
             return "unsafe_binding", "core_proposal.proposal.correction_of_version"
 
     validation = core.get("validation") if isinstance(core, dict) else None
@@ -2645,6 +2677,17 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         return "unsafe_binding", "candidate.record_id"
 
     context = fixture.get("semantic_context", {})
+    for bound_instance in (instance, context.get("loaded_proposal")):
+        if isinstance(bound_instance, dict) and isinstance(bound_instance.get("payload"), dict):
+            bound_instance = bound_instance["payload"]
+        if not isinstance(bound_instance, dict):
+            continue
+        current_record_binding_failure = _current_record_binding_failure(
+            bound_instance,
+            context,
+        )
+        if current_record_binding_failure is not None:
+            return current_record_binding_failure
     if instance.get("contract_name") in {"editor_record_view", "editor_creation_context"}:
         viewed_revision = instance.get("viewed_revision")
         head_revision = instance.get("head_revision")
@@ -4081,6 +4124,68 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({
                 "instance": invalid,
                 "semantic_context": {"accepted_request": rejection_request},
+            }),
+        )
+
+    def test_action_record_bindings_match_current_revision_digests(self) -> None:
+        for name in ("approval_request", "rejection_request"):
+            action = deepcopy(next(item["payload"] for item in self.examples if item["name"] == name))
+            expected_digest = action["record_bindings"][0]["record_digest"]
+            with self.subTest(action=name):
+                self.assertIsNone(
+                    evaluate_semantic_failure({
+                        "instance": action,
+                        "semantic_context": {"current_record_digest": expected_digest},
+                    })
+                )
+                invalid = deepcopy(action)
+                invalid["record_bindings"][0]["record_digest"] = "f" * 64
+                self.assertEqual(
+                    ("stale_record_digest", "record_bindings.0.record_digest"),
+                    evaluate_semantic_failure({
+                        "instance": invalid,
+                        "semantic_context": {"current_record_digest": expected_digest},
+                    }),
+                )
+
+        action = deepcopy(next(item["payload"] for item in self.examples if item["name"] == "approval_request"))
+        loaded = deepcopy(next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view"))
+        loaded["record_bindings"][0]["record_digest"] = "f" * 64
+        expected_digest = action["record_bindings"][0]["record_digest"]
+        self.assertEqual(
+            ("stale_record_digest", "record_bindings.0.record_digest"),
+            evaluate_semantic_failure({
+                "instance": action,
+                "semantic_context": {
+                    "current_record_digest": expected_digest,
+                    "loaded_proposal": loaded,
+                },
+            }),
+        )
+
+        removal = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_approval_with_outgoing_connections"
+            )
+        )
+        current_digests = {
+            binding["record_id"]: binding["record_digest"]
+            for binding in removal["record_bindings"]
+        }
+        self.assertIsNone(
+            evaluate_semantic_failure({
+                "instance": removal,
+                "semantic_context": {"current_record_digests": current_digests},
+            })
+        )
+        current_digests["record-station"] = "f" * 64
+        self.assertEqual(
+            ("stale_record_digest", "record_bindings.1.record_digest"),
+            evaluate_semantic_failure({
+                "instance": removal,
+                "semantic_context": {"current_record_digests": current_digests},
             }),
         )
 
@@ -5759,6 +5864,40 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             "proposal_version": 1,
         }
         proposal["core_proposal"]["proposal"]["correction_of_version"] = 99
+        proposal["proposal_payload_digest"] = projection_digest(
+            proposal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            ("unsafe_binding", "core_proposal.proposal.correction_of_version"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["proposal_version"] = 2
+        proposal["core_proposal"]["proposal"]["proposal_version"] = 2
+        proposal["correction_of"] = {
+            "proposal_id": proposal["proposal_id"],
+            "proposal_version": 1,
+        }
+        proposal["proposal_payload_digest"] = projection_digest(
+            proposal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            ("unsafe_binding", "core_proposal.proposal.correction_of_version"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["proposal_version"] = 2
+        proposal["core_proposal"]["proposal"]["proposal_version"] = 2
+        del proposal["correction_of"]
+        proposal["core_proposal"]["proposal"]["correction_of_version"] = 1
         proposal["proposal_payload_digest"] = projection_digest(
             proposal,
             DIGEST_PROJECTIONS["proposal_payload_digest"],
