@@ -433,6 +433,32 @@ def _proposal_target_visibility_failure(
         )
         if failure is not None:
             return failure
+    if "record_visibility" not in context and "authoritative_before_records" not in context:
+        return None
+    for index, card in enumerate(diff.get("cards", [])):
+        if card.get("kind") != "reference_resolution":
+            continue
+        before = card.get("before")
+        after = card.get("after")
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            continue
+        if after.get("action") != "redirect":
+            continue
+        source_visibility = _target_visibility(context, before.get("source_record_id"))
+        if not isinstance(source_visibility, dict):
+            return "invalid_connections", f"diff.cards.{index}.before.source_record_id"
+        if "players" not in _visibility_scope(source_visibility):
+            continue
+        target_visibility = _target_visibility(
+            context,
+            after.get("replacement_target_record_id"),
+        )
+        if not isinstance(target_visibility, dict) or "players" not in _visibility_scope(
+            target_visibility
+        ):
+            return "invalid_connections", (
+                f"diff.cards.{index}.after.replacement_target_record_id"
+            )
     return None
 
 
@@ -2029,6 +2055,9 @@ def _result_binding_failure(instance: dict, fixture: dict) -> tuple[str, str] | 
         return None
 
     accepted = _accepted_request(fixture)
+    context = fixture.get("semantic_context", {})
+    if not isinstance(context, dict):
+        context = {}
     accepted_operation = accepted.get("operation_request", {}) if isinstance(accepted, dict) else {}
     if not isinstance(accepted_operation, dict):
         accepted_operation = {}
@@ -2142,6 +2171,20 @@ def _result_binding_failure(instance: dict, fixture: dict) -> tuple[str, str] | 
                     return "unsafe_binding", "impact_digest"
             if "resolutions" in accepted and instance.get("resolutions") != accepted.get("resolutions"):
                 return "unsafe_binding", "resolutions"
+            impact = context.get("removal_impact")
+            if not isinstance(impact, dict):
+                impact = fixture.get("impact")
+            if not isinstance(impact, dict) and isinstance(accepted, dict):
+                impact = accepted.get("removal_impact") or accepted.get("impact")
+            diff = instance.get("diff")
+            if not isinstance(diff, dict):
+                diff = {}
+            reference_failure = _removal_impact_reference_binding_failure(
+                diff,
+                impact,
+            )
+            if reference_failure is not None:
+                return reference_failure
 
     if (
         instance.get("contract_name") == "editor_proposal_view"
@@ -2677,17 +2720,28 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         return "unsafe_binding", "candidate.record_id"
 
     context = fixture.get("semantic_context", {})
-    for bound_instance in (instance, context.get("loaded_proposal")):
-        if isinstance(bound_instance, dict) and isinstance(bound_instance.get("payload"), dict):
-            bound_instance = bound_instance["payload"]
-        if not isinstance(bound_instance, dict):
-            continue
-        current_record_binding_failure = _current_record_binding_failure(
-            bound_instance,
-            context,
-        )
-        if current_record_binding_failure is not None:
-            return current_record_binding_failure
+    receipt = context.get("stored_receipt") or fixture.get("stored_receipt")
+    exact_replay = (
+        isinstance(receipt, dict)
+        and receipt.get("idempotency_key") == operation.get("idempotency_key")
+        and receipt.get("payload_digest") == operation.get("payload_digest")
+    )
+    if exact_replay:
+        digest_failure = _operation_payload_digest_failure(instance)
+        if digest_failure is not None:
+            return digest_failure
+    if not exact_replay:
+        for bound_instance in (instance, context.get("loaded_proposal")):
+            if isinstance(bound_instance, dict) and isinstance(bound_instance.get("payload"), dict):
+                bound_instance = bound_instance["payload"]
+            if not isinstance(bound_instance, dict):
+                continue
+            current_record_binding_failure = _current_record_binding_failure(
+                bound_instance,
+                context,
+            )
+            if current_record_binding_failure is not None:
+                return current_record_binding_failure
     if instance.get("contract_name") in {"editor_record_view", "editor_creation_context"}:
         viewed_revision = instance.get("viewed_revision")
         head_revision = instance.get("head_revision")
@@ -2741,7 +2795,8 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         if failure is not None:
             return failure
 
-    receipt = fixture.get("stored_receipt")
+    if exact_replay:
+        return None
     if receipt and receipt.get("idempotency_key") == operation.get("idempotency_key"):
         digest_failure = _operation_payload_digest_failure(instance)
         if digest_failure is not None:
@@ -4379,6 +4434,101 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             }),
         )
 
+    def test_removal_redirects_preserve_player_visible_target_visibility(self) -> None:
+        proposal = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_proposal_with_outgoing_connections"
+            )
+        )
+        visibility_context = {
+            "record_visibility": {
+                "record-station": {"audience": "players", "warden_only": False},
+                "record-company": {"audience": "warden", "warden_only": True},
+                "record-ship": {"audience": "warden", "warden_only": True},
+            }
+        }
+        self.assertEqual(
+            ("invalid_connections", "diff.cards.2.after.replacement_target_record_id"),
+            evaluate_semantic_failure({
+                "instance": proposal,
+                "semantic_context": visibility_context,
+            }),
+        )
+
+        action = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_approval_with_outgoing_connections"
+            )
+        )
+        self.assertEqual(
+            ("invalid_connections", "diff.cards.2.after.replacement_target_record_id"),
+            evaluate_semantic_failure({
+                "instance": action,
+                "semantic_context": {
+                    **visibility_context,
+                    "loaded_proposal": proposal,
+                },
+            }),
+        )
+
+    def test_removal_responses_bind_reference_cards_to_the_accepted_impact(self) -> None:
+        accepted = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "remove_record_request")
+        )
+        response = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_proposal_with_outgoing_connections"
+            )
+        )
+        impact = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_impact_with_outgoing_connections"
+            )
+        )
+        accepted["binding"] = deepcopy(response["impact_binding"]["binding"])
+        accepted["impact_binding"] = deepcopy(response["impact_binding"])
+        accepted["impact_digest"] = response["impact_digest"]
+        accepted["resolutions"] = deepcopy(response["resolutions"])
+        _refresh_operation_payload_digest(accepted)
+        card = next(
+            card
+            for card in response["diff"]["cards"]
+            if card["kind"] == "reference_resolution"
+        )
+        card["before"]["connection_id"] = "connection_other"
+        card["derived_backlinks"] = [{
+            "connection_id": "connection_other",
+            "effect": "updated",
+            "source_record_id": "record-station",
+            "target_record_id": "record-ship",
+        }]
+        response["diff"]["diff_digest"] = projection_digest(
+            response["diff"], DIGEST_PROJECTIONS["diff_digest"]
+        )
+        response["core_proposal"]["proposal"]["diff_digest"] = response["diff"]["diff_digest"]
+        response["proposal_payload_digest"] = projection_digest(
+            response,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            ("unsafe_binding", "diff.cards.2.before"),
+            evaluate_semantic_failure({
+                "instance": response,
+                "semantic_context": {
+                    "accepted_request": accepted,
+                    "removal_impact": impact,
+                },
+            }),
+        )
+
     def test_source_snapshots_reject_duplicate_frontmatter_keys(self) -> None:
         proposal = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
@@ -5407,6 +5557,28 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                     "payload_digest": replay["operation_request"]["payload_digest"],
                 },
             }),
+        )
+
+        exact_replay = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "edit_record_with_connections_request"
+            )
+        )
+        self.assertIsNone(
+            evaluate_semantic_failure({
+                "instance": exact_replay,
+                "semantic_context": {
+                    "current_head_revision": "revision_11",
+                    "current_record_digest": "f" * 64,
+                    "current_editor_workflow_version": 8,
+                    "stored_receipt": {
+                        "idempotency_key": exact_replay["operation_request"]["idempotency_key"],
+                        "payload_digest": exact_replay["operation_request"]["payload_digest"],
+                    },
+                },
+            })
         )
 
         edit = deepcopy(
