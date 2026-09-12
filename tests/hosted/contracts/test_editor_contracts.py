@@ -2724,6 +2724,16 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
             return "invalid_authority_transition", "candidate.authority"
 
         available_ids = set(context.get("available_record_ids", []))
+        if (
+            operation.get("operation") in {"editor_record_create", "editor_proposal_correct"}
+            and (
+                operation.get("operation") == "editor_record_create"
+                or instance.get("mutation_kind") == "create"
+            )
+            and "available_record_ids" in context
+            and candidate.get("record_id") in available_ids
+        ):
+            return "unsafe_binding", "candidate.record_id"
         for index, connection in enumerate(candidate.get("connections", [])):
             if "available_record_ids" in context and connection.get("target_record_id") not in available_ids:
                 return "invalid_connections", f"candidate.connections.{index}.target_record_id"
@@ -4452,6 +4462,18 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         valid["diff"]["cards"][0]["after"] = deepcopy(action["candidate"])
         valid["record_bindings"][0]["expected_editor_workflow_version"] = 9
         self.assertIsNone(_correction_result_binding_failure(valid, action))
+
+    def test_create_candidates_cannot_reuse_existing_record_ids(self) -> None:
+        create = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "create_record_request")
+        )
+        self.assertEqual(
+            ("unsafe_binding", "candidate.record_id"),
+            evaluate_semantic_failure({
+                "instance": create,
+                "semantic_context": {"available_record_ids": ["record-new"]},
+            }),
+        )
 
     def test_corrected_create_proposals_bind_the_submitted_candidate(self) -> None:
         create = deepcopy(
