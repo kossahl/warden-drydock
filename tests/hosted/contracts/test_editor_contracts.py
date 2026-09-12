@@ -1964,8 +1964,14 @@ def _proposal_validation_gate_failure(instance: dict) -> tuple[str, str] | None:
         return "proposal_validation_failure", "validation.status"
     if validation.get("error_count") != 0:
         return "proposal_validation_failure", "validation.error_count"
+    if any(
+        finding.get("severity") == "error"
+        for finding in validation.get("findings", [])
+        if isinstance(finding, dict)
+    ):
+        return "proposal_validation_failure", "validation.findings"
     if proposal_status in {"approving", "approved"} and any(
-        finding.get("severity") in {"error", "warning"}
+        finding.get("severity") == "warning"
         for finding in validation.get("findings", [])
         if isinstance(finding, dict)
     ):
@@ -3392,6 +3398,13 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "after_present": True,
             })),
         )
+
+    def test_connection_contexts_require_non_whitespace_content(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["diff"]["cards"][1]["connection"]["context"] = "   "
+        self.assertTrue(list(self.validator.iter_errors(proposal)))
 
     def test_negative_fixtures_are_schema_valid_and_exercise_declared_rules(self) -> None:
         mapping = self.invariants["error_category_mapping"]
@@ -5416,6 +5429,16 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             DIGEST_PROJECTIONS["proposal_payload_digest"],
         )
         self.assertIsNone(evaluate_semantic_failure({"instance": proposal}))
+
+    def test_needs_review_proposal_views_reject_error_findings(self) -> None:
+        proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        proposal["validation"]["findings"] = [{"severity": "error"}]
+        self.assertEqual(
+            ("proposal_validation_failure", "validation.findings"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
 
     def test_proposal_publication_matches_core_status(self) -> None:
         proposal = deepcopy(
