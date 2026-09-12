@@ -901,6 +901,30 @@ def _prior_proposal_identity_failure(
     return None
 
 
+def _proposal_subject_record_id(proposal: object) -> object:
+    if not isinstance(proposal, dict):
+        return None
+    if isinstance(proposal.get("payload"), dict):
+        proposal = proposal["payload"]
+    if proposal.get("record_id") is not None:
+        return proposal["record_id"]
+    binding_ids = {
+        binding.get("record_id")
+        for binding in proposal.get("record_bindings", [])
+        if isinstance(binding, dict) and binding.get("record_id")
+    }
+    if len(binding_ids) == 1:
+        return next(iter(binding_ids))
+    card_ids = {
+        card.get("subject_record_id")
+        for card in proposal.get("diff", {}).get("cards", [])
+        if isinstance(card, dict) and card.get("subject_record_id")
+    }
+    if len(card_ids) == 1:
+        return next(iter(card_ids))
+    return None
+
+
 def _correction_reference_failure(instance: dict) -> tuple[str, str] | None:
     correction_of = instance.get("correction_of")
     if not isinstance(correction_of, dict):
@@ -1272,6 +1296,30 @@ def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str,
         if impact_reference_failure is not None:
             return impact_reference_failure
         if "cards" in loaded["diff"]:
+            if loaded.get("contract_name") == "editor_proposal_view":
+                card_subjects = {
+                    card.get("subject_record_id")
+                    for card in loaded["diff"].get("cards", [])
+                }
+                source_subjects = [
+                    source.get("subject_record_id")
+                    for source in loaded["diff"].get("source_changes", [])
+                ]
+                if (
+                    len(source_subjects) != len(set(source_subjects))
+                    or set(source_subjects) != card_subjects
+                ):
+                    return "mutation_consistency", "diff.source_changes"
+                if loaded["diff"].get("affected_record_count") != len(card_subjects):
+                    return "mutation_consistency", "diff.affected_record_count"
+                record_card_subjects = [
+                    card.get("subject_record_id")
+                    for card in loaded["diff"].get("cards", [])
+                    if card.get("kind")
+                    in {"record_created", "record_updated", "record_removed"}
+                ]
+                if len(record_card_subjects) != len(set(record_card_subjects)):
+                    return "proposal_validation_failure", "diff.cards.record_mutation"
             for failure in (
                 _record_property_change_failure(loaded["diff"]),
                 _record_subject_failure(loaded["diff"]),
@@ -2109,7 +2157,7 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     )
     if expected_head is not None and expected_head != base_revision:
         return "unsafe_binding", "expected_campaign_head"
-    if instance.get("contract_name") == "editor_creation_context":
+    if instance.get("contract_name") in {"editor_record_view", "editor_creation_context"}:
         head_revision = instance.get("head_revision")
         current_head_binding = (
             head_revision.get("revision_id")
@@ -2121,10 +2169,23 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     if context.get("current_head_revision") != current_head_binding:
         if "current_head_revision" in context:
             return "stale_revision", "binding.base_revision"
-    if context.get("current_record_digest") != binding.get("record_digest"):
+    if instance.get("contract_name") == "editor_record_view":
+        record = instance.get("record")
+        current_record_binding = record.get("content_digest") if isinstance(record, dict) else None
+        record_digest_path = "record.content_digest"
+    elif instance.get("contract_name") == "editor_creation_context":
+        current_record_binding = None
+        record_digest_path = "binding.record_digest"
+    else:
+        current_record_binding = binding.get("record_digest")
+        record_digest_path = "binding.record_digest"
+    if (
+        current_record_binding is not None
+        and context.get("current_record_digest") != current_record_binding
+    ):
         if "current_record_digest" in context:
-            return "stale_record_digest", "binding.record_digest"
-    if instance.get("contract_name") == "editor_creation_context":
+            return "stale_record_digest", record_digest_path
+    if instance.get("contract_name") in {"editor_record_view", "editor_creation_context"}:
         expected_workflow_version = instance.get("editor_workflow_version")
         workflow_path = "editor_workflow_version"
     else:
@@ -2177,9 +2238,13 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
     prior_identity_failure = _prior_proposal_identity_failure(instance, context)
     if prior_identity_failure is not None:
         return prior_identity_failure
+    prior_record_id = _proposal_subject_record_id(prior_proposal)
     if prior_proposal and (
         instance.get("mutation_kind") != prior_proposal.get("mutation_kind")
-        or binding.get("record_id") != prior_proposal.get("record_id")
+        or (
+            prior_record_id is not None
+            and binding.get("record_id") != prior_record_id
+        )
     ):
         return "invalid_correction", "prior_proposal"
 
@@ -2252,9 +2317,38 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
         return redirect_failure
 
     diff = instance.get("diff")
+    if (
+        operation.get("operation") in {"editor_proposal_approve", "editor_proposal_reject"}
+        and instance.get("diff_digest") is not None
+        and operation.get("intent_digest") != instance.get("diff_digest")
+    ):
+        return "proposal_approval_conflict", "operation_request.intent_digest"
     resolution_policy_failure = _resolution_policy_failure(instance, impact, diff)
     if resolution_policy_failure is not None:
         return resolution_policy_failure
+    if (
+        isinstance(impact, dict)
+        and "impact_digest" in impact
+        and (
+            operation.get("operation") == "editor_record_remove"
+            or (
+                operation.get("operation") == "editor_proposal_correct"
+                and instance.get("mutation_kind") == "remove"
+            )
+        )
+    ):
+        authoritative_impact_digest = projection_digest(
+            impact,
+            DIGEST_PROJECTIONS["impact_digest"],
+        )
+        if instance.get("impact_digest") != authoritative_impact_digest:
+            return "proposal_validation_failure", "impact_digest"
+        impact_binding = instance.get("impact_binding")
+        if (
+            isinstance(impact_binding, dict)
+            and impact_binding.get("impact_digest") != authoritative_impact_digest
+        ):
+            return "proposal_validation_failure", "impact_binding.impact_digest"
     if isinstance(diff, dict):
         resolution_failure = _reference_resolution_binding_failure(diff)
         if resolution_failure is not None:
@@ -2288,11 +2382,6 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
             if failure is not None:
                 return "proposal_validation_failure", failure
         if operation.get("operation") in {"editor_proposal_approve", "editor_proposal_reject"}:
-            if (
-                instance.get("diff_digest") is not None
-                and operation.get("intent_digest") != instance.get("diff_digest")
-            ):
-                return "proposal_approval_conflict", "operation_request.intent_digest"
             if operation.get("operation") == "editor_proposal_approve":
                 for key in (
                     "diff_digest",
@@ -2759,6 +2848,16 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             }),
         )
 
+    def test_rejection_intent_binds_without_an_embedded_diff(self) -> None:
+        rejection = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "rejection_request")
+        )
+        rejection["operation_request"]["intent_digest"] = "f" * 64
+        self.assertEqual(
+            ("proposal_approval_conflict", "operation_request.intent_digest"),
+            evaluate_semantic_failure({"instance": rejection}),
+        )
+
     def test_loaded_approval_rejects_staged_warnings(self) -> None:
         action = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "approval_request")
@@ -2860,6 +2959,35 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         action["proposal_payload_digest"] = loaded["proposal_payload_digest"]
         action["diff_digest"] = loaded["diff"]["diff_digest"]
         action["operation_request"]["intent_digest"] = loaded["diff"]["diff_digest"]
+        _refresh_operation_payload_digest(action)
+        self.assertEqual(
+            ("mutation_consistency", "diff.source_changes"),
+            evaluate_semantic_failure({
+                "instance": action,
+                "semantic_context": {"loaded_proposal": loaded},
+            }),
+        )
+
+    def test_loaded_approval_requires_the_complete_source_change_set(self) -> None:
+        action = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "approval_request")
+        )
+        loaded = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        loaded["diff"]["source_changes"] = []
+        loaded["diff"]["diff_digest"] = projection_digest(
+            loaded["diff"], DIGEST_PROJECTIONS["diff_digest"]
+        )
+        loaded["core_proposal"]["proposal"]["diff_digest"] = loaded["diff"]["diff_digest"]
+        loaded["proposal_payload_digest"] = projection_digest(
+            loaded,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        action["proposal_payload_digest"] = loaded["proposal_payload_digest"]
+        action["diff_digest"] = loaded["diff"]["diff_digest"]
+        action["operation_request"]["intent_digest"] = loaded["diff"]["diff_digest"]
+        action["diff"]["diff_digest"] = loaded["diff"]["diff_digest"]
         _refresh_operation_payload_digest(action)
         self.assertEqual(
             ("mutation_consistency", "diff.source_changes"),
@@ -3266,6 +3394,37 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         self.assertEqual(
             ("unsafe_binding", "historical"),
             evaluate_semantic_failure({"instance": historical}),
+        )
+
+    def test_record_views_bind_current_head_digest_and_workflow(self) -> None:
+        record_view = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "head_record_view")
+        )
+        context = {
+            "current_head_revision": record_view["head_revision"]["revision_id"],
+            "current_record_digest": record_view["record"]["content_digest"],
+            "current_editor_workflow_version": record_view["editor_workflow_version"],
+        }
+        self.assertIsNone(
+            evaluate_semantic_failure({"instance": record_view, "semantic_context": context})
+        )
+
+        context["current_head_revision"] = "revision_other"
+        self.assertEqual(
+            ("stale_revision", "binding.base_revision"),
+            evaluate_semantic_failure({"instance": record_view, "semantic_context": context}),
+        )
+        context["current_head_revision"] = record_view["head_revision"]["revision_id"]
+        context["current_record_digest"] = "f" * 64
+        self.assertEqual(
+            ("stale_record_digest", "record.content_digest"),
+            evaluate_semantic_failure({"instance": record_view, "semantic_context": context}),
+        )
+        context["current_record_digest"] = record_view["record"]["content_digest"]
+        context["current_editor_workflow_version"] = record_view["editor_workflow_version"] + 1
+        self.assertEqual(
+            ("workflow_conflict", "editor_workflow_version"),
+            evaluate_semantic_failure({"instance": record_view, "semantic_context": context}),
         )
 
     def test_record_views_bind_authority_and_adapter_vocabulary(self) -> None:
@@ -4181,6 +4340,14 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             },
         }))
 
+        removal["impact_digest"] = "f" * 64
+        removal["impact_binding"]["impact_digest"] = "f" * 64
+        _refresh_operation_payload_digest(removal)
+        self.assertEqual(
+            ("proposal_validation_failure", "impact_digest"),
+            evaluate_semantic_failure({"instance": removal, "impact": impact}),
+        )
+
     def test_corrections_bind_prior_proposal_identity(self) -> None:
         correction = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "correction_request")
@@ -4209,6 +4376,20 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         self.assertEqual(
             ("invalid_correction", "prior_proposal"),
             evaluate_semantic_failure({"instance": correction, "semantic_context": context}),
+        )
+
+    def test_corrections_accept_a_loaded_proposal_as_prior_scope(self) -> None:
+        correction = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "correction_request")
+        )
+        prior_proposal = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        self.assertIsNone(
+            evaluate_semantic_failure({
+                "instance": correction,
+                "semantic_context": {"prior_proposal": prior_proposal},
+            })
         )
 
     def test_corrected_proposals_advance_the_referenced_version(self) -> None:
