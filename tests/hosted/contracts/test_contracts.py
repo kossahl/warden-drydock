@@ -828,8 +828,16 @@ class HostedContractPackageTests(unittest.TestCase):
         schema = json.loads((CONTRACT_ROOT / contract["schema"]).read_text(encoding="utf-8"))
         invariants = json.loads((CONTRACT_ROOT / contract["semantic_invariants"]).read_text(encoding="utf-8"))
         example = json.loads((CONTRACT_ROOT / contract["example"]).read_text(encoding="utf-8"))
-        self.assertEqual(["proposal_exact_binding", "proposal_validation_gate", "proposal_logical_ids", "proposal_correction_version"], schema["x-invariants"])
-        self.assertEqual(["proposal_exact_binding", "proposal_validation_gate", "proposal_logical_ids", "proposal_correction_version"], [rule["id"] for rule in invariants["rules"]])
+        expected_invariants = [
+            "proposal_exact_binding",
+            "proposal_validation_gate",
+            "proposal_logical_ids",
+            "proposal_authority_transition_ids",
+            "proposal_correction_version",
+            "proposal_correction_ancestry",
+        ]
+        self.assertEqual(expected_invariants, schema["x-invariants"])
+        self.assertEqual(expected_invariants, [rule["id"] for rule in invariants["rules"]])
         self.assertEqual([], list(Draft202012Validator(schema).iter_errors(example)))
         for relative in contract["negative_fixtures"]:
             fixture = json.loads((CONTRACT_ROOT / relative).read_text(encoding="utf-8"))

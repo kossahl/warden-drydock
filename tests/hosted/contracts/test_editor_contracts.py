@@ -1947,7 +1947,7 @@ def _proposal_validation_gate_failure(instance: dict) -> tuple[str, str] | None:
             if (
                 not isinstance(base_revision.get("ordinal"), int)
                 or not isinstance(published_revision.get("ordinal"), int)
-                or published_revision["ordinal"] <= base_revision["ordinal"]
+                or published_revision["ordinal"] != base_revision["ordinal"] + 1
             ):
                 return "proposal_approval_conflict", "publication.published_revision"
 
@@ -2285,7 +2285,7 @@ def _result_binding_failure(instance: dict, fixture: dict) -> tuple[str, str] | 
             if (
                 not isinstance(accepted_base_revision.get("ordinal"), int)
                 or not isinstance(published_revision.get("ordinal"), int)
-                or published_revision["ordinal"] <= accepted_base_revision["ordinal"]
+                or published_revision["ordinal"] != accepted_base_revision["ordinal"] + 1
             ):
                 return "unsafe_binding", "published_revision"
         receipt_has_revision, expected_revision = _stored_publication_revision(fixture)
@@ -4820,6 +4820,16 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         )
         self.assertIsNone(evaluate_semantic_failure({"instance": proposal}))
 
+        proposal["publication"]["published_revision"]["ordinal"] = 14
+        proposal["proposal_payload_digest"] = projection_digest(
+            proposal,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        self.assertEqual(
+            ("proposal_approval_conflict", "publication.published_revision"),
+            evaluate_semantic_failure({"instance": proposal}),
+        )
+
         proposal["publication"]["published_revision"] = {
             **proposal["base_revision"],
             "immutable": True,
@@ -4920,6 +4930,15 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         result = deepcopy(
             next(item["payload"] for item in self.examples if item["name"] == "approval_success_response")
         )
+        result["published_revision"]["ordinal"] = action["base_revision"]["ordinal"] + 2
+        self.assertEqual(
+            ("unsafe_binding", "published_revision"),
+            evaluate_semantic_failure({
+                "instance": result,
+                "semantic_context": {"accepted_request": action},
+            }),
+        )
+
         result["published_revision"] = {
             **action["base_revision"],
             "immutable": True,
