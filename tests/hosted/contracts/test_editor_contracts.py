@@ -554,6 +554,33 @@ def _reference_resolution_binding_failure(diff: dict) -> tuple[str, str] | None:
     return None
 
 
+def _removal_impact_reference_binding_failure(
+    diff: dict,
+    impact: object,
+) -> tuple[str, str] | None:
+    if not isinstance(impact, dict) or "incoming_references" not in impact:
+        return None
+
+    expected = {
+        reference.get("reference_id"): reference
+        for reference in impact.get("incoming_references", [])
+        if isinstance(reference, dict) and reference.get("reference_id")
+    }
+    actual_ids = []
+    for index, card in enumerate(diff.get("cards", [])):
+        if card.get("kind") != "reference_resolution":
+            continue
+        before = card.get("before")
+        reference_id = before.get("reference_id") if isinstance(before, dict) else None
+        if reference_id not in expected or before != expected[reference_id]:
+            return "unsafe_binding", f"diff.cards.{index}.before"
+        actual_ids.append(reference_id)
+
+    if len(actual_ids) != len(expected) or set(actual_ids) != set(expected):
+        return "unsafe_binding", "diff.cards"
+    return None
+
+
 def _record_property_changes(before: dict, after: dict) -> list[dict]:
     changes = []
     for property_name in ("displayed_name", "status", "authority", "visibility"):
@@ -1238,6 +1265,12 @@ def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str,
         resolution_failure = _reference_resolution_binding_failure(loaded["diff"])
         if resolution_failure is not None:
             return resolution_failure
+        impact_reference_failure = _removal_impact_reference_binding_failure(
+            loaded["diff"],
+            context.get("removal_impact"),
+        )
+        if impact_reference_failure is not None:
+            return impact_reference_failure
         if "cards" in loaded["diff"]:
             for failure in (
                 _record_property_change_failure(loaded["diff"]),
@@ -1257,6 +1290,18 @@ def _loaded_proposal_action_failure(instance: dict, context: dict) -> tuple[str,
             ):
                 if failure is not None:
                     return failure
+        adapter_definition = context.get("adapter_definition")
+        if adapter_definition is not None:
+            failure = _adapter_diff_vocabulary_failure(
+                loaded["diff"],
+                adapter_definition,
+            )
+            if failure is not None:
+                return "proposal_validation_failure", failure
+        if loaded.get("contract_name") == "editor_proposal_view":
+            transition_failure = _transition_completeness_failure(loaded, context)
+            if transition_failure is not None:
+                return transition_failure
 
     if instance.get("operation_request", {}).get("operation") == "editor_proposal_approve":
         validation = loaded.get("validation")
@@ -2161,6 +2206,15 @@ def evaluate_semantic_failure(fixture: dict) -> tuple[str, str] | None:
             return "proposal_validation_failure", "record.ownership"
         if record.get("authority") != _authority_for_status(record.get("status")):
             return "proposal_validation_failure", "record.authority"
+        adapter_definition = context.get("adapter_definition")
+        if adapter_definition is not None:
+            failure = _adapter_record_vocabulary_failure(
+                record,
+                adapter_definition,
+                "record",
+            )
+            if failure is not None:
+                return "proposal_validation_failure", failure
         binding = instance.get("binding", {})
         if binding.get("record_id") != record.get("record_id"):
             return "proposal_validation_failure", "binding.record_id"
@@ -2812,6 +2866,144 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             evaluate_semantic_failure({
                 "instance": action,
                 "semantic_context": {"loaded_proposal": loaded},
+            }),
+        )
+
+    def test_loaded_approval_revalidates_adapter_vocabulary(self) -> None:
+        action = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "approval_request")
+        )
+        loaded = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        adapter_definition = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "head_record_view")[
+                "adapter_definition"
+            ]
+        )
+        card = loaded["diff"]["cards"][1]
+        card["connection"]["relationship"] = "unsupported"
+        record_card = loaded["diff"]["cards"][0]
+        record_connection = next(
+            connection
+            for connection in record_card["after"]["connections"]
+            if connection["connection_id"] == card["connection"]["connection_id"]
+        )
+        record_connection["relationship"] = "unsupported"
+        record_card["after"]["content_digest"] = record_content_digest(
+            record_card["after"]
+        )
+        for change in loaded["core_proposal"]["proposal"]["changes"]:
+            change["content_digest"] = record_card["after"]["content_digest"]
+        source = next(
+            source
+            for source in loaded["diff"]["source_changes"]
+            if source["subject_record_id"] == card["subject_record_id"]
+        )
+        source["after_source"] = source["after_source"].replace(
+            "- `signals`", "- `unsupported`"
+        )
+        loaded["diff"]["diff_digest"] = projection_digest(
+            loaded["diff"], DIGEST_PROJECTIONS["diff_digest"]
+        )
+        loaded["core_proposal"]["proposal"]["diff_digest"] = loaded["diff"]["diff_digest"]
+        loaded["proposal_payload_digest"] = projection_digest(
+            loaded,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        action["proposal_payload_digest"] = loaded["proposal_payload_digest"]
+        action["diff_digest"] = loaded["diff"]["diff_digest"]
+        action["operation_request"]["intent_digest"] = loaded["diff"]["diff_digest"]
+        action["diff"]["diff_digest"] = loaded["diff"]["diff_digest"]
+        _refresh_operation_payload_digest(action)
+        self.assertEqual(
+            ("proposal_validation_failure", "diff.cards.0.after.connections.1.relationship"),
+            evaluate_semantic_failure({
+                "instance": action,
+                "semantic_context": {
+                    "loaded_proposal": loaded,
+                    "adapter_definition": adapter_definition,
+                },
+            }),
+        )
+
+    def test_loaded_approval_revalidates_transition_projections(self) -> None:
+        action = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "approval_request")
+        )
+        loaded = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "editor_proposal_view")
+        )
+        loaded["diff"]["authority_changes"] = []
+        loaded["diff"]["diff_digest"] = projection_digest(
+            loaded["diff"], DIGEST_PROJECTIONS["diff_digest"]
+        )
+        loaded["core_proposal"]["proposal"]["diff_digest"] = loaded["diff"]["diff_digest"]
+        loaded["proposal_payload_digest"] = projection_digest(
+            loaded,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        action["proposal_payload_digest"] = loaded["proposal_payload_digest"]
+        action["diff_digest"] = loaded["diff"]["diff_digest"]
+        action["operation_request"]["intent_digest"] = loaded["diff"]["diff_digest"]
+        action["diff"]["diff_digest"] = loaded["diff"]["diff_digest"]
+        _refresh_operation_payload_digest(action)
+        self.assertEqual(
+            ("proposal_validation_failure", "diff.authority_changes"),
+            evaluate_semantic_failure({
+                "instance": action,
+                "semantic_context": {"loaded_proposal": loaded},
+            }),
+        )
+
+    def test_loaded_removal_approval_binds_resolution_cards_to_impact(self) -> None:
+        action = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_approval_with_outgoing_connections"
+            )
+        )
+        loaded = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_proposal_with_outgoing_connections"
+            )
+        )
+        impact = deepcopy(
+            next(
+                item["payload"]
+                for item in self.examples
+                if item["name"] == "removal_impact_with_outgoing_connections"
+            )
+        )
+        card = next(
+            card
+            for card in loaded["diff"]["cards"]
+            if card["kind"] == "reference_resolution"
+        )
+        card["before"]["context"] = "Changed after the impact was loaded."
+        loaded["diff"]["diff_digest"] = projection_digest(
+            loaded["diff"], DIGEST_PROJECTIONS["diff_digest"]
+        )
+        loaded["core_proposal"]["proposal"]["diff_digest"] = loaded["diff"]["diff_digest"]
+        loaded["proposal_payload_digest"] = projection_digest(
+            loaded,
+            DIGEST_PROJECTIONS["proposal_payload_digest"],
+        )
+        action["proposal_payload_digest"] = loaded["proposal_payload_digest"]
+        action["diff_digest"] = loaded["diff"]["diff_digest"]
+        action["operation_request"]["intent_digest"] = loaded["diff"]["diff_digest"]
+        _refresh_operation_payload_digest(action)
+        self.assertEqual(
+            ("unsafe_binding", "diff.cards.2.before"),
+            evaluate_semantic_failure({
+                "instance": action,
+                "semantic_context": {
+                    "loaded_proposal": loaded,
+                    "removal_impact": impact,
+                },
             }),
         )
 
@@ -4145,6 +4337,29 @@ class HostedRecordEditorContractTests(unittest.TestCase):
         self.assertEqual(
             ("proposal_validation_failure", "binding.record_digest"),
             evaluate_semantic_failure({"instance": impact}),
+        )
+
+        impact = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "removal_impact")
+        )
+        adapter_definition = deepcopy(
+            next(item["payload"] for item in self.examples if item["name"] == "head_record_view")[
+                "adapter_definition"
+            ]
+        )
+        impact["record"]["record_type"] = "vehicle"
+        impact["record"]["content_digest"] = record_content_digest(impact["record"])
+        impact["binding"]["record_digest"] = impact["record"]["content_digest"]
+        impact["impact_digest"] = projection_digest(
+            impact,
+            DIGEST_PROJECTIONS["impact_digest"],
+        )
+        self.assertEqual(
+            ("proposal_validation_failure", "record.record_type"),
+            evaluate_semantic_failure({
+                "instance": impact,
+                "semantic_context": {"adapter_definition": adapter_definition},
+            }),
         )
 
     def test_digest_projections_are_deterministic(self) -> None:
