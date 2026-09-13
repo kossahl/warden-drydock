@@ -57,25 +57,35 @@ git -C "$root_dir" diff --binary HEAD -- \
 # host repository. The index is rebuilt after applying tracked changes, and a
 # credential-free canonical URL is derived from the origin repository slug.
 origin_remote=$(git -C "$root_dir" remote get-url origin)
+origin_remote=${origin_remote%%\#*}
+origin_remote=${origin_remote%%\?*}
 if [[ "$origin_remote" == *"://"* ]]; then
   origin_path=${origin_remote#*://}
   origin_path=${origin_path#*@}
   origin_path=${origin_path#*/}
-else
+elif [[ "$origin_remote" == *:* ]]; then
   origin_path=${origin_remote#*@}
   origin_path=${origin_path#*:}
+else
+  origin_path=
 fi
-origin_path=${origin_path%%\#*}
-origin_path=${origin_path%%\?*}
 origin_path=${origin_path%/}
 origin_path=${origin_path%.git}
-origin_repo=${origin_path##*/}
-origin_owner=${origin_path%/*}
-origin_owner=${origin_owner##*/}
-if [ -z "$origin_owner" ] || [ -z "$origin_repo" ] || [ "$origin_owner" = "$origin_path" ]; then
+IFS=/ read -r -a origin_parts <<< "$origin_path"
+origin_segments=()
+for origin_part in "${origin_parts[@]}"; do
+  if [ -n "$origin_part" ]; then
+    origin_segments+=("$origin_part")
+  fi
+done
+if [ "${#origin_segments[@]}" -ne 2 ] \
+  || [[ ! ${origin_segments[0]} =~ ^[[:alnum:]_.-]+$ ]] \
+  || [[ ! ${origin_segments[1]} =~ ^[[:alnum:]_.-]+$ ]]; then
   echo "Cannot derive the origin repository slug for the test snapshot." >&2
   exit 1
 fi
+origin_owner=${origin_segments[0]}
+origin_repo=${origin_segments[1]}
 origin_url="https://github.com/${origin_owner}/${origin_repo}.git"
 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
   git -C "$snapshot_dir" init --quiet --template="$template_dir"
