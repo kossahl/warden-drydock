@@ -15,6 +15,7 @@ postgres_image="postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260
 
 source_state() {
   git -C "$root_dir" rev-parse HEAD
+  git -C "$root_dir" remote get-url origin | sha256sum
   git -C "$root_dir" diff --no-ext-diff --no-textconv --cached --binary | sha256sum
   git -C "$root_dir" diff --no-ext-diff --no-textconv --binary | sha256sum
   git -C "$root_dir" status --porcelain=v1 --untracked-files=all
@@ -39,24 +40,46 @@ fi
 
 initial_source_state=$(source_state)
 snapshot_dir=$(mktemp -d)
-head_index=$(mktemp)
-rm -f -- "$head_index"
 template_dir=$(mktemp -d)
 
 cleanup() {
   docker rm -f "$db_container" >/dev/null 2>&1 || true
   docker network rm "$network_name" >/dev/null 2>&1 || true
   rm -rf -- "$snapshot_dir"
-  rm -f -- "$head_index"
   rm -rf -- "$template_dir"
 }
 trap cleanup EXIT
 
 # Snapshot HEAD plus tracked index/worktree changes. Untracked files are not
 # part of the tested checkout, and every container receives this same snapshot.
-# A temporary HEAD index avoids git archive's export-ignore filtering.
-GIT_INDEX_FILE="$head_index" git -C "$root_dir" read-tree HEAD
-GIT_INDEX_FILE="$head_index" git -C "$root_dir" checkout-index --all --prefix="$snapshot_dir/"
+# Copying the blobs directly avoids git archive's export-ignore filtering and
+# checkout-index applying EOL or clean filters.
+while IFS= read -r -d '' tree_entry; do
+  tree_meta=${tree_entry%%$'\t'*}
+  tree_path=${tree_entry#*$'\t'}
+  read -r tree_mode tree_type tree_oid <<< "$tree_meta"
+  target_path="$snapshot_dir/$tree_path"
+  mkdir -p -- "$(dirname -- "$target_path")"
+  case "$tree_mode:$tree_type" in
+    100644:blob|100755:blob)
+      git -C "$root_dir" cat-file blob "$tree_oid" >"$target_path"
+      if [ "$tree_mode" = 100755 ]; then
+        chmod 755 -- "$target_path"
+      else
+        chmod 644 -- "$target_path"
+      fi
+      ;;
+    120000:blob)
+      link_target=
+      IFS= read -r -d '' link_target < <(git -C "$root_dir" cat-file blob "$tree_oid") || true
+      ln -s -- "$link_target" "$target_path"
+      ;;
+    *)
+      echo "Unsupported tracked tree entry mode: $tree_mode:$tree_type ($tree_path)" >&2
+      exit 1
+      ;;
+  esac
+done < <(git -C "$root_dir" ls-tree -r -z --full-tree HEAD)
 git -C "$root_dir" diff --no-ext-diff --no-textconv --binary HEAD -- \
   | git -C "$snapshot_dir" apply --allow-empty --whitespace=nowarn -
 # Keep governance tests on snapshot-local metadata instead of exposing the
