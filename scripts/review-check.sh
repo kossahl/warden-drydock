@@ -31,6 +31,12 @@ if [ "$hidden_worktree_paths" -gt 0 ]; then
   exit 1
 fi
 
+unmerged_paths=$(git -C "$root_dir" ls-files --unmerged)
+if [ -n "$unmerged_paths" ]; then
+  echo "Cannot test a checkout with unmerged index entries." >&2
+  exit 1
+fi
+
 initial_source_state=$(source_state)
 snapshot_dir=$(mktemp -d)
 head_index=$(mktemp)
