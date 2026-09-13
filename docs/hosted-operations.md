@@ -62,6 +62,12 @@ the expected `0007` schema record plus readable and writable snapshot/secret vol
 Provider failure is intentionally outside base readiness so deterministic
 Capture can remain available.
 
+The in-memory `SliceApplication` configuration is for tests and synthetic
+local demonstrations only. Its workflow, proposal, and projection repositories
+are process-local, so it does not provide cold-restart recovery after a
+publication. Hosted restart recovery requires the PostgreSQL-backed runtime
+and its durable snapshot and projection volumes.
+
 Migration `0007` removes only cached HTTP operation receipts created by the
 v1 runtime. This prevents an exact replay from returning a stored v1 response
 through the v2 API. The first repeated mutation after upgrade runs again under
