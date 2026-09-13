@@ -35,16 +35,14 @@ trap cleanup EXIT
 git -C "$root_dir" archive --format=tar HEAD | tar -xf - -C "$snapshot_dir"
 git -C "$root_dir" diff --binary HEAD -- \
   | git -C "$snapshot_dir" apply --allow-empty --whitespace=nowarn -
-git_mount_args=()
-if [ -f "$root_dir/.git" ]; then
-  cp -- "$root_dir/.git" "$snapshot_dir/.git"
-  git_common_dir=$(realpath "$(git -C "$root_dir" rev-parse --git-common-dir)")
-  git_worktree_dir=$(realpath "$(git -C "$root_dir" rev-parse --git-dir)")
-  git_mount_args=(-v "$git_common_dir:$git_common_dir:ro" -v "$git_worktree_dir:$git_worktree_dir:ro")
-elif [ -d "$root_dir/.git" ]; then
-  printf 'gitdir: %s\n' "$root_dir/.git" > "$snapshot_dir/.git"
-  git_mount_args=(-v "$root_dir/.git:$root_dir/.git:ro")
-fi
+# Keep governance tests on snapshot-local metadata instead of exposing the
+# host repository. The index is rebuilt after applying tracked changes, and
+# credentials are stripped from the origin URL before it is copied.
+origin_url=$(git -C "$root_dir" remote get-url origin)
+origin_url=$(printf '%s\n' "$origin_url" | sed -E 's#^(https?://)[^/]*@#\1#')
+git -C "$snapshot_dir" init --quiet
+git -C "$snapshot_dir" remote add origin "$origin_url"
+git -C "$snapshot_dir" add --all
 
 current_source_state=$(source_state)
 if [ "$current_source_state" != "$initial_source_state" ]; then
@@ -93,7 +91,6 @@ docker run --rm --network "$network_name" \
   --sysctl net.ipv6.conf.all.disable_ipv6=1 \
   --sysctl net.ipv6.conf.default.disable_ipv6=1 \
   -e "DRYDOCK_TEST_DATABASE_URL=postgresql://drydock:drydock@${db_container}:5432/drydock" \
-  "${git_mount_args[@]}" \
   -v "$snapshot_dir:/source:ro" --tmpfs /repo:rw,exec,nosuid -w /repo "$python_image" bash -lc '
     set -Eeuo pipefail
     cp -a /source/. /repo/
@@ -127,7 +124,6 @@ docker run --rm --network "$network_name" \
   '
 
 docker run --rm \
-  "${git_mount_args[@]}" \
   -v "$snapshot_dir:/source:ro" --tmpfs /repo:rw,exec,nosuid -w /repo "$compatibility_image" bash -lc '
     set -Eeuo pipefail
     cp -a /source/. /repo/
