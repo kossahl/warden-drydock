@@ -97,6 +97,7 @@ class ComposePolicyTests(unittest.TestCase):
         self.assertNotIn("OPENAI_API_KEY", browser_sources)
         self.assertIn("database_secrets", self.compose["volumes"])
 
+
 class RuntimeTests(unittest.TestCase):
     def test_versions(self) -> None:
         self.assertEqual((28, 5, 2), parse_version("Docker version 28.5.2"))
