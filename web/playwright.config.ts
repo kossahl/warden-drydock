@@ -6,7 +6,7 @@ export default defineConfig({
   globalTeardown: "./tests/browser/global-teardown.ts",
   use: { baseURL: "http://127.0.0.1:4173", trace: "retain-on-failure" },
   webServer: {
-    command: "python tests/browser/static_server.py",
+    command: "python3 tests/browser/static_server.py",
     url: "http://127.0.0.1:4173/health/live",
     reuseExistingServer: false,
   },
