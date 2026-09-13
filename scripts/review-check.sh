@@ -15,8 +15,8 @@ postgres_image="postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260
 
 source_state() {
   git -C "$root_dir" rev-parse HEAD
-  git -C "$root_dir" diff --cached --binary | sha256sum
-  git -C "$root_dir" diff --binary | sha256sum
+  git -C "$root_dir" diff --no-ext-diff --no-textconv --cached --binary | sha256sum
+  git -C "$root_dir" diff --no-ext-diff --no-textconv --binary | sha256sum
   git -C "$root_dir" status --porcelain=v1 --untracked-files=all
 }
 
@@ -51,15 +51,15 @@ trap cleanup EXIT
 # A temporary HEAD index avoids git archive's export-ignore filtering.
 GIT_INDEX_FILE="$head_index" git -C "$root_dir" read-tree HEAD
 GIT_INDEX_FILE="$head_index" git -C "$root_dir" checkout-index --all --prefix="$snapshot_dir/"
-git -C "$root_dir" diff --binary HEAD -- \
+git -C "$root_dir" diff --no-ext-diff --no-textconv --binary HEAD -- \
   | git -C "$snapshot_dir" apply --allow-empty --whitespace=nowarn -
 # Keep governance tests on snapshot-local metadata instead of exposing the
 # host repository. The index is rebuilt after applying tracked changes, and a
 # credential-free canonical URL is derived from the origin repository slug.
 origin_remote=$(git -C "$root_dir" remote get-url origin)
-origin_remote=${origin_remote%%\#*}
-origin_remote=${origin_remote%%\?*}
-if [[ "$origin_remote" == *"://"* ]]; then
+if [[ "$origin_remote" == *"?"* || "$origin_remote" == *"#"* ]]; then
+  origin_path=
+elif [[ "$origin_remote" == *"://"* ]]; then
   origin_path=${origin_remote#*://}
   origin_path=${origin_path#*@}
   origin_path=${origin_path#*/}
@@ -119,9 +119,9 @@ check_whitespace() {
 
   local merge_base
   merge_base=$(git -C "$root_dir" merge-base "$base_ref" HEAD)
-  git -C "$root_dir" diff --check "$merge_base...HEAD"
-  git -C "$root_dir" diff --check
-  git -C "$root_dir" diff --cached --check
+  git -C "$root_dir" diff --no-ext-diff --no-textconv --check "$merge_base...HEAD"
+  git -C "$root_dir" diff --no-ext-diff --no-textconv --check
+  git -C "$root_dir" diff --no-ext-diff --no-textconv --cached --check
 }
 
 check_whitespace
