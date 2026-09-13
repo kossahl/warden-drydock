@@ -1,0 +1,186 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "proposal_validation_failure",
+  "expected_path": "diff.cards.record_mutation",
+  "description": "An edit proposal cannot contain two primary record mutation cards.",
+  "instance": {
+    "contract_name": "editor_proposal_view",
+    "contract_version": 1,
+    "proposal_id": "proposal_editor",
+    "proposal_version": 1,
+    "campaign_id": "campaign_alpha",
+    "source_revision": {
+      "revision_id": "revision_12",
+      "ordinal": 12,
+      "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "base_revision": {
+      "revision_id": "revision_12",
+      "ordinal": 12,
+      "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "expected_campaign_head": {
+      "revision_id": "revision_12",
+      "ordinal": 12,
+      "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "editor_workflow_version": 7,
+    "proposal_payload_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "mutation_kind": "edit",
+    "record_bindings": [
+      {
+        "campaign_id": "campaign_alpha",
+        "base_revision": {
+          "revision_id": "revision_12",
+          "ordinal": 12,
+          "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "record_id": "record-station",
+        "record_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "expected_editor_workflow_version": 7
+      }
+    ],
+    "core_proposal": {
+      "contract_name": "canon_proposal",
+      "contract_version": 2,
+      "draft": {
+        "draft_id": "draft_editor",
+        "authority": "draft",
+        "source_set_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "content_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "proposal": {
+        "proposal_id": "proposal_editor",
+        "proposal_version": 1,
+        "status": "needs_review",
+        "campaign_id": "campaign_alpha",
+        "base_revision": "revision_12",
+        "source_revision": "revision_12",
+        "expected_campaign_head": "revision_12",
+        "expected_editor_workflow_version": 7,
+        "diff_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "authority_change_ids": [],
+        "visibility_change_ids": [],
+        "changes": [
+          {
+            "change_id": "change_station",
+            "subject_id": "record-station",
+            "change_type": "update",
+            "from_authority": "preparation",
+            "to_authority": "preparation",
+            "content_digest": "2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        ]
+      },
+      "validation": {
+        "status": "passed",
+        "validation_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+        "error_count": 0
+      },
+      "approval_binding": null
+    },
+    "correction_of": null,
+    "diff": {
+      "diff_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+      "cards": [
+        {
+          "change_id": "change_station",
+          "kind": "record_updated",
+          "subject_record_id": "record-station",
+          "before": {
+            "record_id": "record-station",
+            "record_type": "location",
+            "displayed_name": "Station",
+            "ownership": "campaign",
+            "status": "review",
+            "authority": "preparation",
+            "visibility": {"audience": "warden", "warden_only": true},
+            "fields": [],
+            "sections": [],
+            "connections": [],
+            "content_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "after": {
+            "record_id": "record-station",
+            "record_type": "location",
+            "displayed_name": "Station Updated",
+            "ownership": "campaign",
+            "status": "review",
+            "authority": "preparation",
+            "visibility": {"audience": "warden", "warden_only": true},
+            "fields": [],
+            "sections": [],
+            "connections": [],
+            "content_digest": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          "property_changes": [],
+          "connection": null,
+          "resolution": null,
+          "derived_backlinks": []
+        },
+        {
+          "change_id": "change_company",
+          "kind": "record_updated",
+          "subject_record_id": "record-company",
+          "before": {
+            "record_id": "record-company",
+            "record_type": "faction",
+            "displayed_name": "Company",
+            "ownership": "campaign",
+            "status": "review",
+            "authority": "preparation",
+            "visibility": {"audience": "warden", "warden_only": true},
+            "fields": [],
+            "sections": [],
+            "connections": [],
+            "content_digest": "7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "after": {
+            "record_id": "record-company",
+            "record_type": "faction",
+            "displayed_name": "Company Updated",
+            "ownership": "campaign",
+            "status": "review",
+            "authority": "preparation",
+            "visibility": {"audience": "warden", "warden_only": true},
+            "fields": [],
+            "sections": [],
+            "connections": [],
+            "content_digest": "8888888888888888888888888888888888888888888888888888888888888888"
+          },
+          "property_changes": [],
+          "connection": null,
+          "resolution": null,
+          "derived_backlinks": []
+        }
+      ],
+      "affected_record_count": 1,
+      "authority_changes": [],
+      "visibility_changes": [],
+      "unresolved_reference_count": 0,
+      "impact_digest": null,
+      "source_changes": [
+        {
+          "change_id": "source_station",
+          "subject_record_id": "record-station",
+          "change_type": "update",
+          "before_source": "before",
+          "after_source": "after"
+        }
+      ],
+      "summary": "Update two records."
+    },
+    "impact_digest": null,
+    "impact_binding": null,
+    "resolutions": [],
+    "validation": {
+      "status": "passed",
+      "validation_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+      "error_count": 0,
+      "findings": []
+    },
+    "authority_outcome": [],
+    "visibility_outcome": [],
+    "publication": {"status": "not_published", "published_revision": null}
+  }
+}

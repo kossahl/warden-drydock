@@ -1,0 +1,51 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "stale_record_digest",
+  "expected_path": "binding.record_digest",
+  "description": "The bound record digest no longer matches the record at the exact base revision.",
+  "semantic_context": {
+    "current_record_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "instance": {
+    "contract_name": "editor_record_edit_request",
+    "contract_version": 1,
+    "operation_request": {
+      "contract_name": "editor_operation_request",
+      "contract_version": 1,
+      "request_id": "request_stale_digest",
+      "operation": "editor_record_edit",
+      "idempotency_key": "idem_stale_digest",
+      "payload_digest": "3139186b34c65e41e89191b6569d00db90bdb32d77d6cfd1afb289f945b65658",
+      "expected_revision": "revision_12",
+      "expected_editor_workflow_version": 7,
+      "subject_id": "record-station"
+    },
+    "binding": {
+      "campaign_id": "campaign_alpha",
+      "base_revision": {
+        "revision_id": "revision_12",
+        "ordinal": 12,
+        "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "record_id": "record-station",
+      "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expected_editor_workflow_version": 7
+    },
+    "candidate": {
+      "record_id": "record-station",
+      "record_type": "location",
+      "ownership": "campaign",
+      "displayed_name": "Station",
+      "status": "review",
+      "authority": "preparation",
+      "visibility": {
+        "audience": "warden",
+        "warden_only": true
+      },
+      "fields": [],
+      "sections": [],
+      "connections": [],
+      "content_digest": "7106c4e918c717363ebe50b0c4f38d118f02d666a205e4cc10781db24014a4fb"
+    }
+  }
+}

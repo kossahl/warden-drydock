@@ -1,0 +1,39 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "unsafe_binding",
+  "expected_path": "published_revision",
+  "description": "An approval result cannot skip revision ordinals from its accepted base.",
+  "semantic_context": {
+    "accepted_request": {
+      "operation_request": {
+        "operation": "editor_proposal_approve",
+        "expected_editor_workflow_version": 7
+      },
+      "proposal": {
+        "proposal_id": "proposal_editor",
+        "proposal_version": 1
+      },
+      "base_revision": {
+        "revision_id": "revision_12",
+        "ordinal": 12,
+        "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  },
+  "instance": {
+    "contract_name": "editor_proposal_approval_result",
+    "contract_version": 1,
+    "proposal": {
+      "proposal_id": "proposal_editor",
+      "proposal_version": 1
+    },
+    "outcome": "published",
+    "published_revision": {
+      "revision_id": "revision_14",
+      "ordinal": 14,
+      "tree_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "immutable": true
+    },
+    "editor_workflow_version": 8
+  }
+}

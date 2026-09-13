@@ -1,0 +1,48 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "incomplete_removal_resolution",
+  "expected_path": "resolutions",
+  "description": "A removal correction must resolve the complete, exact impact document again.",
+  "impact": {
+    "impact_digest": "95c1e615d0bda520a0dc22c476d2b8711a0a2da1232b6b9712f534330bad0822",
+    "required_reference_id": "reference_station_company",
+    "permitted_unresolved": false
+  },
+  "instance": {
+    "contract_name": "editor_proposal_correction_request",
+    "contract_version": 1,
+    "operation_request": {
+      "contract_name": "editor_operation_request",
+      "contract_version": 1,
+      "request_id": "request_bad_remove_correction",
+      "operation": "editor_proposal_correct",
+      "idempotency_key": "idem_bad_remove_correction",
+      "payload_digest": "2303244fb2b7b9279257303c7894918dbf11ce4337cf209a88c6b33c200f22c0",
+      "expected_revision": "revision_12",
+      "expected_editor_workflow_version": 8,
+      "subject_id": "proposal_editor"
+    },
+    "prior_proposal": {"proposal_id": "proposal_editor", "proposal_version": 1},
+    "binding": {
+      "campaign_id": "campaign_alpha",
+      "base_revision": {"revision_id": "revision_12", "ordinal": 12, "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "record_id": "record-company",
+      "record_digest": "ed1d65b9bd7be83dbed1367c3417697f9d931f87f6660f5c49f9f062321a9965",
+      "expected_editor_workflow_version": 8
+    },
+    "mutation_kind": "remove",
+    "candidate": null,
+    "resolutions": [],
+    "impact_digest": "629f31c7cfff5090b49bb53dbdc2564445d77114aaddd8b230e186ec8ea949d3",
+    "impact_binding": {
+      "binding": {
+        "campaign_id": "campaign_alpha",
+        "base_revision": {"revision_id": "revision_12", "ordinal": 12, "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "record_id": "record-company",
+        "record_digest": "ed1d65b9bd7be83dbed1367c3417697f9d931f87f6660f5c49f9f062321a9965",
+        "expected_editor_workflow_version": 8
+      },
+      "impact_digest": "629f31c7cfff5090b49bb53dbdc2564445d77114aaddd8b230e186ec8ea949d3"
+    }
+  }
+}

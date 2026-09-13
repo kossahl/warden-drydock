@@ -1,0 +1,59 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "invalid_connections",
+  "expected_path": "candidate.connections.0.target_record_id",
+  "description": "A connection target is not one of the existing selected public domain records.",
+  "semantic_context": {
+    "available_record_ids": ["record-company", "record-ship", "record-station"]
+  },
+  "instance": {
+    "contract_name": "editor_record_edit_request",
+    "contract_version": 1,
+    "operation_request": {
+      "contract_name": "editor_operation_request",
+      "contract_version": 1,
+      "request_id": "request_bad_connection",
+      "operation": "editor_record_edit",
+      "idempotency_key": "idem_bad_connection",
+      "payload_digest": "14865856895e7640237a33f56bdee8dd7fb47e7fec5f1723df21dcf6a48d594d",
+      "expected_revision": "revision_12",
+      "expected_editor_workflow_version": 7,
+      "subject_id": "record-station"
+    },
+    "binding": {
+      "campaign_id": "campaign_alpha",
+      "base_revision": {
+        "revision_id": "revision_12",
+        "ordinal": 12,
+        "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "record_id": "record-station",
+      "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expected_editor_workflow_version": 7
+    },
+    "candidate": {
+      "record_id": "record-station",
+      "record_type": "location",
+      "ownership": "campaign",
+      "displayed_name": "Station",
+      "status": "review",
+      "authority": "preparation",
+      "visibility": {
+        "audience": "warden",
+        "warden_only": true
+      },
+      "fields": [],
+      "sections": [],
+      "connections": [
+        {
+          "connection_id": "connection_bad",
+          "target_record_id": "record-unknown",
+          "relationship": "signals",
+          "state": "current",
+          "context": "Unsafe target."
+        }
+      ],
+      "content_digest": "611565e4158e6f1294d9c854a95f614071721a6b7f223aed7941cf2d824ec80a"
+    }
+  }
+}
