@@ -1573,7 +1573,8 @@ class SliceApplication:
         changes = []
         for field in ("displayed_name", "status", "authority", "visibility"):
             if not _typed_equal(before[field], after[field]):
-                changes.append({"property": field, "before": before[field], "after": after[field]})
+                changes.append({"property": field, "before": before[field], "after": after[field],
+                                "before_present": True, "after_present": True})
         for collection, identifier, value_key in (("fields", "field_id", "value"), ("sections", "section_id", "body")):
             old = {item[identifier]: item for item in before[collection]}
             new = {item[identifier]: item for item in after[collection]}
@@ -1581,7 +1582,8 @@ class SliceApplication:
                 old_value = old.get(member_id, {}).get(value_key)
                 new_value = new.get(member_id, {}).get(value_key)
                 if not _typed_equal(old_value, new_value):
-                    changes.append({"property": f"{collection}.{member_id}", "before": old_value, "after": new_value})
+                    changes.append({"property": f"{collection}.{member_id}", "before": old_value, "after": new_value,
+                                    "before_present": member_id in old, "after_present": member_id in new})
         return changes
 
     def _editor_connection_cards(self, change_id: str, before: dict | None, after: dict | None) -> list[dict]:
