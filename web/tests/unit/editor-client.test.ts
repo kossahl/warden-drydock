@@ -2,7 +2,7 @@ import { digest, httpEditorApi, nextConnectionId, recomputeRecordDigest, type Ed
 import { newAdapterRecord, recordDefinitions } from "../../src/editor/adapterDefinition";
 
 const record = (): EditorRecord => ({
-  record_id: "record-one", record_type: "npc", displayed_name: "One", status: "draft", authority: "preparation",
+  record_id: "record-one", record_type: "npc", displayed_name: "One", ownership: "campaign", status: "draft", authority: "preparation",
   visibility: { audience: "warden", warden_only: true }, fields: [], sections: [{ section_id: "summary", body: "Text" }],
   connections: [], content_digest: "0".repeat(64),
 });
