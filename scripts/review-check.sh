@@ -38,6 +38,25 @@ if [ -n "$unmerged_paths" ]; then
   exit 1
 fi
 
+# --no-textconv does not disable clean or process filters when Git reads
+# worktree changes. Reject tracked paths using configured content filters rather
+# than risk snapshotting normalized content instead of the actual worktree.
+while IFS= read -r -d '' filter_path \
+  && IFS= read -r -d '' filter_attribute \
+  && IFS= read -r -d '' filter_value; do
+  if [ "$filter_attribute" = filter ] \
+    && [ "$filter_value" != unspecified ] \
+    && [ "$filter_value" != unset ] \
+    && { git -C "$root_dir" config --get "filter.${filter_value}.clean" >/dev/null 2>&1 \
+      || git -C "$root_dir" config --get "filter.${filter_value}.process" >/dev/null 2>&1; }; then
+    echo "Cannot test a checkout with a configured content filter ($filter_path)." >&2
+    exit 1
+  fi
+done < <(
+  git -C "$root_dir" ls-files -z \
+    | git -C "$root_dir" check-attr --stdin -z filter
+)
+
 initial_source_state=$(source_state)
 snapshot_dir=$(mktemp -d)
 template_dir=$(mktemp -d)
