@@ -42,7 +42,9 @@ origin_url=$(git -C "$root_dir" remote get-url origin)
 origin_url=$(printf '%s\n' "$origin_url" | sed -E 's#^(https?://)[^/]*@#\1#')
 git -C "$snapshot_dir" init --quiet
 git -C "$snapshot_dir" remote add origin "$origin_url"
-git -C "$snapshot_dir" add --all
+# The snapshot contains only archived or tracked-diff content, so force-add
+# keeps force-tracked ignored paths in the index without admitting untracked files.
+git -C "$snapshot_dir" add --all --force
 
 current_source_state=$(source_state)
 if [ "$current_source_state" != "$initial_source_state" ]; then
