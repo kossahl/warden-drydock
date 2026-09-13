@@ -1,0 +1,696 @@
+import { adapterDefinitionFromWire, defaultAdapterDefinition, recordTypes, newAdapterRecord, type AdapterDefinition } from "./adapterDefinition";
+import { httpAtlasApi } from "../api/atlasClient";
+import type { AtlasRecordSummary } from "../contracts/v2";
+import { useEffect, useRef, useState } from "react";
+import { httpEditorApi, nextConnectionId, type EditorConnection, type EditorField, type EditorProposal, type EditorProposalReference, type EditorRecord, type EditorRecordView, type EditorRemovalImpact, type EditorSection, type RevisionRef } from "./editorClient";
+
+const statuses = ["idea", "draft", "review", "canon", "revealed", "archived", "accepted"];
+const authority = (status: string) => status === "canon" || status === "revealed" ? status : "preparation";
+const clone = (record: EditorRecord): EditorRecord => ({ ...record, fields: record.fields.map((item) => ({ ...item })), sections: record.sections.map((item) => ({ ...item })), connections: record.connections.map((item) => ({ ...item })) });
+const reviewedProposalCandidate = (proposal: EditorProposal): EditorRecord | null => {
+  const card = proposal.diff.cards.find((item) => (item.kind === "record_created" || item.kind === "record_updated") && item.after !== null && typeof item.after === "object" && !Array.isArray(item.after));
+  return card ? clone(card.after as EditorRecord) : null;
+};
+const publicId = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
+const errorText = (reason: unknown) => reason instanceof Error ? reason.message : "request_failed";
+const errorCategory = (reason: unknown) => reason && typeof reason === "object" && "category" in reason ? String((reason as { category?: unknown }).category ?? "") : "";
+const staleCategories = ["stale_revision", "workflow_conflict", "stale_record_digest"];
+const isStaleReason = (reason: unknown) => staleCategories.includes(errorCategory(reason)) || errorText(reason) === "workflow_conflict";
+const atlasRevision = (revision: RevisionRef) => ({ revision_id: revision.revision_id, revision_ordinal: revision.ordinal, tree_digest: revision.tree_digest });
+const editorProposalVersionLocation = (proposalId: string | null, proposalVersion: number | null, revisionId?: string | null) => {
+  const url = new URL(window.location.href);
+  if (revisionId) url.searchParams.set("revision", revisionId);
+  if (proposalId && proposalVersion !== null) {
+    url.searchParams.set("proposal", proposalId);
+    url.searchParams.set("version", String(proposalVersion));
+  } else {
+    url.searchParams.delete("proposal");
+    url.searchParams.delete("version");
+  }
+  return `${url.pathname}${url.search}`;
+};
+const editorProposalLocation = (proposal: EditorProposal | null, revisionId?: string | null) => editorProposalVersionLocation(proposal?.proposal_id ?? null, proposal?.proposal_version ?? null, revisionId);
+const correctionReference = (proposal: EditorProposal): EditorProposalReference | null => {
+  const value = proposal.correction_of;
+  if (!value || typeof value !== "object") return null;
+  const reference = value as { proposal_id?: unknown; proposal_version?: unknown };
+  return typeof reference.proposal_id === "string" && Number.isInteger(reference.proposal_version)
+    ? { proposal_id: reference.proposal_id, proposal_version: reference.proposal_version as number }
+    : null;
+};
+const sameRevision = (left: RevisionRef, right: RevisionRef) => left.revision_id === right.revision_id && left.tree_digest === right.tree_digest;
+const proposalMatchesEditorView = (proposal: EditorProposal, view: EditorRecordView) => {
+  const binding = proposal.record_bindings[0];
+  return !!binding
+    && sameRevision(proposal.base_revision, view.viewed_revision)
+    && sameRevision(binding.base_revision, view.viewed_revision)
+    && sameRevision(proposal.expected_campaign_head, view.head_revision)
+    && proposal.editor_workflow_version === view.editor_workflow_version
+    && binding.expected_editor_workflow_version === proposal.editor_workflow_version;
+};
+const completeRecord = (record: EditorRecord, definitions: AdapterDefinition): EditorRecord => {
+  const definition = definitions.recordDefinitions[record.record_type];
+  if (!definition) return record;
+  const fields = new Set(record.fields.map((item) => item.field_id));
+  const sections = new Set(record.sections.map((item) => item.section_id));
+  return {
+    ...record,
+    fields: [...record.fields, ...definition.fields.filter((field) => !fields.has(field)).map((field) => ({ field_id: field, value: definition.fieldDefaults[field] ?? null }))],
+    sections: [...record.sections, ...definition.sections.filter((section) => !sections.has(section.id)).map((section) => ({ section_id: section.id, body: "" }))],
+  };
+};
+const definitionSet = (view: EditorRecordView | null): AdapterDefinition => view?.adapter_definition ? adapterDefinitionFromWire(view.adapter_definition) : defaultAdapterDefinition;
+
+function RecordPicker({ campaignId, revision, label, value, onChange, error, triggerId }: { campaignId: string; revision: RevisionRef; label: string; value: string; onChange: (recordId: string) => void; error?: string; triggerId?: string }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState(value);
+  const [choices, setChoices] = useState<ReadonlyArray<AtlasRecordSummary>>([]);
+  const [selected, setSelected] = useState<AtlasRecordSummary | null>(null);
+  const [pending, setPending] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const wasOpen = useRef(false);
+  const searchSequence = useRef(0);
+  const search = async (term: string) => {
+    const sequence = ++searchSequence.current;
+    setPending(true); setLoadError("");
+    try {
+      const result = await httpAtlasApi.records(campaignId, { ...atlasRevision(revision), q: term.trim(), types: [], authorities: [], statuses: [] });
+      if (sequence !== searchSequence.current) return;
+      setChoices(result.items);
+    } catch (reason) {
+      if (sequence !== searchSequence.current) return;
+      setChoices([]); setLoadError(`Record search unavailable (${errorText(reason)}).`);
+    } finally {
+      if (sequence === searchSequence.current) setPending(false);
+    }
+  };
+  useEffect(() => () => { searchSequence.current += 1; }, []);
+  useEffect(() => {
+    if (!open) {
+      if (wasOpen.current) triggerRef.current?.focus();
+      wasOpen.current = false;
+      return;
+    }
+    wasOpen.current = true;
+    searchRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])"));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!dialog.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+  const openPicker = () => { setQuery(value); setOpen(true); void search(value); };
+  const inputId = label.replace(/[^a-z0-9]+/gi, "-");
+  return <div className="record-picker"><p id={`${inputId}-selected`}>{selected && selected.record_id === value ? <>Selected: {selected.name} <span>({selected.record_type})</span> · <code>{selected.record_id}</code></> : value ? <>Selected record ID: <code>{value}</code></> : "No record selected."}</p><button ref={triggerRef} id={triggerId} type="button" aria-label={`${label}: ${value ? "change selected record" : "choose existing record"}`} aria-haspopup="dialog" aria-controls={`${inputId}-dialog`} aria-invalid={!!error} aria-describedby={error ? `${inputId}-error` : undefined} onClick={openPicker}>{value ? "Change selected record" : "Choose existing record"}</button>{error && <span id={`${inputId}-error`} className="error" role="alert">{error}</span>}{open && <div ref={dialogRef} className="record-picker-dialog" role="dialog" aria-modal="true" aria-labelledby={`${inputId}-dialog-heading`} id={`${inputId}-dialog`}><h4 id={`${inputId}-dialog-heading`}>Choose an existing record</h4><p>Search by displayed name, record type, or stable record ID.</p><form onSubmit={(event) => { event.preventDefault(); void search(query); }}><label htmlFor={`${inputId}-search`}>Search existing records</label><input ref={searchRef} id={`${inputId}-search`} value={query} onChange={(event) => setQuery(event.target.value)} /><button type="submit" disabled={pending}>Search</button></form>{pending && <p role="status">Searching existing records.</p>}{loadError && <p className="error" role="alert">{loadError}</p>}{!pending && !loadError && <>{choices.length ? <ul role="listbox" aria-label="Existing records">{choices.map((choice) => <li key={choice.record_id}><button type="button" role="option" onClick={() => { onChange(choice.record_id); setSelected(choice); setOpen(false); }}>{choice.name} <span>({choice.record_type})</span> · <code>{choice.record_id}</code></button></li>)}</ul> : <p>No existing records match this search.</p>}</>}<button type="button" onClick={() => setOpen(false)}>Cancel</button></div>}</div>;
+}
+
+export function RecordEditor({ campaignId, revisionId, recordId, proposalId, proposalVersion, navigate }: { campaignId: string; revisionId: string; recordId: string; proposalId?: string | null; proposalVersion?: number | null; navigate?: (href: string) => void }) {
+  const isCreate = recordId === "__new__";
+  const [view, setView] = useState<EditorRecordView | null>(null);
+  const [draft, setDraft] = useState<EditorRecord | null>(null);
+  const [proposal, setProposal] = useState<EditorProposal | null>(null);
+  const [impact, setImpact] = useState<EditorRemovalImpact | null>(null);
+  const [resolutions, setResolutions] = useState<Array<Record<string, unknown>>>([]);
+  const [mode, setMode] = useState<"edit" | "remove">("edit");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [approvalDialog, setApprovalDialog] = useState<"approve" | "reject" | null>(null);
+  const [proposalLoading, setProposalLoading] = useState(proposalId !== null && proposalId !== undefined && proposalVersion !== null && proposalVersion !== undefined);
+  const [wardenConfirmed, setWardenConfirmed] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState("review_rejected");
+  const [conflict, setConflict] = useState(false);
+  const [correctionMode, setCorrectionMode] = useState(false);
+  const [correctionParentRevision, setCorrectionParentRevision] = useState<RevisionRef | null>(null);
+  const [proposalLoadNonce, setProposalLoadNonce] = useState(0);
+  const correctionDraft = useRef<EditorRecord | null>(null);
+  const correctionResolutions = useRef<Array<Record<string, unknown>> | null>(null);
+  const correctionView = useRef<EditorRecordView | null>(null);
+  const correctionImpact = useRef<EditorRemovalImpact | null>(null);
+  const correctionBase = useRef<{ view: EditorRecordView; impact: EditorRemovalImpact | null } | null>(null);
+  const correctionRequest = useRef(0);
+  const proposalRequest = useRef(0);
+  const impactRequest = useRef(0);
+  const proposalRestoreIdentity = useRef<string | null>(null);
+  const proposalAwaitingBoundView = useRef(false);
+  const proposalUrlIdentity = useRef<string | null>(null);
+  const errorHeading = useRef<HTMLHeadingElement>(null);
+  const dialogHeading = useRef<HTMLHeadingElement>(null);
+  const approvalDialogRef = useRef<HTMLDialogElement>(null);
+  const approvalTrigger = useRef<HTMLElement | null>(null);
+  const focusEditorError = useRef(false);
+  const loadRequest = useRef<{ sequence: number; campaignId: string; revisionId: string; recordId: string } | null>(null);
+  const editorIdentity = `${campaignId}\u0000${revisionId}\u0000${recordId}`;
+  const editorIdentityRef = useRef(editorIdentity);
+  editorIdentityRef.current = editorIdentity;
+  const proposalIdentity = proposal ? `${proposal.proposal_id}\u0000${proposal.proposal_version}` : null;
+  const proposalIdentityRef = useRef<string | null>(proposalIdentity);
+  proposalIdentityRef.current = proposalIdentity;
+  const proposalDecisionAvailable = proposal !== null && view !== null && proposalMatchesEditorView(proposal, view);
+
+  const load = (sourceRevisionId = revisionId) => {
+    correctionRequest.current += 1;
+    proposalRequest.current += 1;
+    impactRequest.current += 1;
+    const hasUrlProposal = !!proposalId && proposalVersion !== null && proposalVersion !== undefined;
+    const retryingUrlProposal = hasUrlProposal && loadRequest.current !== null;
+    const preserveProposal = hasUrlProposal && !retryingUrlProposal
+      && proposalRestoreIdentity.current === editorIdentity
+      && proposal?.proposal_id === proposalId
+      && proposal.proposal_version === proposalVersion;
+    if (retryingUrlProposal) setProposalLoadNonce((current) => current + 1);
+    if (!preserveProposal) {
+      proposalRestoreIdentity.current = null;
+      proposalAwaitingBoundView.current = false;
+      setProposal(null);
+    } else {
+      proposalAwaitingBoundView.current = true;
+    }
+    setView(null); setDraft(null);
+    setBusy(false); setError(""); setMessage(""); setConflict(false); setImpact(null); setCorrectionMode(false); setCorrectionParentRevision(null); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
+    const sourceRecordId = isCreate ? "campaign-main" : recordId;
+    const request = { sequence: (loadRequest.current?.sequence ?? 0) + 1, campaignId, revisionId: sourceRevisionId, recordId: sourceRecordId };
+    loadRequest.current = request;
+    const isCurrentRequest = () => {
+      const current = loadRequest.current;
+      return current !== null
+        && current.sequence === request.sequence
+        && current.campaignId === request.campaignId
+        && current.revisionId === request.revisionId
+        && current.recordId === request.recordId;
+    };
+    void httpEditorApi.read(campaignId, sourceRevisionId, sourceRecordId).then((value) => {
+      if (!isCurrentRequest()) return;
+      setView(value);
+      const definitions = adapterDefinitionFromWire(value.adapter_definition);
+      const nextDraft = isCreate
+        ? newAdapterRecord(definitions.recordTypes.includes("npc") ? "npc" : definitions.recordTypes[0] ?? recordTypes[0], "new-record", "New record", definitions.recordDefinitions)
+        : completeRecord(clone(value.record), definitions);
+      setDraft((current) => proposalRestoreIdentity.current === editorIdentity && current ? current : nextDraft);
+    }).catch((reason: unknown) => {
+      if (!isCurrentRequest()) return;
+      focusEditorError.current = !!document.activeElement?.closest(".editor"); setError(`Editor unavailable (${errorText(reason)}).`);
+    });
+  };
+  useEffect(() => load(), [campaignId, revisionId, recordId]);
+  useEffect(() => {
+    const hasUrlProposal = !!proposalId && proposalVersion !== null && proposalVersion !== undefined;
+    if (!hasUrlProposal) {
+      const hadUrlProposal = proposalUrlIdentity.current !== null;
+      proposalUrlIdentity.current = null;
+      if (!hadUrlProposal) return;
+      proposalRequest.current += 1;
+      proposalRestoreIdentity.current = null;
+      setProposalLoading(false);
+      setProposal(null); setCorrectionMode(false); setMode("edit"); setImpact(null); setResolutions([]);
+      correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
+      return;
+    }
+    proposalUrlIdentity.current = `${proposalId}\u0000${proposalVersion}`;
+    if (proposalRestoreIdentity.current === editorIdentity
+      && proposal?.proposal_id === proposalId
+      && proposal.proposal_version === proposalVersion) {
+      setProposalLoading(false);
+      return;
+    }
+    setProposalLoading(true);
+    setProposal(null); proposalRestoreIdentity.current = null; proposalAwaitingBoundView.current = false; setCorrectionMode(false); setMode("edit"); setImpact(null); setResolutions([]);
+    let active = true;
+    void httpEditorApi.proposal(proposalId, proposalVersion).then((value) => {
+      if (!active) return;
+      const binding = value.record_bindings[0];
+      const matchesEditor = value.campaign_id === campaignId
+        && value.base_revision.revision_id === revisionId
+        && binding?.base_revision.revision_id === revisionId
+        && (isCreate ? value.mutation_kind === "create" : binding?.record_id === recordId);
+      if (!matchesEditor) throw new Error("proposal_binding_mismatch");
+      proposalRestoreIdentity.current = editorIdentity;
+      const candidate = reviewedProposalCandidate(value);
+      if (candidate) {
+        if (view) setDraft((current) => completeRecord(candidate, definitionSet(view)));
+        else proposalAwaitingBoundView.current = true;
+      }
+      setProposal(value);
+      setProposalLoading(false);
+      setMessage("Submitted proposal restored for review.");
+    }).catch((reason: unknown) => {
+      if (!active) return;
+      setProposalLoading(false);
+      setError(`Submitted proposal could not be restored (${errorText(reason)}).`);
+    });
+    return () => { active = false; };
+  }, [campaignId, editorIdentity, isCreate, proposalId, proposalVersion, proposalLoadNonce, recordId, revisionId]);
+  useEffect(() => {
+    if (!view || !proposal || !proposalAwaitingBoundView.current) return;
+    const candidate = reviewedProposalCandidate(proposal);
+    if (!candidate) {
+      proposalAwaitingBoundView.current = false;
+      return;
+    }
+    proposalAwaitingBoundView.current = false;
+    setDraft(completeRecord(candidate, definitionSet(view)));
+  }, [editorIdentity, proposal, view]);
+  const correctionOf = proposal ? correctionReference(proposal) : null;
+  useEffect(() => {
+    setCorrectionParentRevision(null);
+    if (!correctionOf) return;
+    let active = true;
+    void httpEditorApi.proposal(correctionOf.proposal_id, correctionOf.proposal_version).then((value) => {
+      if (!active || value.campaign_id !== campaignId || value.proposal_id !== correctionOf.proposal_id || value.proposal_version !== correctionOf.proposal_version) return;
+      setCorrectionParentRevision(value.base_revision);
+    }).catch(() => {
+      // Keep the current proposal reviewable if its immutable parent is temporarily unavailable.
+    });
+    return () => { active = false; };
+  }, [campaignId, correctionOf?.proposal_id, correctionOf?.proposal_version]);
+  useEffect(() => () => {
+    correctionRequest.current += 1;
+    proposalRequest.current += 1;
+    impactRequest.current += 1;
+    loadRequest.current = null;
+  }, []);
+  useEffect(() => {
+    if (!error || !focusEditorError.current) return;
+    focusEditorError.current = false;
+    if (document.activeElement?.closest("#atlas-content") && !document.activeElement?.closest(".editor")) return;
+    const frame = requestAnimationFrame(() => errorHeading.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [error]);
+  useEffect(() => {
+    if (!approvalDialog || !proposal) {
+      const trigger = approvalTrigger.current;
+      approvalTrigger.current = null;
+      if (trigger?.isConnected) trigger.focus();
+      return;
+    }
+    setWardenConfirmed(false);
+    const dialog = approvalDialogRef.current;
+    if (!dialog) return;
+    if (!dialog.open) {
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+    }
+    dialogHeading.current?.focus();
+    return () => {
+      if (!dialog.open) return;
+      if (typeof dialog.close === "function") dialog.close();
+      else dialog.removeAttribute("open");
+    };
+  }, [approvalDialog, proposal]);
+  useEffect(() => {
+    const first = Object.keys(fieldErrors)[0];
+    if (!first) return;
+    const id = first === "record_id" ? "editor-record-id" : first === "displayed_name" ? "editor-name" : first === "visibility" ? "editor-visibility" : first.startsWith("field-") ? `editor-field-${first.slice(6)}` : first.startsWith("section-") ? `editor-section-${first.slice(8)}` : first.startsWith("connection-") ? first.endsWith("-context") ? `connection-context-${first.slice(11, -8)}` : `connection-target-${first.slice(11)}` : first.startsWith("resolution-") ? `resolution-${first.slice(11)}` : null;
+    if (id) document.getElementById(id)?.focus();
+  }, [fieldErrors]);
+
+  const update = (next: Partial<EditorRecord>) => setDraft((current) => current ? { ...current, ...next } : current);
+  const definitions = definitionSet(view);
+  const validate = (rejectNoop = false) => {
+    if (!draft) return false;
+    const next: Record<string, string> = {};
+    const definition = definitions.recordDefinitions[draft.record_type];
+    const nonemptyFields = new Set(definition?.nonemptyFields ?? []);
+    const fieldValues = new Map(draft.fields.map((field) => [field.field_id, field.value]));
+    const adapterValue = (field: string) => {
+      if (field === "id") return draft.record_id;
+      if (field === "type") return draft.record_type;
+      if (field === "name") return draft.displayed_name;
+      if (field === "status") return draft.status;
+      if (field === "visibility") return draft.visibility.audience;
+      if (field === "warden_only") return String(draft.visibility.warden_only);
+      return fieldValues.get(field);
+    };
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(draft.record_id)) next.record_id = "Use lowercase letters, numbers, and hyphens.";
+    else if (draft.record_id.length > 80) next.record_id = "Record ID must be 80 characters or fewer.";
+    if (!draft.displayed_name.trim()) next.displayed_name = "Displayed name is required.";
+    else if (draft.displayed_name.length > 200) next.displayed_name = "Displayed name must be 200 characters or fewer.";
+    Object.entries(definition?.requiredValues ?? {}).forEach(([field, requiredValue]) => {
+      if (String(adapterValue(field) ?? "") === requiredValue) return;
+      const key = field === "id" ? "record_id" : field === "name" ? "displayed_name" : field === "visibility" || field === "warden_only" ? "visibility" : `field-${field}`;
+      if (!next[key]) next[key] = `This value must be ${requiredValue}.`;
+    });
+    draft.fields.forEach((field) => {
+      if (!/^[a-z0-9][a-z0-9_-]*$/.test(field.field_id)) next[`field-${field.field_id}`] = "Field ID is invalid.";
+      else if (nonemptyFields.has(field.field_id) && (field.value === null || field.value === undefined || (typeof field.value === "string" && !field.value.trim()))) next[`field-${field.field_id}`] = "This field is required.";
+    });
+    draft.sections.forEach((section) => {
+      if (!/^[a-z0-9][a-z0-9-]*$/.test(section.section_id)) next[`section-${section.section_id}`] = "Section ID is invalid.";
+      else if (/^##\s/m.test(section.body)) next[`section-${section.section_id}`] = "Section content cannot contain Markdown headings.";
+      else if (definition?.forbiddenHeadings?.some((heading) => section.section_id === heading.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, ""))) next[`section-${section.section_id}`] = "This section is not permitted for the selected record type.";
+    });
+    const connectionIds = new Set<string>();
+    const connectionOccurrences = new Map<string, string>();
+    draft.connections.forEach((connection) => {
+      if (connection.connection_id.length < 3 || !publicId.test(connection.connection_id)) next[`connection-${connection.connection_id}`] = "Connection ID must use lowercase public ID syntax.";
+      if (connectionIds.has(connection.connection_id)) next[`connection-${connection.connection_id}`] = "Connection IDs must be unique.";
+      connectionIds.add(connection.connection_id);
+      const connectionKey = `connection-${connection.connection_id}`;
+      const occurrence = [connection.target_record_id, connection.relationship, connection.state].join("\u0000");
+      const prior = connectionOccurrences.get(occurrence);
+      if (prior) next[connectionKey] = `This duplicates connection ${prior}.`;
+      else connectionOccurrences.set(occurrence, connection.connection_id);
+      if (!connection.target_record_id.trim()) next[connectionKey] = "A connection target is required.";
+      if (!definitions.relationships.includes(connection.relationship)) next[connectionKey] = "This relationship is not supported by the bound adapter.";
+      if (!definitions.connectionStates.includes(connection.state)) next[connectionKey] = "This connection state is not supported by the bound adapter.";
+      if (!connection.context.trim()) next[`${connectionKey}-context`] = "Connection context is required.";
+      else if (/[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029]/u.test(connection.context)) next[`${connectionKey}-context`] = "Connection context must be a single line.";
+      else if (connection.context.length > 200) next[`${connectionKey}-context`] = "Connection context must be 200 characters or fewer.";
+      else if (connection.context !== connection.context.trim()) next[`${connectionKey}-context`] = "Connection context must not have leading or trailing whitespace.";
+    });
+    if (rejectNoop && mode === "edit" && !isCreate && view && Object.keys(next).length === 0) {
+      const original = completeRecord(clone(view.record), definitions);
+      const withoutDigest = (record: EditorRecord) => ({ ...record, content_digest: null });
+      if (JSON.stringify(withoutDigest(draft)) === JSON.stringify(withoutDigest(original))) {
+        setMessage("No changes to submit.");
+        setFieldErrors(next);
+        return false;
+      }
+    }
+    setFieldErrors(next); return Object.keys(next).length === 0;
+  };
+  const targetVisibilityErrors = async (): Promise<Record<string, string>> => {
+    if (!draft || !view || draft.visibility.audience !== "players") return {};
+    const targetIds = new Set(draft.connections.map((connection) => connection.target_record_id));
+    const targetAudiences = new Map<string, EditorRecord["visibility"]["audience"] | undefined>();
+    await Promise.all(Array.from(targetIds, async (targetId) => {
+      if (targetId === draft.record_id) {
+        targetAudiences.set(targetId, draft.visibility.audience);
+        return;
+      }
+      try {
+        const target = await httpEditorApi.read(campaignId, view.head_revision.revision_id, targetId);
+        targetAudiences.set(targetId, target.record?.visibility?.audience);
+      } catch {
+        targetAudiences.set(targetId, undefined);
+      }
+    }));
+    const next: Record<string, string> = {};
+    draft.connections.forEach((connection) => {
+      const audience = targetAudiences.get(connection.target_record_id);
+      const key = `connection-${connection.connection_id}`;
+      if (audience === undefined) next[key] = "Target visibility could not be verified.";
+      else if (audience === "warden") next[key] = "Player-visible records cannot connect to Warden-only targets.";
+    });
+    return next;
+  };
+  const removalResolutionVisibilityErrors = async (currentImpact: EditorRemovalImpact | null, currentResolutions: Array<Record<string, unknown>>, revision: RevisionRef): Promise<Record<string, string>> => {
+    if (!currentImpact) return {};
+    const redirects: Array<{ reference: EditorRemovalImpact["incoming_references"][number]; replacement: string }> = [];
+    currentImpact.incoming_references.forEach((reference) => {
+      const resolution = currentResolutions.find((item) => item.reference_id === reference.reference_id);
+      const replacement = resolution?.action === "redirect" ? resolution.replacement_target_record_id : undefined;
+      if (typeof replacement === "string" && replacement.length > 0) redirects.push({ reference, replacement });
+    });
+    const recordIds = new Set(redirects.flatMap(({ reference, replacement }) => [reference.source_record_id, replacement]));
+    const audiences = new Map<string, EditorRecord["visibility"]["audience"] | undefined>();
+    await Promise.all(Array.from(recordIds, async (recordId) => {
+      try {
+        const value = await httpEditorApi.read(campaignId, revision.revision_id, recordId);
+        audiences.set(recordId, value.record?.visibility?.audience);
+      } catch {
+        audiences.set(recordId, undefined);
+      }
+    }));
+    const next: Record<string, string> = {};
+    redirects.forEach(({ reference, replacement }) => {
+      const sourceAudience = audiences.get(reference.source_record_id);
+      const targetAudience = audiences.get(replacement);
+      const key = `resolution-${reference.reference_id}`;
+      if (replacement === currentImpact.record.record_id || replacement === reference.source_record_id) next[key] = "A redirect cannot target the removed record or its source record.";
+      else if (sourceAudience === undefined || targetAudience === undefined) next[key] = "Source and replacement visibility could not be verified.";
+      else if (sourceAudience === "players" && targetAudience === "warden") next[key] = "Player-visible records cannot redirect to Warden-only targets.";
+    });
+    return next;
+  };
+  const removalReady = !!impact && impact.incoming_references.every((reference) => {
+    const resolution = resolutions.find((item) => item.reference_id === reference.reference_id);
+    const replacement = resolution?.replacement_target_record_id;
+    return resolution?.action === "remove_reference"
+      || (resolution?.action === "redirect" && typeof replacement === "string" && replacement.length > 0)
+      || (resolution?.action === "accept_unresolved" && reference.permitted_unresolved === true);
+  });
+  const startRemove = async () => {
+    if (!view || !draft || !view.editable || !validate()) return;
+    const request = {
+      sequence: impactRequest.current + 1,
+      editorIdentity,
+      loadSequence: loadRequest.current?.sequence ?? null,
+    };
+    impactRequest.current = request.sequence;
+    const isCurrentRequest = () => impactRequest.current === request.sequence
+      && editorIdentityRef.current === request.editorIdentity
+      && loadRequest.current?.sequence === request.loadSequence;
+    setBusy(true); setError(""); setMessage(""); setConflict(false);
+    try {
+      const value = await httpEditorApi.impact(campaignId, view.head_revision.revision_id, draft.record_id);
+      if (!isCurrentRequest()) return;
+      setImpact(value); setMode("remove"); setResolutions(value.incoming_references.map((reference) => ({ reference_id: reference.reference_id, action: "", replacement_target_record_id: null }))); setMessage("Resolve every incoming typed connection before submitting removal.");
+    } catch (reason) {
+      if (!isCurrentRequest()) return;
+      setConflict(isStaleReason(reason)); focusEditorError.current = true; setError(`Removal impact unavailable (${errorText(reason)}).`);
+    } finally { if (isCurrentRequest()) setBusy(false); }
+  };
+  const save = async () => {
+    if (mode === "remove" && !removalReady) return;
+    if (!view || !draft || !view.editable || !validate(true)) return;
+    const request = { sequence: proposalRequest.current + 1, editorIdentity };
+    proposalRequest.current = request.sequence;
+    const isCurrentRequest = () => proposalRequest.current === request.sequence && editorIdentityRef.current === request.editorIdentity;
+    setBusy(true); setError(""); setMessage(""); setConflict(false);
+    try {
+      const visibilityErrors = mode === "remove"
+        ? await removalResolutionVisibilityErrors(impact, resolutions, view.head_revision)
+        : await targetVisibilityErrors();
+      if (!isCurrentRequest()) return;
+      if (Object.keys(visibilityErrors).length > 0) {
+        setFieldErrors(visibilityErrors);
+        return;
+      }
+      const value = await httpEditorApi.propose(isCreate ? "create" : mode, campaignId, view.head_revision, draft, view.editor_workflow_version, resolutions, impact ?? undefined);
+      if (!isCurrentRequest()) return;
+      proposalRestoreIdentity.current = editorIdentity;
+      setView((current) => current ? { ...current, editor_workflow_version: value.editor_workflow_version } : current); setProposal(value); navigate?.(editorProposalLocation(value)); setCorrectionMode(false); setMessage("Exact proposal loaded for review. The current head is unchanged.");
+    } catch (reason) {
+      if (!isCurrentRequest()) return;
+      setConflict(isStaleReason(reason)); focusEditorError.current = true; setError(`Proposal was not created (${errorText(reason)}).`);
+    } finally { if (isCurrentRequest()) setBusy(false); }
+  };
+  const submitDecision = async () => {
+    if (!proposal || !proposalDecisionAvailable || !approvalDialog || correctionMode || (approvalDialog === "approve" && !wardenConfirmed)) return;
+    const request = {
+      sequence: proposalRequest.current + 1,
+      editorIdentity,
+      proposalIdentity: `${proposal.proposal_id}\u0000${proposal.proposal_version}`,
+    };
+    proposalRequest.current = request.sequence;
+    const isCurrentRequest = () => proposalRequest.current === request.sequence
+      && editorIdentityRef.current === request.editorIdentity
+      && proposalIdentityRef.current === request.proposalIdentity;
+    const approving = approvalDialog === "approve"; setBusy(true); setError(""); setConflict(false);
+    try {
+      const result = approving ? await httpEditorApi.approve(proposal, wardenConfirmed) : await httpEditorApi.reject(proposal, rejectionReason);
+      if (!isCurrentRequest()) return;
+      setApprovalDialog(null); if (approving) { setMessage("Proposal approved and published."); window.dispatchEvent(new Event("drydock:campaign-mutated")); const revision = result.published_revision as RevisionRef | undefined; const createdRecordId = proposal.mutation_kind === "create" ? proposal.record_bindings[0]?.record_id : undefined; if (revision && navigate) navigate(createdRecordId ? `/campaigns/${encodeURIComponent(campaignId)}/records/${encodeURIComponent(createdRecordId)}?revision=${encodeURIComponent(revision.revision_id)}` : `/campaigns/${encodeURIComponent(campaignId)}?revision=${encodeURIComponent(revision.revision_id)}`); } else { setView((current) => current ? { ...current, editor_workflow_version: result.editor_workflow_version as number } : current); proposalRestoreIdentity.current = null; setProposal(null); navigate?.(editorProposalLocation(null)); setCorrectionMode(false); setMessage("Proposal rejected. No campaign revision changed."); }
+    } catch (reason) {
+      if (!isCurrentRequest()) return;
+      setApprovalDialog(null); setConflict(isStaleReason(reason)); focusEditorError.current = true; setError(`${approving ? "Approval" : "Rejection"} blocked (${errorText(reason)}). Refresh and review the current head.`);
+    } finally { if (isCurrentRequest()) setBusy(false); }
+  };
+  const startCorrection = async () => {
+    if (!proposal || busy) return;
+    const request = {
+      sequence: correctionRequest.current + 1,
+      editorIdentity,
+      proposalIdentity: `${proposal.proposal_id}\u0000${proposal.proposal_version}`,
+    };
+    correctionRequest.current = request.sequence;
+    const isCurrentRequest = () => correctionRequest.current === request.sequence
+      && editorIdentityRef.current === request.editorIdentity
+      && proposalIdentityRef.current === request.proposalIdentity;
+    correctionDraft.current = draft ? clone(draft) : null;
+    correctionResolutions.current = resolutions.map((resolution) => ({ ...resolution }));
+    correctionView.current = view;
+    correctionImpact.current = impact;
+    setBusy(true); setFieldErrors({}); setError(""); setConflict(false);
+    try {
+      const proposalRecordId = proposal.record_bindings[0]?.record_id;
+      const sourceRecordId = proposal.mutation_kind === "create" ? "campaign-main" : proposalRecordId ?? draft?.record_id ?? recordId;
+      const base = await httpEditorApi.read(campaignId, proposal.base_revision.revision_id, sourceRecordId);
+      if (!isCurrentRequest()) return;
+      const currentHead = base.viewed_revision.revision_id === base.head_revision.revision_id
+        ? base
+        : await httpEditorApi.read(campaignId, base.head_revision.revision_id, sourceRecordId);
+      if (!isCurrentRequest()) return;
+      const currentImpact = proposal.mutation_kind === "remove"
+        ? await httpEditorApi.impact(campaignId, currentHead.head_revision.revision_id, sourceRecordId)
+        : null;
+      if (!isCurrentRequest()) return;
+      correctionBase.current = { view: currentHead, impact: currentImpact };
+      const rebasingStaleProposal = currentHead.head_revision.revision_id !== proposal.base_revision.revision_id;
+      if (proposal.mutation_kind === "create" || !rebasingStaleProposal) {
+        const candidate = reviewedProposalCandidate(proposal);
+        if (candidate) setDraft({ ...candidate, ...(proposalRecordId ? { record_id: proposalRecordId } : {}) });
+        else setDraft((current) => current && proposalRecordId ? { ...current, record_id: proposalRecordId } : current);
+      } else {
+        setDraft(clone(currentHead.record));
+      }
+      if (currentImpact) {
+        setResolutions(currentImpact.incoming_references.map((reference) => resolutions.find((item) => item.reference_id === reference.reference_id) ?? { reference_id: reference.reference_id, action: "", replacement_target_record_id: null }));
+      }
+      setMode(proposal.mutation_kind === "remove" ? "remove" : "edit");
+      setView(currentHead); setImpact(currentImpact); setCorrectionMode(true); setMessage("Correction mode: edit the candidate from the current head, then submit a new proposal version.");
+    } catch (reason) {
+      if (!isCurrentRequest()) return;
+      correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null;
+      setError(`Correction could not start (${errorText(reason)}). Reload the current head and try again.`); focusEditorError.current = true;
+    } finally { if (isCurrentRequest()) setBusy(false); }
+  };
+  const cancelCorrection = () => {
+    if (!correctionMode) return;
+    if (correctionDraft.current) setDraft(correctionDraft.current);
+    if (correctionResolutions.current) setResolutions(correctionResolutions.current);
+    if (correctionView.current) setView(correctionView.current);
+    setImpact(correctionImpact.current);
+    correctionDraft.current = null; correctionResolutions.current = null;
+    correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
+    setFieldErrors({}); setCorrectionMode(false); setError(""); setConflict(false); setMessage("Correction canceled. The original proposal remains under review.");
+  };
+  const submitCorrection = async () => {
+    if (proposal?.mutation_kind === "remove" && !removalReady) return;
+    if (!proposal || !draft || !view || !correctionMode || (proposal.mutation_kind !== "remove" && !validate())) return;
+    const request = {
+      sequence: correctionRequest.current,
+      editorIdentity,
+      proposalIdentity: `${proposal.proposal_id}\u0000${proposal.proposal_version}`,
+    };
+    const isCurrentRequest = () => correctionRequest.current === request.sequence
+      && editorIdentityRef.current === request.editorIdentity
+      && proposalIdentityRef.current === request.proposalIdentity;
+    setBusy(true); setError(""); setConflict(false);
+    try {
+      const visibilityErrors = proposal.mutation_kind === "remove"
+        ? await removalResolutionVisibilityErrors(correctionBase.current?.impact ?? impact, resolutions, correctionBase.current?.view.head_revision ?? view.head_revision)
+        : await targetVisibilityErrors();
+      if (!isCurrentRequest()) return;
+      if (Object.keys(visibilityErrors).length > 0) {
+        setFieldErrors(visibilityErrors);
+        return;
+      }
+      const proposalRecordId = proposal.record_bindings[0]?.record_id;
+      const correctedDraft = proposal.mutation_kind === "create" && proposalRecordId
+        ? { ...draft, record_id: proposalRecordId }
+        : draft;
+      const correctionBinding = correctionBase.current;
+      if (!correctionBinding) throw new Error("correction_base_required");
+      const currentHead = correctionBinding.view;
+      const currentImpact = correctionBinding.impact ?? undefined;
+      const value = await httpEditorApi.correct(
+        proposal, proposal.mutation_kind === "remove" ? null : correctedDraft, resolutions,
+        currentHead.head_revision, currentHead.editor_workflow_version, proposal.mutation_kind === "create" ? undefined : currentHead.record.content_digest,
+        currentImpact,
+      );
+      if (!isCurrentRequest()) return;
+      setView({ ...currentHead, editor_workflow_version: value.editor_workflow_version }); setDraft(correctedDraft); proposalRestoreIdentity.current = editorIdentity; setProposal(value); navigate?.(editorProposalLocation(value, value.base_revision.revision_id)); setImpact(currentImpact ?? null); setCorrectionMode(false); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null; setMessage("Correction created as a new immutable proposal version.");
+    }
+    catch (reason) {
+      if (!isCurrentRequest()) return;
+      setConflict(isStaleReason(reason)); focusEditorError.current = true; setError(`Correction blocked (${errorText(reason)}). Reload the current head and rebase the fields.`);
+    }
+    finally { if (isCurrentRequest()) setBusy(false); }
+  };
+  const openCurrentHead = async () => {
+    setBusy(true); setError("");
+    try {
+      const current = (await httpAtlasApi.campaigns()).campaigns.find((item) => item.campaign_id === campaignId);
+      if (!current) throw new Error("campaign_unavailable");
+      // Document navigation refreshes Atlas's campaign cache and same-revision editor state.
+      load(current.head_revision.revision_id);
+      const url = new URL(window.location.href);
+      url.searchParams.set("revision", current.head_revision.revision_id);
+      if (!proposalId || proposalVersion === null || proposalVersion === undefined) {
+        url.searchParams.delete("proposal");
+        url.searchParams.delete("version");
+      }
+      navigate?.(`${url.pathname}${url.search}`);
+    } catch (reason) { focusEditorError.current = true; setError(`Current head unavailable (${errorText(reason)}).`); }
+    finally { setBusy(false); }
+  };
+
+  const approvalDialogView = approvalDialog && proposal ? (() => {
+    const audienceBroadens = proposal.diff.visibility_changes.some((change) => change.audience_broadens === true);
+    const removal = proposal.mutation_kind === "remove";
+    const referenceCards = proposal.diff.cards.filter((card) => card.kind === "reference_resolution");
+    const affectedRecords = new Map(proposal.record_bindings.map((binding) => [binding.record_id, binding.record_id]));
+    proposal.diff.cards.forEach((card) => {
+      const after = card.after as EditorRecord | undefined;
+      const before = card.before as EditorRecord | undefined;
+      const name = after?.displayed_name ?? before?.displayed_name;
+      if (name) affectedRecords.set(card.subject_record_id, name);
+      else if (!affectedRecords.has(card.subject_record_id)) affectedRecords.set(card.subject_record_id, card.subject_record_id);
+    });
+    const referenceSummary = (card: (typeof proposal.diff.cards)[number]) => {
+      const before = card.before as Record<string, unknown> | null | undefined;
+      const resolution = card.resolution as Record<string, unknown> | null | undefined;
+      const source = String(before?.source_record_id ?? card.subject_record_id);
+      const connection = String(before?.connection_id ?? card.change_id);
+      const action = resolution?.action === "redirect"
+        ? `redirected to ${String(resolution.replacement_target_record_id ?? "another record")}`
+        : resolution?.action === "remove_reference" ? "removed" : "accepted as unresolved";
+      return `${source} · ${connection}: ${action}`;
+    };
+    return <dialog ref={approvalDialogRef} className="editor-dialog" aria-modal="true" aria-labelledby="editor-dialog-heading" onCancel={(event) => { event.preventDefault(); setApprovalDialog(null); }} onKeyDown={(event) => { if (event.key === "Escape") setApprovalDialog(null); }}><section role="document"><h2 id="editor-dialog-heading" ref={dialogHeading} tabIndex={-1}>{approvalDialog === "approve" ? "Approve exact proposal" : "Reject proposal"}</h2><p>Proposal <code>{proposal.proposal_id}</code>, version {proposal.proposal_version}. Base revision <code>{proposal.base_revision.revision_id}</code>.</p>{approvalDialog === "approve" ? <><p>Validation: {proposal.validation.status}. Affected records: {proposal.diff.affected_record_count}. Removed records: {proposal.diff.cards.filter((card) => card.kind === "record_removed").length}.</p><ul>{Array.from(affectedRecords, ([recordId, name]) => <li key={recordId}>{name}</li>)}</ul><section aria-labelledby="editor-binding-heading"><h3 id="editor-binding-heading">Exact record bindings</h3><ul>{proposal.record_bindings.map((binding) => <li key={binding.record_id}><code>{binding.record_id}</code> · content digest <code>{binding.record_digest ?? "(record did not exist)"}</code></li>)}</ul></section>{removal && <div className="warning" role="status"><p>This record disappears only from the new approved revision. Historical revisions retain it.</p><p>Incoming references that will change:</p>{referenceCards.length > 0 ? <ul>{referenceCards.map((card) => <li key={card.change_id}>{referenceSummary(card)}</li>)}</ul> : <p>No incoming references will change.</p>}</div>}<p>Authority changes: {proposal.diff.authority_changes.length}. Visibility changes: {proposal.diff.visibility_changes.length}.</p>{audienceBroadens && <div className="warning" role="alert"><strong>Warning: this proposal broadens audience visibility.</strong><p>Review the affected records and confirm that the new audience may see them before publishing.</p></div>}<pre>{JSON.stringify({ authority: proposal.authority_outcome, visibility: proposal.visibility_outcome }, null, 2)}</pre><label><input type="checkbox" checked={wardenConfirmed} onChange={(event) => setWardenConfirmed(event.target.checked)} />I confirm the exact proposal, validation, authority, and visibility changes{removal && ", including the removal consequences shown above"}.</label></> : <label htmlFor="editor-rejection-reason">Reason code<input id="editor-rejection-reason" value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} /></label>}<div className="actions"><button type="button" disabled={busy} onClick={() => setApprovalDialog(null)}>Cancel</button><button type="button" className="primary" disabled={busy || !proposalDecisionAvailable || (approvalDialog === "approve" && !wardenConfirmed) || (approvalDialog === "reject" && !/^[a-z][a-z0-9_]+$/.test(rejectionReason))} onClick={() => void submitDecision()}>{approvalDialog === "approve" ? "Approve and publish exact proposal" : "Reject exact proposal"}</button></div></section></dialog>;
+  })() : null;
+  if (error && !view) return <section className="card editor" role="alert" aria-labelledby="editor-error-heading"><h2 id="editor-error-heading" ref={errorHeading} tabIndex={-1}>Record editor</h2><p>{error}</p><button type="button" onClick={() => load()}>Retry</button></section>;
+  if (!view || !draft) return <section className="card editor" aria-busy="true"><h2>Record editor</h2><p role="status">Loading structured record.</p></section>;
+  if (!view.editable && !proposal) return <section className="card editor" aria-labelledby="editor-heading"><h2 id="editor-heading">Record editor</h2><p>Historical revisions are read-only. Open the current head to propose a change.</p>{navigate && <button type="button" onClick={openCurrentHead}>Open current head</button>}</section>;
+
+  const invalid = (key: string) => fieldErrors[key];
+  const setField = (index: number, field: EditorField) => update({ fields: draft.fields.map((item, itemIndex) => itemIndex === index ? field : item) });
+  const setSection = (index: number, section: EditorSection) => update({ sections: draft.sections.map((item, itemIndex) => itemIndex === index ? section : item) });
+  const locked = busy || proposalLoading || (!!proposal && !correctionMode) || !view.editable;
+  const fieldsLocked = locked || mode === "remove";
+  return <section className="card editor" aria-labelledby="editor-heading">{approvalDialogView}<div className="section-title"><h2 id="editor-heading">{isCreate ? "Create record" : "Edit record"}</h2><span role="status">Head · workflow {view.editor_workflow_version}</span></div><p>Changes create a typed proposal. Approval is required before the campaign head changes.</p>{error && <div className="error editor-error" role="alert" aria-labelledby="editor-error-heading"><h3 id="editor-error-heading" ref={errorHeading} tabIndex={-1}>Editor error</h3><p>{error}</p></div>}{message && <p role="status" aria-live="polite">{message}</p>}{conflict && <aside className="editor-conflict" role="alert" aria-labelledby="editor-conflict-heading"><h3 id="editor-conflict-heading">Head changed; rebase required</h3><p>This proposal is bound to an older revision or workflow. Reload the current head before retrying.</p>{navigate && <button type="button" onClick={openCurrentHead}>Reload current head</button>}</aside>}
+    <fieldset disabled={fieldsLocked}><legend>Record details</legend><label htmlFor="editor-record-id">Record ID</label><input id="editor-record-id" value={draft.record_id} readOnly={!isCreate || (!!proposal && correctionMode)} onChange={(event) => update({ record_id: event.target.value })} aria-invalid={!!invalid("record_id")} aria-describedby={invalid("record_id") ? "editor-record-id-error" : undefined} />{invalid("record_id") && <span id="editor-record-id-error" className="error">{invalid("record_id")}</span>}<label htmlFor="editor-name">Displayed name</label><input id="editor-name" value={draft.displayed_name} onChange={(event) => update({ displayed_name: event.target.value })} aria-invalid={!!invalid("displayed_name")} aria-describedby={invalid("displayed_name") ? "editor-name-error" : undefined} />{invalid("displayed_name") && <span id="editor-name-error" className="error">{invalid("displayed_name")}</span>}<label htmlFor="editor-type">Record type</label><select id="editor-type" value={draft.record_type} disabled={!isCreate || !!proposal} onChange={(event) => setDraft(newAdapterRecord(event.target.value, draft.record_id, draft.displayed_name, definitions.recordDefinitions))}>{(isCreate ? definitions.recordTypes : [draft.record_type]).map((type) => <option key={type} value={type}>{type}</option>)}</select><label htmlFor="editor-status">Status</label><select id="editor-status" value={draft.status} onChange={(event) => update({ status: event.target.value, authority: authority(event.target.value) as EditorRecord["authority"] })}>{statuses.map((value) => <option key={value} value={value}>{value}</option>)}</select><p>Authority: <strong>{authority(draft.status)}</strong> (derived from status)</p><label htmlFor="editor-visibility">Visibility</label><select id="editor-visibility" value={draft.visibility.audience} onChange={(event) => update({ visibility: event.target.value === "warden" ? { audience: "warden", warden_only: true } : { audience: event.target.value as "players" | "shared", warden_only: false } })} aria-invalid={!!invalid("visibility")} aria-describedby={invalid("visibility") ? "editor-visibility-error" : undefined}><option value="warden">Warden only</option><option value="shared">Shared</option><option value="players">Players</option></select>{invalid("visibility") && <span id="editor-visibility-error" className="error" role="alert">{invalid("visibility")}</span>}</fieldset>
+    <fieldset disabled={fieldsLocked}><legend>Fields</legend>{draft.fields.map((field, index) => <div key={field.field_id}><label htmlFor={`editor-field-${field.field_id}`}>{field.field_id}</label><input id={`editor-field-${field.field_id}`} value={String(field.value ?? "")} readOnly={!definitions.recordDefinitions[draft.record_type]?.fields.includes(field.field_id)} onChange={(event) => setField(index, { ...field, value: event.target.value })} aria-invalid={!!invalid(`field-${field.field_id}`)} aria-describedby={invalid(`field-${field.field_id}`) ? `editor-field-${field.field_id}-error` : undefined} />{invalid(`field-${field.field_id}`) && <span id={`editor-field-${field.field_id}-error`} className="error">{invalid(`field-${field.field_id}`)}</span>}</div>)}</fieldset>
+    <fieldset disabled={fieldsLocked}><legend>Content sections</legend>{draft.sections.map((section, index) => <div key={section.section_id}><label htmlFor={`editor-section-${section.section_id}`}>{section.section_id}</label><textarea id={`editor-section-${section.section_id}`} rows={5} readOnly={!definitions.recordDefinitions[draft.record_type]?.sections.some((item) => item.id === section.section_id)} value={section.body} onChange={(event) => setSection(index, { ...section, body: event.target.value })} aria-invalid={!!invalid(`section-${section.section_id}`)} aria-describedby={invalid(`section-${section.section_id}`) ? `editor-section-${section.section_id}-error` : undefined} />{invalid(`section-${section.section_id}`) && <span id={`editor-section-${section.section_id}-error`} className="error" role="alert">{invalid(`section-${section.section_id}`)}</span>}</div>)}</fieldset>
+    <fieldset disabled={fieldsLocked}><legend>Typed connections ({draft.connections.length})</legend>{draft.connections.map((connection, index) => <ConnectionEditor key={connection.connection_id} campaignId={campaignId} revision={view.head_revision} relationships={definitions.relationships} connectionStates={definitions.connectionStates} connection={connection} error={invalid(`connection-${connection.connection_id}`)} contextError={invalid(`connection-${connection.connection_id}-context`)} onChange={(next) => update({ connections: draft.connections.map((item, itemIndex) => itemIndex === index ? next : item) })} onRemove={() => update({ connections: draft.connections.filter((_, itemIndex) => itemIndex !== index) })} />)}<button type="button" onClick={() => update({ connections: [...draft.connections, { connection_id: nextConnectionId(draft.connections), target_record_id: "", relationship: definitions.relationships[0] ?? "connected-to", state: definitions.connectionStates[0] ?? "current", context: "Describe this connection." }] })}>Add typed connection</button></fieldset>
+    <div className="actions">{!proposal && !isCreate && recordId !== "campaign-main" && mode !== "remove" && <button type="button" className="danger" disabled={locked} onClick={() => void startRemove()}>Load removal impact</button>}{!proposal && <button type="button" disabled={locked || mode === "remove"} onClick={() => { setMode("edit"); void save(); }}>{isCreate ? "Submit create proposal" : "Save as proposal"}</button>}{!proposal && mode === "remove" && <button type="button" disabled={busy} onClick={() => { setMode("edit"); setImpact(null); setResolutions([]); setMessage("Removal canceled."); }}>Cancel removal</button>}{!proposal && mode === "remove" && impact && <button type="button" disabled={locked || !removalReady} onClick={() => void save()}>Submit removal proposal</button>}{proposal && correctionMode && <><button type="button" disabled={busy || (proposal.mutation_kind === "remove" && !removalReady)} onClick={() => void submitCorrection()}>Submit correction/rebase</button><button type="button" disabled={busy} onClick={cancelCorrection}>Cancel correction</button></>}</div>{impact && mode === "remove" && <RemovalResolution campaignId={campaignId} revision={view.head_revision} impact={impact} resolutions={resolutions} setResolutions={setResolutions} errors={fieldErrors} disabled={locked} />}{proposal && <ProposalReview proposal={proposal} priorRevision={correctionParentRevision} decisionAvailable={proposalDecisionAvailable} approve={() => { approvalTrigger.current = document.activeElement as HTMLElement | null; setWardenConfirmed(false); setApprovalDialog("approve"); }} reject={() => { approvalTrigger.current = document.activeElement as HTMLElement | null; setApprovalDialog("reject"); }} startCorrection={startCorrection} correctionMode={correctionMode} busy={busy} />}</section>;
+}
+
+function ConnectionEditor({ campaignId, revision, relationships, connectionStates, connection, error, contextError, onChange, onRemove }: { campaignId: string; revision: RevisionRef; relationships: string[]; connectionStates: string[]; connection: EditorConnection; error?: string; contextError?: string; onChange: (connection: EditorConnection) => void; onRemove: () => void }) { return <div className="editor-connection"><RecordPicker campaignId={campaignId} revision={revision} label={`Target for ${connection.connection_id}`} triggerId={`connection-target-${connection.connection_id}`} value={connection.target_record_id} onChange={(target_record_id) => onChange({ ...connection, target_record_id })} error={error} /><label htmlFor={`connection-relationship-${connection.connection_id}`}>Relationship</label><select id={`connection-relationship-${connection.connection_id}`} value={connection.relationship} onChange={(event) => onChange({ ...connection, relationship: event.target.value })}>{!relationships.includes(connection.relationship) && <option value={connection.relationship} disabled>Unsupported: {connection.relationship}</option>}{relationships.map((value) => <option key={value} value={value}>{value}</option>)}</select><label htmlFor={`connection-state-${connection.connection_id}`}>State</label><select id={`connection-state-${connection.connection_id}`} value={connection.state} onChange={(event) => onChange({ ...connection, state: event.target.value })}>{!connectionStates.includes(connection.state) && <option value={connection.state} disabled>Unsupported: {connection.state}</option>}{connectionStates.map((value) => <option key={value} value={value}>{value}</option>)}</select><label htmlFor={`connection-context-${connection.connection_id}`}>Context</label><textarea id={`connection-context-${connection.connection_id}`} rows={2} value={connection.context} onChange={(event) => onChange({ ...connection, context: event.target.value })} aria-invalid={!!contextError} aria-describedby={contextError ? `connection-context-${connection.connection_id}-error` : undefined} />{contextError && <span id={`connection-context-${connection.connection_id}-error`} className="error" role="alert">{contextError}</span>}<button type="button" onClick={onRemove}>Remove connection {connection.connection_id}</button></div>; }
+function RemovalResolution({ campaignId, revision, impact, resolutions, setResolutions, errors, disabled }: { campaignId: string; revision: RevisionRef; impact: EditorRemovalImpact; resolutions: Array<Record<string, unknown>>; setResolutions: (value: Array<Record<string, unknown>>) => void; errors: Record<string, string>; disabled: boolean }) { return <section aria-labelledby="removal-impact-heading" className="editor-impact"><h3 id="removal-impact-heading">Removal impact and resolutions</h3><p>{impact.incoming_references.length} incoming typed connection(s) require a decision.</p>{impact.incoming_references.map((reference) => { const current = resolutions.find((item) => item.reference_id === reference.reference_id); const action = current?.action === "accept_unresolved" && !reference.permitted_unresolved ? "" : String(current?.action ?? ""); const error = errors[`resolution-${reference.reference_id}`]; return <fieldset key={reference.reference_id} disabled={disabled}><legend>{reference.source_record_id} · {reference.relationship}</legend><label htmlFor={`resolution-${reference.reference_id}`}>Resolution for {reference.reference_id}</label><select id={`resolution-${reference.reference_id}`} required value={action} aria-invalid={!!error} aria-describedby={error ? `resolution-${reference.reference_id}-error` : undefined} onChange={(event) => setResolutions(resolutions.map((item) => item.reference_id === reference.reference_id ? { reference_id: reference.reference_id, action: event.target.value, replacement_target_record_id: event.target.value === "redirect" ? "" : null } : item))}><option value="" disabled>Choose a resolution</option><option value="remove_reference">Remove reference</option><option value="redirect">Redirect reference</option>{reference.permitted_unresolved && <option value="accept_unresolved">Accept unresolved</option>}</select>{error && <span id={`resolution-${reference.reference_id}-error`} className="error" role="alert">{error}</span>}{action === "redirect" && <RecordPicker campaignId={campaignId} revision={revision} label={`Replacement target for ${reference.reference_id}`} value={String(current?.replacement_target_record_id ?? "")} onChange={(target) => setResolutions(resolutions.map((item) => item.reference_id === reference.reference_id ? { ...item, replacement_target_record_id: target } : item))} />}</fieldset>; })}</section>; }
+function ProposalReview({ proposal, priorRevision, decisionAvailable, approve, reject, startCorrection, correctionMode, busy }: { proposal: EditorProposal; priorRevision: RevisionRef | null; decisionAvailable: boolean; approve: () => void; reject: () => void; startCorrection: () => void; correctionMode: boolean; busy: boolean }) {
+  const correctionOf = correctionReference(proposal);
+  const status = (proposal.core_proposal as { proposal?: { status?: string } } | undefined)?.proposal?.status ?? "needs_review";
+  const canDecide = status === "needs_review" && decisionAvailable;
+  const canCorrect = status === "needs_review" || status === "conflict";
+  const sourceChanges = proposal.diff.source_changes ?? [];
+  const hasWarnings = proposal.validation.findings.some((finding) => finding.severity === "warning");
+  return <section className="editor-review" aria-labelledby="editor-review-heading"><h3 id="editor-review-heading">Exact proposal review</h3><p><strong>{proposal.diff.summary}</strong> · proposal <code>{proposal.proposal_id}</code>, version {proposal.proposal_version}</p>{correctionOf && <p>Correction of {priorRevision ? <a href={editorProposalVersionLocation(correctionOf.proposal_id, correctionOf.proposal_version, priorRevision.revision_id)}>proposal <code>{correctionOf.proposal_id}</code>, version {correctionOf.proposal_version}</a> : <>proposal <code>{correctionOf.proposal_id}</code>, version {correctionOf.proposal_version}</>}.</p>}<p>Base revision <code>{proposal.base_revision.revision_id}</code> · diff <code>{proposal.diff.diff_digest}</code></p><p>Status: <strong>{status}</strong>{status === "needs_review" && !decisionAvailable && " · This proposal is stale; correction/rebase is required."}{!canDecide && !canCorrect && " · This proposal is no longer actionable."}{status === "conflict" && " · Approval and rejection are unavailable; correction/rebase remains available."}</p><p>Validation: <strong>{hasWarnings ? "passed with warnings" : proposal.validation.status}</strong> ({proposal.validation.error_count} errors){hasWarnings && " · Approval is disabled until the warning is removed."}</p>{correctionMode && <p role="status">Editing a correction. The original proposal remains unchanged until the correction is submitted.</p>}{proposal.validation.findings.length > 0 && <ul>{proposal.validation.findings.map((finding) => <li key={finding.finding_id}>{finding.severity}: {finding.code} at {finding.location}</li>)}</ul>}{sourceChanges.length > 0 && <section className="diff source-diff" role="region" aria-labelledby="editor-source-diff-heading"><h4 id="editor-source-diff-heading">Complete source before/after</h4>{sourceChanges.map((change) => <article key={change.change_id} aria-labelledby={`editor-source-change-${change.change_id}`}><h5 id={`editor-source-change-${change.change_id}`}>{change.change_type} · {change.subject_record_id}</h5><div><h6>Before source</h6><pre>{change.before_source ?? "(record did not exist)"}</pre></div><div><h6>After source</h6><pre>{change.after_source ?? "(record removed)"}</pre></div></article>)}</section>}<section className="diff" role="region" aria-labelledby="editor-diff-heading"><h4 id="editor-diff-heading">Exact field, section, and connection change cards</h4>{proposal.diff.cards.map((card, index) => <article key={String(card.change_id ?? index)} aria-labelledby={`editor-card-${index}`}><h5 id={`editor-card-${index}`}>{String(card.kind ?? "Change")} · {String(card.subject_record_id)}</h5><pre>{JSON.stringify(card, null, 2)}</pre></article>)}</section><div className="actions"><button type="button" disabled={busy || correctionMode || !canDecide} onClick={reject}>Reject exact proposal</button><button type="button" disabled={busy || correctionMode || !canCorrect} onClick={startCorrection}>Create correction/rebase</button><button type="button" className="primary" disabled={busy || correctionMode || !canDecide || proposal.validation.status !== "passed" || proposal.validation.error_count !== 0 || proposal.validation.findings.length !== 0} onClick={approve}>Approve and publish exact proposal</button></div></section>;
+}
