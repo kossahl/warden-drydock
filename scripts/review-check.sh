@@ -12,18 +12,45 @@ python_image="python:3.11-bookworm@sha256:35d3a4a3d5e42e02ab916d44513a050689f12c
 compatibility_image="python:3.13-bookworm@sha256:933b46a028fd786c9c3d426ebabc237e29a15912231ea8de576e95f0e4f41a4c"
 node_image="node:24.11.1-bookworm@sha256:9a2ed90cd91b1f3412affe080b62e69b057ba8661d9844e143a6bbd76a23260f"
 postgres_image="postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3"
-git_mount_args=()
-if [ -f "$root_dir/.git" ]; then
-  git_common_dir=$(realpath "$(git -C "$root_dir" rev-parse --git-common-dir)")
-  git_worktree_dir=$(realpath "$(git -C "$root_dir" rev-parse --git-dir)")
-  git_mount_args=(-v "$git_common_dir:$git_common_dir:ro" -v "$git_worktree_dir:$git_worktree_dir:ro")
-fi
+
+source_state() {
+  git -C "$root_dir" rev-parse HEAD
+  git -C "$root_dir" diff --cached --binary | sha256sum
+  git -C "$root_dir" diff --binary | sha256sum
+  git -C "$root_dir" status --porcelain=v1 --untracked-files=all
+}
+
+initial_source_state=$(source_state)
+snapshot_dir=$(mktemp -d)
 
 cleanup() {
   docker rm -f "$db_container" >/dev/null 2>&1 || true
   docker network rm "$network_name" >/dev/null 2>&1 || true
+  rm -rf -- "$snapshot_dir"
 }
 trap cleanup EXIT
+
+# Snapshot HEAD plus tracked index/worktree changes. Untracked files are not
+# part of the tested checkout, and every container receives this same snapshot.
+git -C "$root_dir" archive --format=tar HEAD | tar -xf - -C "$snapshot_dir"
+git -C "$root_dir" diff --binary HEAD -- \
+  | git -C "$snapshot_dir" apply --allow-empty --whitespace=nowarn -
+git_mount_args=()
+if [ -f "$root_dir/.git" ]; then
+  cp -- "$root_dir/.git" "$snapshot_dir/.git"
+  git_common_dir=$(realpath "$(git -C "$root_dir" rev-parse --git-common-dir)")
+  git_worktree_dir=$(realpath "$(git -C "$root_dir" rev-parse --git-dir)")
+  git_mount_args=(-v "$git_common_dir:$git_common_dir:ro" -v "$git_worktree_dir:$git_worktree_dir:ro")
+elif [ -d "$root_dir/.git" ]; then
+  printf 'gitdir: %s\n' "$root_dir/.git" > "$snapshot_dir/.git"
+  git_mount_args=(-v "$root_dir/.git:$root_dir/.git:ro")
+fi
+
+current_source_state=$(source_state)
+if [ "$current_source_state" != "$initial_source_state" ]; then
+  echo "The checkout changed while its test snapshot was being created." >&2
+  exit 1
+fi
 
 check_whitespace() {
   local base_ref="${DRYDOCK_CI_BASE_REF:-}"
@@ -67,7 +94,7 @@ docker run --rm --network "$network_name" \
   --sysctl net.ipv6.conf.default.disable_ipv6=1 \
   -e "DRYDOCK_TEST_DATABASE_URL=postgresql://drydock:drydock@${db_container}:5432/drydock" \
   "${git_mount_args[@]}" \
-  -v "$root_dir:/source:ro" --tmpfs /repo:rw,exec,nosuid -w /repo "$python_image" bash -lc '
+  -v "$snapshot_dir:/source:ro" --tmpfs /repo:rw,exec,nosuid -w /repo "$python_image" bash -lc '
     set -Eeuo pipefail
     cp -a /source/. /repo/
     git config --global --add safe.directory /repo
@@ -101,7 +128,7 @@ docker run --rm --network "$network_name" \
 
 docker run --rm \
   "${git_mount_args[@]}" \
-  -v "$root_dir:/source:ro" --tmpfs /repo:rw,exec,nosuid -w /repo "$compatibility_image" bash -lc '
+  -v "$snapshot_dir:/source:ro" --tmpfs /repo:rw,exec,nosuid -w /repo "$compatibility_image" bash -lc '
     set -Eeuo pipefail
     cp -a /source/. /repo/
     git config --global --add safe.directory /repo
@@ -111,7 +138,7 @@ docker run --rm \
   '
 
 docker run --rm \
-  -v "$root_dir:/source:ro" --tmpfs /workspace:rw,exec,nosuid -w /workspace \
+  -v "$snapshot_dir:/source:ro" --tmpfs /workspace:rw,exec,nosuid -w /workspace \
   "$node_image" bash -lc '
     set -Eeuo pipefail
     cp -a /source/. /workspace/
@@ -131,4 +158,9 @@ docker run --rm \
   '
 
 check_whitespace
+final_source_state=$(source_state)
+if [ "$final_source_state" != "$initial_source_state" ]; then
+  echo "The checkout changed while review checks were running." >&2
+  exit 1
+fi
 echo "review checks passed"
