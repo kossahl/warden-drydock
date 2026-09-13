@@ -157,11 +157,14 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
 def document_digest(value: Mapping[str, Any]) -> str:
     """Digest the typed document, excluding its self-referential digest."""
     sections = [dict(item, body=normalize_text(item["body"])) for item in value["sections"]]
+    projection = {key: value[key] for key in (
+        "record_id", "record_type", "displayed_name", "status", "authority",
+        "visibility", "fields", "connections",
+    )}
+    projection["ownership"] = value.get("ownership", "campaign")
+    projection["sections"] = sections
     return hashlib.sha256(json.dumps(
-        {key: value[key] for key in (
-            "record_id", "record_type", "displayed_name", "ownership", "status", "authority",
-            "visibility", "fields", "connections",
-        )} | {"sections": sections}, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        projection, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     ).encode("utf-8")).hexdigest()
 
 
