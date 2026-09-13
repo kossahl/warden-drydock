@@ -242,6 +242,8 @@ class RuntimeTests(unittest.TestCase):
         health = (ROOT / "warden_drydock" / "hosted" / "operations" / "health.py").read_text(encoding="utf-8")
         self.assertIn("version='0007'", health)
         self.assertNotIn("version='0002'", health)
+        self.assertIn("version='0011'", health)
+        self.assertIn("version='0012'", health)
 
     def test_v2_migration_resets_only_transport_receipts(self) -> None:
         migration = (ROOT / "warden_drydock" / "hosted" / "migrations" / "0007_http_v2_receipt_reset.sql").read_text(encoding="utf-8")

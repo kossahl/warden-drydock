@@ -345,6 +345,8 @@ class AtlasProjectionTests(AtlasFixture):
 
         searched = service.record_library(replace(query, query="äTHER"))
         self.assertEqual(("record-010",), tuple(item.record_id for item in searched.items))
+        searched_by_type = service.record_library(replace(query, query="npc"))
+        self.assertEqual(60, searched_by_type.total)
         canon = service.record_library(
             replace(query, authorities=(Authority.CANON,), statuses=("canon",))
         )

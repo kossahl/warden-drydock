@@ -459,7 +459,8 @@ class AtlasQueryService:
                 or any(
                     normalized_query in value.casefold()
                     for value in (
-                        record.record_id, record.name, record.summary, record.content
+                        record.record_id, record.record_type, record.name,
+                        record.summary, record.content,
                     )
                 )
             )
