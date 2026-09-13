@@ -475,7 +475,8 @@ Keep this record.
             parse_document(source, "record-main", "npc"), candidate,
         )
         self.assertIn(
-            {"property": "fields.score", "before": 1.5, "after": 1},
+            {"property": "fields.score", "before": 1.5, "after": 1,
+             "before_present": True, "after_present": True},
             property_changes,
         )
         self.assertIn(
