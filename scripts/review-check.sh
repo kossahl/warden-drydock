@@ -20,6 +20,17 @@ source_state() {
   git -C "$root_dir" status --porcelain=v1 --untracked-files=all
 }
 
+hidden_worktree_paths=0
+while IFS= read -r -d '' entry; do
+  case "${entry:0:1}" in
+    h|S) hidden_worktree_paths=$((hidden_worktree_paths + 1)) ;;
+  esac
+done < <(git -C "$root_dir" ls-files -v -z)
+if [ "$hidden_worktree_paths" -gt 0 ]; then
+  echo "Cannot test a checkout with assume-unchanged or skip-worktree paths ($hidden_worktree_paths found)." >&2
+  exit 1
+fi
+
 initial_source_state=$(source_state)
 snapshot_dir=$(mktemp -d)
 head_index=$(mktemp)
