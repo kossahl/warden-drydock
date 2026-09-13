@@ -52,6 +52,8 @@ else
   origin_path=${origin_remote#*@}
   origin_path=${origin_path#*:}
 fi
+origin_path=${origin_path%%\#*}
+origin_path=${origin_path%%\?*}
 origin_path=${origin_path%/}
 origin_path=${origin_path%.git}
 origin_repo=${origin_path##*/}
@@ -121,10 +123,7 @@ docker run --rm --network "$network_name" \
     git config --global --add safe.directory /repo
     apt-get update -qq
     apt-get install -y -qq --no-install-recommends postgresql-client
-    python -m pip install --disable-pip-version-check --upgrade pip ".[dev]"
-    mkdir -p /tmp/drydock-python-wheels
-    python -m pip download --disable-pip-version-check -q --timeout 15 --retries 5 --only-binary=:all: "psycopg[binary]" -d /tmp/drydock-python-wheels
-    python -m pip install --disable-pip-version-check -q --no-deps /tmp/drydock-python-wheels/*
+    python -m pip install --disable-pip-version-check --upgrade pip ".[dev,postgres]"
     DATABASE_URL="$DRYDOCK_TEST_DATABASE_URL" DRYDOCK_MIGRATIONS=/repo/warden_drydock/hosted/migrations python -m warden_drydock.hosted.operations.migrate
     python -m unittest discover -s tests -v
     python -m warden_drydock --help
