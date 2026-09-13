@@ -77,7 +77,7 @@ export function newAdapterRecord(type = "npc", recordId = "new-record", name = "
   const spec = definitions[type];
   if (!spec) throw new Error(`Missing adapter record definition for ${type}`);
   const players = spec.metadata.visibility === "players";
-  return { record_id: recordId, record_type: type, displayed_name: name,
+  return { record_id: recordId, record_type: type, displayed_name: name, ownership: "campaign",
     status: spec.metadata.status, authority: "preparation",
     visibility: players ? { audience: "players", warden_only: false } : { audience: "warden", warden_only: true },
     fields: spec.fields.map((field_id) => ({ field_id, value: field_id === "ownership" ? "campaign" : spec.fieldDefaults[field_id] })),
