@@ -8,7 +8,7 @@ const currentRevision: RevisionRef = { revision_id: "revision_three", ordinal: 3
 const laterRevision: RevisionRef = { revision_id: "revision_four", ordinal: 4, tree_digest: "d".repeat(64) };
 
 const originalRecord: EditorRecord = {
-  record_id: "record-one", record_type: "npc", displayed_name: "Station Keeper", status: "canon", authority: "canon",
+  record_id: "record-one", record_type: "npc", displayed_name: "Station Keeper", ownership: "campaign", status: "canon", authority: "canon",
   visibility: { audience: "warden", warden_only: true }, fields: [{ field_id: "ownership", value: "campaign" }],
   sections: [{ section_id: "summary", body: "Keeps the synthetic station." }], connections: [], content_digest: "a".repeat(64),
 };
