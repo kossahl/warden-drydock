@@ -1,0 +1,49 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "incomplete_removal_resolution",
+  "expected_path": "resolutions",
+  "description": "The removal impact contains a required typed reference but the proposal supplies no resolution.",
+  "impact": {
+    "impact_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "required_reference_id": "reference_station_company",
+    "permitted_unresolved": false
+  },
+  "instance": {
+    "contract_name": "editor_record_remove_request",
+    "contract_version": 1,
+    "operation_request": {
+      "contract_name": "editor_operation_request",
+      "contract_version": 1,
+      "request_id": "request_incomplete_remove",
+      "operation": "editor_record_remove",
+      "idempotency_key": "idem_incomplete_remove",
+      "payload_digest": "a4e96a9ffba5df142c2568e4ba3cc40edbb2997fffd0fb8e1829652e0ae392a7",
+      "expected_revision": "revision_12",
+      "expected_editor_workflow_version": 8,
+      "subject_id": "record-company"
+    },
+    "binding": {
+      "campaign_id": "campaign_alpha",
+      "base_revision": {
+        "revision_id": "revision_12",
+        "ordinal": 12,
+        "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "record_id": "record-company",
+      "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expected_editor_workflow_version": 8
+    },
+    "impact_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "impact_binding": {
+      "binding": {
+        "campaign_id": "campaign_alpha",
+        "base_revision": {"revision_id": "revision_12", "ordinal": 12, "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "record_id": "record-company",
+        "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "expected_editor_workflow_version": 8
+      },
+      "impact_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "resolutions": []
+  }
+}

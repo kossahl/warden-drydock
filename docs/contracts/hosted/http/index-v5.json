@@ -1,0 +1,12 @@
+{
+  "contract_name": "hosted_http_contract_packages",
+  "contract_version": 5,
+  "previous_registry": "index.json",
+  "packages": [
+    {"name": "hosted_http_v2", "index": "v2/index.json"},
+    {"name": "hosted_atlas_http_v2", "index": "atlas/v2/index.json"},
+    {"name": "hosted_live_http_v1", "index": "live/v1/index.json"},
+    {"name": "hosted_record_editor_http_v1", "index": "editor/v1/index.json"}
+  ],
+  "packages_semantics": "packages is the complete deterministic set of active HTTP contract packages. Packages retained at stable paths but absent from this array are historical and are not active runtime contracts."
+}

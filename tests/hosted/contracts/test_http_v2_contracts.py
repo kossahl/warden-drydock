@@ -45,17 +45,20 @@ class HostedHttpV2ContractTests(unittest.TestCase):
         cls.routes = json.loads((V2_ROOT / cls.index["routes"]).read_text(encoding="utf-8"))
 
     def test_active_package_index_is_explicit_and_complete(self) -> None:
-        aggregate = json.loads((HTTP_ROOT / "index.json").read_text(encoding="utf-8"))
-        self.assertEqual(4, aggregate["contract_version"])
+        aggregate = json.loads((HTTP_ROOT / "index-v5.json").read_text(encoding="utf-8"))
+        self.assertEqual(5, aggregate["contract_version"])
         self.assertEqual(
-            ["hosted_http_v2", "hosted_atlas_http_v2", "hosted_live_http_v1"],
+            ["hosted_http_v2", "hosted_atlas_http_v2", "hosted_live_http_v1", "hosted_record_editor_http_v1"],
             [item["name"] for item in aggregate["packages"]],
         )
         self.assertEqual(
-            ["v2/index.json", "atlas/v2/index.json", "live/v1/index.json"],
+            ["v2/index.json", "atlas/v2/index.json", "live/v1/index.json", "editor/v1/index.json"],
             [item["index"] for item in aggregate["packages"]],
         )
         self.assertIn("active", aggregate["packages_semantics"])
+        legacy = json.loads((HTTP_ROOT / "index.json").read_text(encoding="utf-8"))
+        self.assertEqual(4, legacy["contract_version"])
+        self.assertNotIn("hosted_record_editor_http_v1", [item["name"] for item in legacy["packages"]])
         self.assertNotIn("historical_packages", aggregate)
         self.assertEqual(
             {"index.json", "http.schema.json", "routes.json", "examples.json", "semantic-invariants.json"},

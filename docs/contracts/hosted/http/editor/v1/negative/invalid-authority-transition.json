@@ -1,0 +1,48 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "invalid_authority_transition",
+  "expected_path": "candidate.authority",
+  "description": "The candidate claims canon authority while its status remains review and no explicit approved transition exists.",
+  "instance": {
+    "contract_name": "editor_record_edit_request",
+    "contract_version": 1,
+    "operation_request": {
+      "contract_name": "editor_operation_request",
+      "contract_version": 1,
+      "request_id": "request_bad_authority",
+      "operation": "editor_record_edit",
+      "idempotency_key": "idem_bad_authority",
+      "payload_digest": "cace671e3abd34c01879fbf47fab37337d57ff96328ff98bd2b5fdf4db450886",
+      "expected_revision": "revision_12",
+      "expected_editor_workflow_version": 7,
+      "subject_id": "record-station"
+    },
+    "binding": {
+      "campaign_id": "campaign_alpha",
+      "base_revision": {
+        "revision_id": "revision_12",
+        "ordinal": 12,
+        "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "record_id": "record-station",
+      "record_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expected_editor_workflow_version": 7
+    },
+    "candidate": {
+      "record_id": "record-station",
+      "record_type": "location",
+      "ownership": "campaign",
+      "displayed_name": "Station",
+      "status": "review",
+      "authority": "canon",
+      "visibility": {
+        "audience": "warden",
+        "warden_only": true
+      },
+      "fields": [],
+      "sections": [],
+      "connections": [],
+      "content_digest": "de13098ce2dea4211c96c249689c3fd039f972ae7fc142fe504ed716a7e9ecac"
+    }
+  }
+}
