@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Run the CI gates in pinned disposable environments. This keeps results
-# independent of the agent host's Node, npm, Python packages, and database.
+# Run the CI gates in isolated disposable environments with pinned base images.
+# Each container copies from a read-only source mount into a private workspace,
+# so generated artifacts never alter the caller's checkout.
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 project_name="drydock-review-${RANDOM}-${BASHPID}"
 db_container="${project_name}-postgres"
 network_name="${project_name}-network"
 python_image="python:3.11-bookworm@sha256:35d3a4a3d5e42e02ab916d44513a050689f12c0533d45598d229672503fe77ca"
 compatibility_image="python:3.13-bookworm@sha256:933b46a028fd786c9c3d426ebabc237e29a15912231ea8de576e95f0e4f41a4c"
-node_image="node:24.11.1-bookworm"
+node_image="node:24.11.1-bookworm@sha256:9a2ed90cd91b1f3412affe080b62e69b057ba8661d9844e143a6bbd76a23260f"
+postgres_image="postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3"
 git_mount_args=()
 if [ -f "$root_dir/.git" ]; then
   git_common_dir=$(realpath "$(git -C "$root_dir" rev-parse --git-common-dir)")
@@ -53,7 +55,7 @@ docker run -d --rm --name "$db_container" \
   --sysctl net.ipv6.conf.default.disable_ipv6=1 \
   --network "$network_name" \
   -e POSTGRES_USER=drydock -e POSTGRES_PASSWORD=drydock -e POSTGRES_DB=drydock \
-  postgres:17.6-bookworm >/dev/null
+  "$postgres_image" >/dev/null
 for _ in $(seq 1 60); do
   if docker exec "$db_container" pg_isready -U drydock >/dev/null 2>&1; then break; fi
   sleep 1
@@ -65,8 +67,9 @@ docker run --rm --network "$network_name" \
   --sysctl net.ipv6.conf.default.disable_ipv6=1 \
   -e "DRYDOCK_TEST_DATABASE_URL=postgresql://drydock:drydock@${db_container}:5432/drydock" \
   "${git_mount_args[@]}" \
-  -v "$root_dir:/repo" -w /repo "$python_image" bash -lc '
+  -v "$root_dir:/source:ro" --tmpfs /repo:rw,exec,nosuid -w /repo "$python_image" bash -lc '
     set -Eeuo pipefail
+    cp -a /source/. /repo/
     git config --global --add safe.directory /repo
     apt-get update -qq
     apt-get install -y -qq --no-install-recommends postgresql-client
@@ -77,6 +80,7 @@ docker run --rm --network "$network_name" \
     DATABASE_URL="$DRYDOCK_TEST_DATABASE_URL" DRYDOCK_MIGRATIONS=/repo/warden_drydock/hosted/migrations python -m warden_drydock.hosted.operations.migrate
     python -m unittest discover -s tests -v
     python -m warden_drydock --help
+    rm -rf dist
     python -m build
 
     onboarding_root="$(mktemp -d)"
@@ -93,15 +97,13 @@ docker run --rm --network "$network_name" \
     "$environment/bin/python" -m warden_drydock bootstrap "$campaign" --adapter mothership --name "CI Onboarding"
     "$environment/bin/python" "$campaign/scripts/drydock.py" validate
     test ! -d "$campaign/.git"
-
-    cd /repo
-    python -m unittest tests.hosted.proposals.test_postgres_proposals tests.hosted.http.test_postgres_http
   '
 
 docker run --rm \
   "${git_mount_args[@]}" \
-  -v "$root_dir:/repo" -w /repo "$compatibility_image" bash -lc '
+  -v "$root_dir:/source:ro" --tmpfs /repo:rw,exec,nosuid -w /repo "$compatibility_image" bash -lc '
     set -Eeuo pipefail
+    cp -a /source/. /repo/
     git config --global --add safe.directory /repo
     python -m pip install --disable-pip-version-check --upgrade pip ".[dev]"
     python -m unittest discover -s tests -v
@@ -109,9 +111,11 @@ docker run --rm \
   '
 
 docker run --rm \
-  -v "$root_dir:/workspace" -w /workspace/web \
+  -v "$root_dir:/source:ro" --tmpfs /workspace:rw,exec,nosuid -w /workspace \
   "$node_image" bash -lc '
     set -Eeuo pipefail
+    cp -a /source/. /workspace/
+    cd /workspace/web
     corepack enable
     corepack prepare npm@11.6.2 --activate
     test "$(node --version)" = "v24.11.1"
