@@ -101,7 +101,6 @@ class ComposePolicyTests(unittest.TestCase):
         dockerfile = (ROOT / "docker" / "app.Dockerfile").read_text(encoding="utf-8")
         self.assertIn("COPY warden_drydock/data/ /build/warden_drydock/data/", dockerfile)
 
-
 class RuntimeTests(unittest.TestCase):
     def test_versions(self) -> None:
         self.assertEqual((28, 5, 2), parse_version("Docker version 28.5.2"))
