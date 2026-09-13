@@ -24,12 +24,14 @@ initial_source_state=$(source_state)
 snapshot_dir=$(mktemp -d)
 head_index=$(mktemp)
 rm -f -- "$head_index"
+template_dir=$(mktemp -d)
 
 cleanup() {
   docker rm -f "$db_container" >/dev/null 2>&1 || true
   docker network rm "$network_name" >/dev/null 2>&1 || true
   rm -rf -- "$snapshot_dir"
   rm -f -- "$head_index"
+  rm -rf -- "$template_dir"
 }
 trap cleanup EXIT
 
@@ -64,11 +66,14 @@ if [ -z "$origin_owner" ] || [ -z "$origin_repo" ] || [ "$origin_owner" = "$orig
   exit 1
 fi
 origin_url="https://github.com/${origin_owner}/${origin_repo}.git"
-git -C "$snapshot_dir" init --quiet
-git -C "$snapshot_dir" remote add origin "$origin_url"
+GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+  git -C "$snapshot_dir" init --quiet --template="$template_dir"
+GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+  git -C "$snapshot_dir" remote add origin "$origin_url"
 # The snapshot contains only archived or tracked-diff content, so force-add
 # keeps force-tracked ignored paths in the index without admitting untracked files.
-git -C "$snapshot_dir" add --all --force
+GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+  git -C "$snapshot_dir" add --all --force
 
 current_source_state=$(source_state)
 if [ "$current_source_state" != "$initial_source_state" ]; then
