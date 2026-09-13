@@ -130,6 +130,20 @@ class AtlasWorkflowCollectionTests(unittest.TestCase):
             caught.exception.status, caught.exception.payload["error"]["category"],
         ))
 
+    def test_proposal_collection_excludes_editor_workflow_rows(self) -> None:
+        change = ExactTextChange("change_editor", "campaign-main", self.record_digest, "replacement")
+        editor = ProposalVersion(
+            "proposal_editor", 1, "campaign_workflow", self.viewed["revision_id"],
+            (change,), _diff_digest((change,)), _payload_digest((change,)),
+            editor_metadata={"contract_name": "editor_proposal_view"},
+        )
+        self.app.proposal_repository.add(editor)
+
+        status, payload = self._query(self.app.atlas_proposal_collection)
+
+        self.assertEqual(200, status)
+        self.assertEqual([], payload["items"])
+
     def test_corrupt_generation_repository_binding_is_sanitized_as_source_conflict(self) -> None:
         def corrupt_rows(*_args):
             raise ValueError("unsafe_binding")

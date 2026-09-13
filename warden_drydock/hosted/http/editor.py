@@ -90,7 +90,7 @@ def _typed_equal(left: Any, right: Any) -> bool:
 
 def _document(value: Mapping[str, Any]) -> dict[str, Any]:
     required = {"record_id", "record_type", "displayed_name", "status", "authority", "visibility", "fields", "sections", "connections", "content_digest"}
-    if set(value) != required:
+    if set(value) not in (required, required | {"ownership"}) or value.get("ownership", "campaign") != "campaign":
         raise ValueError("invalid_record_document")
     record_id = _id(value["record_id"])
     record_type = _id(value["record_type"])
@@ -147,7 +147,7 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
         ):
             raise ValueError("invalid_connection_context")
     if not isinstance(value["content_digest"], str) or not re.fullmatch(r"[a-f0-9]{64}", value["content_digest"]): raise ValueError("invalid_content_digest")
-    normalized = dict(value, fields=fields, sections=sections, connections=connections,
+    normalized = dict(value, ownership="campaign", fields=fields, sections=sections, connections=connections,
                       visibility=_visibility(value["visibility"]), authority=authority_for(status))
     if document_digest(normalized) != value["content_digest"]:
         raise ValueError("content_digest_mismatch")
@@ -157,11 +157,14 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
 def document_digest(value: Mapping[str, Any]) -> str:
     """Digest the typed document, excluding its self-referential digest."""
     sections = [dict(item, body=normalize_text(item["body"])) for item in value["sections"]]
+    projection = {key: value[key] for key in (
+        "record_id", "record_type", "displayed_name", "status", "authority",
+        "visibility", "fields", "connections",
+    )}
+    projection["ownership"] = value.get("ownership", "campaign")
+    projection["sections"] = sections
     return hashlib.sha256(json.dumps(
-        {key: value[key] for key in (
-            "record_id", "record_type", "displayed_name", "status", "authority",
-            "visibility", "fields", "connections",
-        )} | {"sections": sections}, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        projection, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     ).encode("utf-8")).hexdigest()
 
 
@@ -306,7 +309,7 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
     raw_warden_only = metadata.get("warden_only")
     warden_only = (raw_warden_only.lower() == "true") if isinstance(raw_warden_only, str) else (raw_warden_only if isinstance(raw_warden_only, bool) else audience == "warden")
     visibility = {"audience": audience, "warden_only": warden_only}
-    value = {"record_id": record_id, "record_type": record_type or metadata.get("type", "unknown"), "displayed_name": metadata.get("name", record_id), "status": status, "authority": authority_for(status), "visibility": visibility, "fields": fields, "sections": sections, "connections": conn, "content_digest": "0" * 64}
+    value = {"record_id": record_id, "record_type": record_type or metadata.get("type", "unknown"), "displayed_name": metadata.get("name", record_id), "ownership": "campaign", "status": status, "authority": authority_for(status), "visibility": visibility, "fields": fields, "sections": sections, "connections": conn, "content_digest": "0" * 64}
     value["content_digest"] = document_digest(value)
     return _document(value)
 

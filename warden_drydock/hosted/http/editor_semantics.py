@@ -51,7 +51,8 @@ def _property_changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> li
     result: list[dict[str, Any]] = []
     for name in ("displayed_name", "status", "authority", "visibility"):
         if not _typed_equal(before[name], after[name]):
-            result.append({"property": name, "before": before[name], "after": after[name]})
+            result.append({"property": name, "before": before[name], "after": after[name],
+                           "before_present": True, "after_present": True})
     for collection, identifier, value_key in (("fields", "field_id", "value"), ("sections", "section_id", "body")):
         old = {item[identifier]: item for item in before[collection]}
         new = {item[identifier]: item for item in after[collection]}
@@ -59,7 +60,8 @@ def _property_changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> li
             old_value = old.get(member_id, {}).get(value_key)
             new_value = new.get(member_id, {}).get(value_key)
             if not _typed_equal(old_value, new_value):
-                result.append({"property": f"{collection}.{member_id}", "before": old_value, "after": new_value})
+                result.append({"property": f"{collection}.{member_id}", "before": old_value, "after": new_value,
+                               "before_present": member_id in old, "after_present": member_id in new})
     return result
 
 

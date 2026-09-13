@@ -15,6 +15,7 @@ from unittest import mock
 from warden_drydock.hosted.http.application import HTTPFailure, SliceApplication, SyntheticProvider
 from warden_drydock.hosted.ai.provider import OpenAIResponsesAdapter
 from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input, text_digest
+from warden_drydock.hosted.http.editor import document_digest
 from warden_drydock.hosted.proposals.service import ProposalStatus
 from warden_drydock.hosted.engine import Status
 from warden_drydock.hosted.operations.server import Handler
@@ -651,6 +652,108 @@ class SliceApplicationTests(unittest.TestCase):
         self.assertNotEqual(
             proposal["base_revision"], restarted.workflow.head("campaign_alpha")
         )
+
+    def test_restart_rebuilds_unprojected_pending_editor_snapshot_and_finalizes_once(self) -> None:
+        self.campaign(key="idem_editor_campaign")
+        revision = self.app.workflow.head("campaign_alpha")
+        viewed = self.app.editor_record_read(
+            "campaign_alpha", revision, "campaign-main"
+        )[1]
+        candidate = deepcopy(viewed["record"])
+        candidate["displayed_name"] = "Edited Campaign"
+        candidate["content_digest"] = document_digest(candidate)
+        operation = {
+            "contract_name": "editor_operation_request", "contract_version": 1,
+            "request_id": "request_editor_edit", "operation": "editor_record_edit",
+            "idempotency_key": "idem_editor_edit", "payload_digest": "0" * 64,
+            "expected_revision": revision, "expected_editor_workflow_version": 1,
+            "subject_id": "campaign-main",
+        }
+        edit = {
+            "contract_name": "editor_record_edit_request", "contract_version": 1,
+            "operation_request": operation,
+            "binding": {
+                "campaign_id": "campaign_alpha", "base_revision": viewed["viewed_revision"],
+                "record_id": "campaign-main", "record_digest": viewed["record"]["content_digest"],
+                "expected_editor_workflow_version": 1,
+            },
+            "candidate": candidate,
+        }
+        operation["payload_digest"] = canonical_digest(request_digest_input(edit))
+        _, proposal = self.app.editor_record_edit(
+            "campaign_alpha", revision, "campaign-main", edit
+        )
+        approval = {
+            "contract_name": "editor_proposal_approval_request", "contract_version": 1,
+            "proposal": {
+                "proposal_id": proposal["proposal_id"],
+                "proposal_version": proposal["proposal_version"],
+            },
+            "proposal_status": "needs_review", "mutation_kind": proposal["mutation_kind"],
+            "source_revision": proposal["source_revision"], "base_revision": proposal["base_revision"],
+            "expected_campaign_head": proposal["expected_campaign_head"],
+            "expected_editor_workflow_version": proposal["editor_workflow_version"],
+            "proposal_payload_digest": proposal["proposal_payload_digest"],
+            "diff_digest": proposal["diff"]["diff_digest"], "diff": proposal["diff"],
+            "record_bindings": proposal["record_bindings"], "impact_digest": proposal["impact_digest"],
+            "impact_binding": proposal["impact_binding"], "resolutions": proposal["resolutions"],
+            "validation_status": proposal["validation"]["status"],
+            "validation_digest": proposal["validation"]["validation_digest"],
+            "affected_record_count": proposal["diff"]["affected_record_count"],
+            "confirmed_change_ids": [card["change_id"] for card in proposal["diff"]["cards"]],
+            "confirmed_authority_change_ids": [item["change_id"] for item in proposal["diff"]["authority_changes"]],
+            "confirmed_visibility_change_ids": [item["change_id"] for item in proposal["diff"]["visibility_changes"]],
+            "authority_outcome": proposal["authority_outcome"],
+            "visibility_outcome": proposal["visibility_outcome"], "warden_confirmed": True,
+        }
+        approval["operation_request"] = {
+            "contract_name": "editor_operation_request", "contract_version": 1,
+            "request_id": "request_editor_approve", "operation": "editor_proposal_approve",
+            "idempotency_key": "idem_editor_approve", "expected_revision": revision,
+            "expected_editor_workflow_version": proposal["editor_workflow_version"],
+            "subject_id": proposal["proposal_id"], "intent_digest": proposal["diff"]["diff_digest"],
+            "payload_digest": "0" * 64,
+        }
+        approval["operation_request"]["payload_digest"] = canonical_digest(
+            request_digest_input(approval)
+        )
+        with mock.patch.object(
+            self.app.atlas_rebuilder, "rebuild_pending", side_effect=SystemExit("crash")
+        ):
+            with self.assertRaises(SystemExit):
+                self.app.editor_proposal_approve(
+                    proposal["proposal_id"], proposal["proposal_version"], approval
+                )
+
+        restarted = SliceApplication(
+            Path(self.temporary.name), provider=self.provider,
+            receipts=self.app.receipts, workflow_repository=self.app.workflow,
+            proposal_repository=self.app.proposal_repository,
+            atlas_repository=self.app.atlas_repository,
+        )
+        published_revision = restarted.workflow.head("campaign_alpha")
+        self.assertNotEqual(revision, published_revision)
+        self.assertEqual(2, len(restarted.revisions.store.inventory()))
+        self.assertEqual(2, len(restarted.atlas_repository.list("campaign_alpha")))
+        recovered = restarted.proposal_repository.get(
+            proposal["proposal_id"], proposal["proposal_version"]
+        )
+        self.assertEqual(ProposalStatus.PUBLISHED, recovered.status)
+        self.assertEqual(published_revision, recovered.published_revision_id)
+        self.assertEqual(3, restarted._editor_version("campaign_alpha"))
+        audit = tuple(restarted.proposal_repository.audit)
+        workflow_audit = tuple(restarted.workflow.audit)
+        inventory = tuple(restarted.revisions.store.inventory())
+        status, replay = restarted.editor_proposal_approve(
+            proposal["proposal_id"], proposal["proposal_version"], deepcopy(approval)
+        )
+        self.assertEqual((200, "published"), (status, replay["outcome"]))
+        self.assertEqual(published_revision, replay["published_revision"]["revision_id"])
+        self.assertEqual((audit, workflow_audit, inventory), (
+            tuple(restarted.proposal_repository.audit),
+            tuple(restarted.workflow.audit),
+            tuple(restarted.revisions.store.inventory()),
+        ))
 
     def test_approval_restart_after_domain_claim_before_publication_resumes_once(self) -> None:
         proposal = self.proposal()
