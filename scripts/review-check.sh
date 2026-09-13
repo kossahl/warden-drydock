@@ -23,7 +23,7 @@ source_state() {
 hidden_worktree_paths=0
 while IFS= read -r -d '' entry; do
   case "${entry:0:1}" in
-    h|S) hidden_worktree_paths=$((hidden_worktree_paths + 1)) ;;
+    h|s|S) hidden_worktree_paths=$((hidden_worktree_paths + 1)) ;;
   esac
 done < <(git -C "$root_dir" ls-files -v -z)
 if [ "$hidden_worktree_paths" -gt 0 ]; then
