@@ -32,9 +32,31 @@ if [ "$hidden_worktree_paths" -gt 0 ]; then
   exit 1
 fi
 
+fsmonitor_clean_paths=0
+while IFS= read -r -d '' entry; do
+  if [ "${entry:0:1}" = h ]; then
+    fsmonitor_clean_paths=$((fsmonitor_clean_paths + 1))
+  fi
+done < <(git -C "$root_dir" ls-files -f -z)
+if [ "$fsmonitor_clean_paths" -gt 0 ]; then
+  echo "Cannot test a checkout with fsmonitor-clean paths ($fsmonitor_clean_paths found)." >&2
+  exit 1
+fi
+
 unmerged_paths=$(git -C "$root_dir" ls-files --unmerged)
 if [ -n "$unmerged_paths" ]; then
   echo "Cannot test a checkout with unmerged index entries." >&2
+  exit 1
+fi
+
+# git diff HEAD uses the worktree representation, so an MM path could leave a
+# staged change out of the snapshot. Reject any path changed in both views.
+staged_worktree_overlap=$(comm -z -12 \
+  <(git -C "$root_dir" diff --no-ext-diff --no-textconv --cached --name-only -z | sort -z) \
+  <(git -C "$root_dir" diff --no-ext-diff --no-textconv --name-only -z | sort -z) \
+  | wc -c)
+if [ "$staged_worktree_overlap" -gt 0 ]; then
+  echo "Cannot test a checkout with staged and worktree changes to the same path." >&2
   exit 1
 fi
 
