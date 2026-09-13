@@ -115,7 +115,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_migrations_are_ordered_and_outer_transactions_removed(self) -> None:
         files = migration_files(ROOT / "warden_drydock" / "hosted" / "migrations")
-        self.assertEqual(["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"], [path.name[:4] for path in files])
+        self.assertEqual(["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012"], [path.name[:4] for path in files])
         for path in files:
             assert_no_outer_transaction_wrapper(path)
 
@@ -252,6 +252,14 @@ class RuntimeTests(unittest.TestCase):
         ):
             self.assertNotIn(f"DELETE FROM {protected}", migration)
             self.assertNotIn(f"DROP TABLE {protected}", migration)
+
+    def test_editor_receipt_migration_allows_durable_editor_operations(self) -> None:
+        migration = (ROOT / "warden_drydock" / "hosted" / "migrations" / "0012_editor_http_receipts.sql").read_text(encoding="utf-8")
+        for operation in (
+            "editor_record_create", "editor_record_edit", "editor_record_remove",
+            "editor_proposal_correct", "editor_proposal_reject", "editor_proposal_approve",
+        ):
+            self.assertIn(f"'{operation}'", migration)
 
     def test_secret_replace_is_atomic_and_metadata_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
