@@ -480,7 +480,8 @@ Keep this record.
             property_changes,
         )
         self.assertIn(
-            {"property": "fields.score", "before": 1.5, "after": 1},
+            {"property": "fields.score", "before": 1.5, "after": 1,
+             "before_present": True, "after_present": True},
             _property_changes(parse_document(source, "record-main", "npc"), candidate),
         )
 
