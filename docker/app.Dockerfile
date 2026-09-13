@@ -3,6 +3,7 @@ WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+COPY warden_drydock/data/ /build/warden_drydock/data/
 RUN npm run build
 
 FROM python:3.13.7-slim-bookworm AS app
