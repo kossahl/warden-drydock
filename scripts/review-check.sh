@@ -22,17 +22,22 @@ source_state() {
 
 initial_source_state=$(source_state)
 snapshot_dir=$(mktemp -d)
+head_index=$(mktemp)
+rm -f -- "$head_index"
 
 cleanup() {
   docker rm -f "$db_container" >/dev/null 2>&1 || true
   docker network rm "$network_name" >/dev/null 2>&1 || true
   rm -rf -- "$snapshot_dir"
+  rm -f -- "$head_index"
 }
 trap cleanup EXIT
 
 # Snapshot HEAD plus tracked index/worktree changes. Untracked files are not
 # part of the tested checkout, and every container receives this same snapshot.
-git -C "$root_dir" archive --format=tar HEAD | tar -xf - -C "$snapshot_dir"
+# A temporary HEAD index avoids git archive's export-ignore filtering.
+GIT_INDEX_FILE="$head_index" git -C "$root_dir" read-tree HEAD
+GIT_INDEX_FILE="$head_index" git -C "$root_dir" checkout-index --all --prefix="$snapshot_dir/"
 git -C "$root_dir" diff --binary HEAD -- \
   | git -C "$snapshot_dir" apply --allow-empty --whitespace=nowarn -
 # Keep governance tests on snapshot-local metadata instead of exposing the
