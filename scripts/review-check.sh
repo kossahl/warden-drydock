@@ -36,10 +36,27 @@ git -C "$root_dir" archive --format=tar HEAD | tar -xf - -C "$snapshot_dir"
 git -C "$root_dir" diff --binary HEAD -- \
   | git -C "$snapshot_dir" apply --allow-empty --whitespace=nowarn -
 # Keep governance tests on snapshot-local metadata instead of exposing the
-# host repository. The index is rebuilt after applying tracked changes, and
-# credentials are stripped from the origin URL before it is copied.
-origin_url=$(git -C "$root_dir" remote get-url origin)
-origin_url=$(printf '%s\n' "$origin_url" | sed -E 's#^(https?://)[^/]*@#\1#')
+# host repository. The index is rebuilt after applying tracked changes, and a
+# credential-free canonical URL is derived from the origin repository slug.
+origin_remote=$(git -C "$root_dir" remote get-url origin)
+if [[ "$origin_remote" == *"://"* ]]; then
+  origin_path=${origin_remote#*://}
+  origin_path=${origin_path#*@}
+  origin_path=${origin_path#*/}
+else
+  origin_path=${origin_remote#*@}
+  origin_path=${origin_path#*:}
+fi
+origin_path=${origin_path%/}
+origin_path=${origin_path%.git}
+origin_repo=${origin_path##*/}
+origin_owner=${origin_path%/*}
+origin_owner=${origin_owner##*/}
+if [ -z "$origin_owner" ] || [ -z "$origin_repo" ] || [ "$origin_owner" = "$origin_path" ]; then
+  echo "Cannot derive the origin repository slug for the test snapshot." >&2
+  exit 1
+fi
+origin_url="https://github.com/${origin_owner}/${origin_repo}.git"
 git -C "$snapshot_dir" init --quiet
 git -C "$snapshot_dir" remote add origin "$origin_url"
 # The snapshot contains only archived or tracked-diff content, so force-add
