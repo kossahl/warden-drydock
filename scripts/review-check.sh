@@ -13,14 +13,10 @@ compatibility_image="python:3.13-bookworm@sha256:933b46a028fd786c9c3d426ebabc237
 node_image="node:24.11.1-bookworm@sha256:9a2ed90cd91b1f3412affe080b62e69b057ba8661d9844e143a6bbd76a23260f"
 postgres_image="postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3"
 
-replacement_refs=$(git -C "$root_dir" for-each-ref --format='%(refname)' refs/replace/)
-if [ -n "$replacement_refs" ]; then
-  echo "Cannot test a checkout with Git replacement refs enabled." >&2
-  exit 1
-fi
-
 git_diff() {
+  GIT_ATTR_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
   git -C "$root_dir" \
+    -c core.attributesFile=/dev/null \
     -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab \
     diff \
     --no-ext-diff --no-textconv --no-color \
@@ -37,6 +33,23 @@ source_state() {
   git -C "$root_dir" status --porcelain=v1 --untracked-files=all
 }
 
+check_source_guards() {
+  replacement_refs=$(git -C "$root_dir" for-each-ref --format='%(refname)' refs/replace/)
+  if [ -n "$replacement_refs" ]; then
+    echo "Cannot test a checkout with Git replacement refs enabled." >&2
+    return 1
+  fi
+
+  info_attributes=$(git -C "$root_dir" rev-parse --git-path info/attributes)
+  case "$info_attributes" in
+    /*) ;;
+    *) info_attributes="$root_dir/$info_attributes" ;;
+  esac
+  if [ -s "$info_attributes" ]; then
+    echo "Cannot test a checkout with non-repository attributes in $info_attributes." >&2
+    return 1
+  fi
+
 hidden_worktree_paths=0
 while IFS= read -r -d '' entry; do
   case "${entry:0:1}" in
@@ -45,7 +58,7 @@ while IFS= read -r -d '' entry; do
 done < <(git -C "$root_dir" ls-files -v -z)
 if [ "$hidden_worktree_paths" -gt 0 ]; then
   echo "Cannot test a checkout with assume-unchanged or skip-worktree paths ($hidden_worktree_paths found)." >&2
-  exit 1
+  return 1
 fi
 
 fsmonitor_clean_paths=0
@@ -56,13 +69,13 @@ while IFS= read -r -d '' entry; do
 done < <(git -C "$root_dir" ls-files -f -z)
 if [ "$fsmonitor_clean_paths" -gt 0 ]; then
   echo "Cannot test a checkout with fsmonitor-clean paths ($fsmonitor_clean_paths found)." >&2
-  exit 1
+  return 1
 fi
 
 unmerged_paths=$(git -C "$root_dir" ls-files --unmerged)
 if [ -n "$unmerged_paths" ]; then
   echo "Cannot test a checkout with unmerged index entries." >&2
-  exit 1
+  return 1
 fi
 
 # git diff HEAD uses the worktree representation, so an MM path could leave a
@@ -73,7 +86,7 @@ staged_worktree_overlap=$(comm -z -12 \
   | wc -c)
 if [ "$staged_worktree_overlap" -gt 0 ]; then
   echo "Cannot test a checkout with staged and worktree changes to the same path." >&2
-  exit 1
+  return 1
 fi
 
 # --no-textconv does not disable clean or process filters when Git reads
@@ -88,7 +101,7 @@ while IFS= read -r -d '' filter_path \
     && { git -C "$root_dir" config --get "filter.${filter_value}.clean" >/dev/null 2>&1 \
       || git -C "$root_dir" config --get "filter.${filter_value}.process" >/dev/null 2>&1; }; then
     echo "Cannot test a checkout with a configured content filter ($filter_path)." >&2
-    exit 1
+    return 1
   fi
 done < <(
   git -C "$root_dir" ls-files -z \
@@ -103,12 +116,15 @@ while IFS= read -r -d '' attribute_path \
   && IFS= read -r -d '' attribute_value; do
   if [ "$attribute_value" != unspecified ] && [ "$attribute_value" != unset ]; then
     echo "Cannot test a checkout with a built-in conversion attribute ($attribute_path: $attribute_name)." >&2
-    exit 1
+    return 1
   fi
 done < <(
   git -C "$root_dir" ls-files -z \
     | git -C "$root_dir" check-attr --stdin -z ident working-tree-encoding
 )
+}
+
+check_source_guards
 
 initial_source_state=$(source_state)
 snapshot_dir=$(mktemp -d)
@@ -304,6 +320,7 @@ docker run --rm \
   '
 
 check_whitespace
+check_source_guards
 final_source_state=$(source_state)
 if [ "$final_source_state" != "$initial_source_state" ]; then
   echo "The checkout changed while review checks were running." >&2
