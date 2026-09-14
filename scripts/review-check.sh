@@ -13,6 +13,12 @@ compatibility_image="python:3.13-bookworm@sha256:933b46a028fd786c9c3d426ebabc237
 node_image="node:24.11.1-bookworm@sha256:9a2ed90cd91b1f3412affe080b62e69b057ba8661d9844e143a6bbd76a23260f"
 postgres_image="postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3"
 
+replacement_refs=$(git -C "$root_dir" for-each-ref --format='%(refname)' refs/replace/)
+if [ -n "$replacement_refs" ]; then
+  echo "Cannot test a checkout with Git replacement refs enabled." >&2
+  exit 1
+fi
+
 source_state() {
   git -C "$root_dir" rev-parse HEAD
   git -C "$root_dir" remote get-url origin | sha256sum
