@@ -19,11 +19,21 @@ if [ -n "$replacement_refs" ]; then
   exit 1
 fi
 
+git_diff() {
+  git -C "$root_dir" \
+    -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab \
+    diff \
+    --no-ext-diff --no-textconv --no-color \
+    --src-prefix=a/ --dst-prefix=b/ --line-prefix= \
+    --output-indicator-new=+ --output-indicator-old=- \
+    --output-indicator-context=' ' "$@"
+}
+
 source_state() {
   git -C "$root_dir" rev-parse HEAD
   git -C "$root_dir" remote get-url origin | sha256sum
-  git -C "$root_dir" diff --no-ext-diff --no-textconv --cached --binary | sha256sum
-  git -C "$root_dir" diff --no-ext-diff --no-textconv --binary | sha256sum
+  git_diff --cached --binary | sha256sum
+  git_diff --binary | sha256sum
   git -C "$root_dir" status --porcelain=v1 --untracked-files=all
 }
 
@@ -58,8 +68,8 @@ fi
 # git diff HEAD uses the worktree representation, so an MM path could leave a
 # staged change out of the snapshot. Reject any path changed in both views.
 staged_worktree_overlap=$(comm -z -12 \
-  <(git -C "$root_dir" diff --no-ext-diff --no-textconv --cached --name-only -z | sort -z) \
-  <(git -C "$root_dir" diff --no-ext-diff --no-textconv --name-only -z | sort -z) \
+  <(git_diff --cached --name-only -z | sort -z) \
+  <(git_diff --name-only -z | sort -z) \
   | wc -c)
 if [ "$staged_worktree_overlap" -gt 0 ]; then
   echo "Cannot test a checkout with staged and worktree changes to the same path." >&2
@@ -83,6 +93,21 @@ while IFS= read -r -d '' filter_path \
 done < <(
   git -C "$root_dir" ls-files -z \
     | git -C "$root_dir" check-attr --stdin -z filter
+)
+
+# Raw blobs do not reproduce built-in checkout conversions such as ident or
+# working-tree-encoding. Reject those attributes rather than test the wrong
+# bytes while leaving ordinary text/EOL handling to the canonical diff.
+while IFS= read -r -d '' attribute_path \
+  && IFS= read -r -d '' attribute_name \
+  && IFS= read -r -d '' attribute_value; do
+  if [ "$attribute_value" != unspecified ] && [ "$attribute_value" != unset ]; then
+    echo "Cannot test a checkout with a built-in conversion attribute ($attribute_path: $attribute_name)." >&2
+    exit 1
+  fi
+done < <(
+  git -C "$root_dir" ls-files -z \
+    | git -C "$root_dir" check-attr --stdin -z ident working-tree-encoding
 )
 
 initial_source_state=$(source_state)
@@ -127,7 +152,7 @@ while IFS= read -r -d '' tree_entry; do
       ;;
   esac
 done < <(git -C "$root_dir" ls-tree -r -z --full-tree HEAD)
-git -C "$root_dir" diff --no-ext-diff --no-textconv --binary HEAD -- \
+git_diff --binary HEAD -- \
   | git -C "$snapshot_dir" apply --allow-empty --whitespace=nowarn -
 # Keep governance tests on snapshot-local metadata instead of exposing the
 # host repository. The index is rebuilt after applying tracked changes, and a
@@ -195,9 +220,9 @@ check_whitespace() {
 
   local merge_base
   merge_base=$(git -C "$root_dir" merge-base "$base_ref" HEAD)
-  git -C "$root_dir" diff --no-ext-diff --no-textconv --check "$merge_base...HEAD"
-  git -C "$root_dir" diff --no-ext-diff --no-textconv --check
-  git -C "$root_dir" diff --no-ext-diff --no-textconv --cached --check
+  git_diff --check "$merge_base...HEAD"
+  git_diff --check
+  git_diff --cached --check
 }
 
 check_whitespace
