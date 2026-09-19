@@ -94,7 +94,10 @@ It runs the pinned Python 3.11 and 3.13 lanes, CLI/help checks, package and
 clean-onboarding smoke tests, frontend type/unit/browser/reproducible-build
 checks, live PostgreSQL checks, and whitespace checks. Focused tests may be
 used during iteration but do not replace this gate. It requires Docker and a
-base ref; set `DRYDOCK_CI_BASE_REF` when `origin/master` is unavailable.
+base ref. For a PR based on `master`, keep `origin/master` current. For a
+stacked PR, set `DRYDOCK_CI_BASE_REF` to the exact PR base ref, such as
+`origin/<base-branch>`, or to the base SHA. Otherwise, `review-check.sh`
+prefers `origin/master` when it is present.
 
 When template behavior changes, regenerate the example campaign and inspect the diff.
 
