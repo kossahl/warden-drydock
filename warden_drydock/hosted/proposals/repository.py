@@ -88,7 +88,7 @@ class PostgresProposalRepository:
                 raise ValueError("proposal_version_conflict")
             correction = (item.editor_metadata or {}).get("correction_of")
             prior = None
-            if correction:
+            if correction is not None:
                 if not isinstance(correction, dict) or not {"proposal_id", "proposal_version"} <= correction.keys():
                     return False
                 prior = self._select(cursor, correction["proposal_id"], correction["proposal_version"], lock=True)

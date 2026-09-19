@@ -114,6 +114,21 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
         self.assertEqual(3, self.repository.editor_workflow_version(campaign_id))
         self.assertEqual((bound, published), self.repository.editor_proposals())
 
+    def test_empty_editor_correction_leaves_workflow_and_proposals_unchanged(self):
+        campaign_id = self.prefix + "_campaign"
+        prior = self.editor_item("_empty_correction", campaign_id)
+        self.assertTrue(self.repository.add_editor(prior, campaign_id, 1))
+
+        successor = self.editor_item(
+            "_empty_correction", campaign_id, version=2, workflow_version=3,
+            correction_of={},
+        )
+        self.assertFalse(self.repository.add_editor(successor, campaign_id, 2))
+        self.assertEqual(ProposalStatus.DRAFT, self.repository.get(prior.proposal_id, 1).status)
+        self.assertIsNone(self.repository.get(successor.proposal_id, 2))
+        self.assertEqual(2, self.repository.editor_workflow_version(campaign_id))
+        self.assertEqual((prior,), self.repository.editor_proposals())
+
     def test_editor_corrections_require_same_editor_lineage(self):
         campaign_id = self.prefix + "_campaign"
         unrelated = self.editor_item("_unrelated", campaign_id)
