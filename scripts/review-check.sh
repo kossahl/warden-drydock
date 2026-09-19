@@ -4,8 +4,14 @@ set -Eeuo pipefail
 # Run the CI gates in isolated disposable environments with pinned base images.
 # Each container copies from a read-only source mount into a private workspace,
 # so generated artifacts never alter the caller's checkout.
+unset \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_CONFIG \
+  GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM \
+  GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM GIT_DIR GIT_GRAFT_FILE \
+  GIT_IMPLICIT_WORK_TREE GIT_INDEX_FILE GIT_NO_REPLACE_OBJECTS \
+  GIT_OBJECT_DIRECTORY GIT_PREFIX GIT_REPLACE_REF_BASE GIT_SHALLOW_FILE \
+  GIT_WORK_TREE
 root_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-unset GIT_INDEX_FILE
 project_name="drydock-review-${RANDOM}-${BASHPID}"
 db_container="${project_name}-postgres"
 network_name="${project_name}-network"
@@ -34,7 +40,42 @@ source_state() {
   git -C "$root_dir" status --porcelain=v1 --untracked-files=all
 }
 
+github_repository_slug() {
+  local remote_url="$1"
+  local remote_path
+  case "$remote_url" in
+    https://github.com/*|http://github.com/*|ssh://git@github.com/*)
+      remote_path="${remote_url#*github.com/}"
+      ;;
+    git@github.com:*)
+      remote_path="${remote_url#git@github.com:}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  remote_path="${remote_path%.git}"
+  if [[ "$remote_path" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    printf '%s\n' "$remote_path"
+  else
+    return 1
+  fi
+}
+
+check_origin() {
+  if ! checkout_origin_url=$(git -C "$root_dir" remote get-url origin 2>/dev/null); then
+    echo "Cannot test a checkout without an origin remote." >&2
+    return 1
+  fi
+  if ! checkout_origin_repository=$(github_repository_slug "$checkout_origin_url"); then
+    echo "Cannot parse the checkout origin as a GitHub repository URL." >&2
+    return 1
+  fi
+}
+
 check_source_guards() {
+  check_origin
+
   replacement_refs=$(git -C "$root_dir" for-each-ref --format='%(refname)' refs/replace/)
   if [ -n "$replacement_refs" ]; then
     echo "Cannot test a checkout with Git replacement refs enabled." >&2
@@ -63,6 +104,17 @@ check_source_guards() {
     return 1
   fi
 
+  while IFS= read -r -d '' attribute_path; do
+    relative_attribute_path="${attribute_path#"$root_dir"/}"
+    if ! git -C "$root_dir" ls-files --error-unmatch -- "$relative_attribute_path" >/dev/null 2>&1; then
+      echo "Cannot test a checkout with an untracked .gitattributes file ($relative_attribute_path)." >&2
+      return 1
+    fi
+  done < <(
+    find "$root_dir" -path "$root_dir/.git" -prune -o \
+      -name .gitattributes \( -type f -o -type l \) -print0
+  )
+
 hidden_worktree_paths=0
 while IFS= read -r -d '' entry; do
   case "${entry:0:1}" in
@@ -90,6 +142,15 @@ if [ -n "$unmerged_paths" ]; then
   echo "Cannot test a checkout with unmerged index entries." >&2
   return 1
 fi
+
+while IFS= read -r -d '' index_entry; do
+  index_meta="${index_entry%%$'\t'*}"
+  read -r index_mode _ <<< "$index_meta"
+  if [ "$index_mode" = 160000 ]; then
+    echo "Cannot test a checkout with a candidate gitlink ($index_entry)." >&2
+    return 1
+  fi
+done < <(git -C "$root_dir" ls-files --stage -z)
 
 # git diff HEAD uses the worktree representation, so an MM path could leave a
 # staged change out of the snapshot. Reject any path changed in both views.
@@ -122,8 +183,8 @@ done < <(
 )
 
 # Raw blobs do not reproduce built-in checkout conversions such as ident or
-# working-tree-encoding. Reject those attributes rather than test the wrong
-# bytes while leaving ordinary text/EOL handling to the canonical diff.
+# working-tree-encoding, or eol. Reject those attributes rather than test the
+# wrong bytes while leaving ordinary text handling to the canonical diff.
 while IFS= read -r -d '' attribute_path \
   && IFS= read -r -d '' attribute_name \
   && IFS= read -r -d '' attribute_value; do
@@ -133,7 +194,7 @@ while IFS= read -r -d '' attribute_path \
   fi
 done < <(
   git -C "$root_dir" ls-files -z \
-    | git -C "$root_dir" check-attr --stdin -z ident working-tree-encoding
+    | git -C "$root_dir" check-attr --stdin -z ident working-tree-encoding eol
 )
 }
 
@@ -235,6 +296,14 @@ PY
   echo "Cannot derive a single valid repository from the coordination allowlist artifact." >&2
   exit 1
 fi
+if [ "$checkout_origin_repository" != "$canonical_repository" ]; then
+  if ! upstream_url=$(git -C "$root_dir" remote get-url upstream 2>/dev/null) \
+    || ! upstream_repository=$(github_repository_slug "$upstream_url") \
+    || [ "$upstream_repository" != "$canonical_repository" ]; then
+    echo "The checkout origin is not the allowlisted repository and no matching upstream remote is configured." >&2
+    exit 1
+  fi
+fi
 origin_url="https://github.com/${canonical_repository}.git"
 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
   git -C "$snapshot_dir" init --quiet --template="$template_dir"
@@ -296,14 +365,20 @@ docker run --rm --network "$network_name" \
     set -Eeuo pipefail
     cp -a /source/. /repo/
     git config --global --add safe.directory /repo
+    database_url="$DRYDOCK_TEST_DATABASE_URL"
+    unset DRYDOCK_TEST_DATABASE_URL
     apt-get update -qq
     apt-get install -y -qq --no-install-recommends postgresql-client
-    python -m pip install --disable-pip-version-check --upgrade pip ".[dev,postgres]"
-    DATABASE_URL="$DRYDOCK_TEST_DATABASE_URL" DRYDOCK_MIGRATIONS=/repo/warden_drydock/hosted/migrations python -m warden_drydock.hosted.operations.migrate
+    python -m pip install --disable-pip-version-check --upgrade pip ".[dev]"
     python -m unittest discover -s tests -v
     python -m warden_drydock --help
     rm -rf dist
     python -m build
+
+    python -m pip install --disable-pip-version-check ".[postgres]"
+    export DRYDOCK_TEST_DATABASE_URL="$database_url"
+    DATABASE_URL="$DRYDOCK_TEST_DATABASE_URL" DRYDOCK_MIGRATIONS=/repo/warden_drydock/hosted/migrations python -m warden_drydock.hosted.operations.migrate
+    python -m unittest discover -s tests -v
 
     onboarding_root="$(mktemp -d)"
     campaign="$onboarding_root/campaign"
