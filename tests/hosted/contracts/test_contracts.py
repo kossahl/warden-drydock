@@ -286,8 +286,9 @@ def _semantic_errors(instance, schema):
             if binding.get("warden_confirmed") is not True:
                 yield ContractValidationError("approval_binding.warden_confirmed", "Warden confirmation must be true", "proposal_approval_conflict")
             keys = ["proposal_id", "proposal_version", "diff_digest", "base_revision", "source_revision"]
+            keys += ["expected_campaign_head"]
             if "expected_editor_workflow_version" in binding:
-                keys += ["expected_campaign_head", "expected_editor_workflow_version", "authority_change_ids", "visibility_change_ids"]
+                keys += ["expected_editor_workflow_version", "authority_change_ids", "visibility_change_ids"]
             for key in keys:
                 if proposal.get(key) != binding.get(key):
                     yield ContractValidationError(f"approval_binding.{key}", "approval binding mismatch", "proposal_approval_conflict")
@@ -303,6 +304,68 @@ def _semantic_errors(instance, schema):
                 "proposal_validation_failure",
             )
         if is_v2:
+            for index, change in enumerate(proposal.get("changes", [])):
+                if change.get("change_type") != "reference_resolution":
+                    continue
+                before = change.get("before", {})
+                after = change.get("after", {})
+                if before.get("reference_id") != after.get("reference_id"):
+                    yield ContractValidationError(
+                        f"proposal.changes.{index}.after.reference_id",
+                        "reference resolution binding must use the same reference before and after",
+                        "proposal_validation_failure",
+                    )
+                if after.get("action") == "accept_unresolved" and before.get("permitted_unresolved") is not True:
+                    yield ContractValidationError(
+                        f"proposal.changes.{index}.after.action",
+                        "accept_unresolved requires permitted unresolved permission",
+                        "proposal_validation_failure",
+                    )
+            status = proposal.get("status")
+            has_rejection_code = "rejection_code" in proposal
+            has_conflict_code = "conflict_code" in proposal
+            if status == "rejected":
+                if not has_rejection_code:
+                    yield ContractValidationError(
+                        "proposal.rejection_code",
+                        "rejected proposals require rejection_code",
+                        "proposal_validation_failure",
+                    )
+                if has_conflict_code:
+                    yield ContractValidationError(
+                        "proposal.conflict_code",
+                        "rejected proposals cannot carry conflict_code",
+                        "proposal_validation_failure",
+                    )
+            elif status == "conflict":
+                if not has_conflict_code:
+                    yield ContractValidationError(
+                        "proposal.conflict_code",
+                        "conflicted proposals require conflict_code",
+                        "proposal_validation_failure",
+                    )
+                if has_rejection_code:
+                    yield ContractValidationError(
+                        "proposal.rejection_code",
+                        "conflicted proposals cannot carry rejection_code",
+                        "proposal_validation_failure",
+                    )
+            elif has_rejection_code or has_conflict_code:
+                yield ContractValidationError(
+                    "proposal.status",
+                    "rejection_code and conflict_code require their matching proposal status",
+                    "proposal_validation_failure",
+                )
+            validation_status = validation.get("status")
+            error_count = validation.get("error_count")
+            if (
+                validation_status in {"pending", "passed"} and error_count != 0
+            ) or (validation_status == "failed" and error_count == 0):
+                yield ContractValidationError(
+                    "validation.error_count",
+                    "validation status and error_count must agree",
+                    "proposal_validation_failure",
+                )
             for key, items, identifier in (
                 ("proposal.changes", proposal.get("changes", []), "change_id"),
             ):
@@ -524,18 +587,79 @@ def _violating_instance(example, rule_id):
         instance["prior_receipt"]["idempotency_key"] = "idem_beta"
     elif rule_id == "proposal_exact_binding":
         instance["proposal"]["status"] = "approved"
-        instance["approval_binding"] = {
-            "proposal_id": "proposal_beta",
-            "proposal_version": instance["proposal"]["proposal_version"],
-            "diff_digest": instance["proposal"]["diff_digest"],
-            "base_revision": instance["proposal"]["base_revision"],
-            "source_revision": instance["proposal"]["source_revision"],
-            "expected_campaign_head": instance["proposal"]["base_revision"],
-            "warden_confirmed": True,
-        }
+        if instance.get("contract_version") == 2:
+            instance["approval_binding"] = {
+                "proposal_id": "proposal_beta",
+                "proposal_version": instance["proposal"]["proposal_version"],
+                "diff_digest": instance["proposal"]["diff_digest"],
+                "base_revision": instance["proposal"]["base_revision"],
+                "source_revision": instance["proposal"]["source_revision"],
+                "expected_campaign_head": instance["proposal"]["expected_campaign_head"],
+                "expected_editor_workflow_version": instance["proposal"]["expected_editor_workflow_version"],
+                "validation_status": instance["validation"]["status"],
+                "validation_digest": instance["validation"]["validation_digest"],
+                "authority_change_ids": instance["proposal"]["authority_change_ids"],
+                "visibility_change_ids": instance["proposal"]["visibility_change_ids"],
+                "warden_confirmed": True,
+            }
+        else:
+            instance["approval_binding"] = {
+                "proposal_id": "proposal_beta",
+                "proposal_version": instance["proposal"]["proposal_version"],
+                "diff_digest": instance["proposal"]["diff_digest"],
+                "base_revision": instance["proposal"]["base_revision"],
+                "source_revision": instance["proposal"]["source_revision"],
+                "expected_campaign_head": instance["proposal"]["base_revision"],
+                "warden_confirmed": True,
+            }
+    elif rule_id == "proposal_campaign_head":
+        instance["proposal"]["expected_campaign_head"] = "revision_other"
+    elif rule_id == "proposal_reference_resolution_binding":
+        change = instance["proposal"]["changes"][0]
+        change.update({
+            "change_type": "reference_resolution",
+            "before": {
+                "reference_id": "reference_one",
+                "connection_id": "connection_company",
+                "source_record_id": "record-station",
+                "target_record_id": "record-company",
+                "relationship": "works-for",
+                "state": "current",
+                "context": "The station handles salvage contracts.",
+                "resolution_required": True,
+                "permitted_unresolved": False,
+            },
+            "after": {
+                "reference_id": "reference_two",
+                "action": "accept_unresolved",
+                "replacement_target_record_id": None,
+            },
+        })
+        instance["proposal"]["visibility_change_ids"] = []
+    elif rule_id == "proposal_status_codes":
+        instance["proposal"]["status"] = "rejected"
+        instance["proposal"].pop("rejection_code", None)
+        instance["proposal"].pop("conflict_code", None)
+    elif rule_id == "proposal_validation_result":
+        instance["validation"]["status"] = "passed"
+        instance["validation"]["error_count"] = 1
     elif rule_id == "proposal_validation_gate":
         instance["validation"]["status"] = "failed"
         instance["validation"]["error_count"] = 1
+    elif rule_id == "proposal_logical_ids":
+        instance["proposal"]["changes"].append(deepcopy(instance["proposal"]["changes"][0]))
+    elif rule_id == "proposal_authority_transition_ids":
+        change = instance["proposal"]["changes"][0]
+        change["from_authority"] = "preparation"
+        change["to_authority"] = "canon"
+        instance["proposal"]["authority_change_ids"] = []
+    elif rule_id == "proposal_visibility_transition_ids":
+        instance["proposal"]["visibility_change_ids"] = []
+    elif rule_id == "proposal_correction_version":
+        instance["proposal"]["correction_of_version"] = instance["proposal"]["proposal_version"]
+    elif rule_id == "proposal_correction_ancestry":
+        instance["proposal"]["proposal_version"] = 2
+        instance["proposal"].pop("correction_of_version", None)
     elif rule_id == "live_revision_pinning":
         instance["events"][0]["base_revision"] = "revision_99"
     elif rule_id == "live_device_replay":
@@ -850,16 +974,26 @@ class HostedContractPackageTests(unittest.TestCase):
         example = json.loads((CONTRACT_ROOT / contract["example"]).read_text(encoding="utf-8"))
         expected_invariants = [
             "proposal_exact_binding",
+            "proposal_campaign_head",
             "proposal_validation_gate",
+            "proposal_validation_result",
             "proposal_logical_ids",
             "proposal_authority_transition_ids",
             "proposal_visibility_transition_ids",
+            "proposal_reference_resolution_binding",
+            "proposal_status_codes",
             "proposal_correction_version",
             "proposal_correction_ancestry",
         ]
         self.assertEqual(expected_invariants, schema["x-invariants"])
         self.assertEqual(expected_invariants, [rule["id"] for rule in invariants["rules"]])
         self.assertEqual([], list(Draft202012Validator(schema).iter_errors(example)))
+        for rule in invariants["rules"]:
+            with self.subTest(invariant=rule["id"]):
+                instance = _violating_instance(example, rule["id"])
+                categories = {failure.category for failure in contract_errors(instance, schema)}
+                self.assertTrue(categories)
+                self.assertIn(rule["category"], categories)
         for relative in contract["negative_fixtures"]:
             fixture = json.loads((CONTRACT_ROOT / relative).read_text(encoding="utf-8"))
             self.assertEqual([], list(Draft202012Validator(schema).iter_errors(fixture["instance"])), relative)
@@ -893,6 +1027,27 @@ class HostedContractPackageTests(unittest.TestCase):
             with self.subTest(status=status):
                 self.assertEqual([], list(Draft202012Validator(schema).iter_errors(value)))
                 self.assertEqual([], list(contract_errors(value, schema)))
+
+    def test_proposal_v1_rejects_mismatched_approval_binding_campaign_head(self):
+        family = next(item for item in self.index["families"] if item["family"] == "proposal")
+        schema = json.loads((CONTRACT_ROOT / family["schema"]).read_text(encoding="utf-8"))
+        value = json.loads((CONTRACT_ROOT / family["example"]).read_text(encoding="utf-8"))
+        value["proposal"]["status"] = "approved"
+        value["approval_binding"] = {
+            "proposal_id": value["proposal"]["proposal_id"],
+            "proposal_version": value["proposal"]["proposal_version"],
+            "diff_digest": value["proposal"]["diff_digest"],
+            "base_revision": value["proposal"]["base_revision"],
+            "source_revision": value["proposal"]["source_revision"],
+            "expected_campaign_head": "revision_other",
+            "warden_confirmed": True,
+        }
+        self.assertEqual([], list(Draft202012Validator(schema).iter_errors(value)))
+        failures = list(contract_errors(value, schema))
+        self.assertIn(
+            ("proposal_approval_conflict", "approval_binding.expected_campaign_head"),
+            {(failure.category, failure.path) for failure in failures},
+        )
 
     def test_proposal_v2_transition_ids_reference_declared_changes(self):
         contract = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))["versioned_contracts"][0]
@@ -964,6 +1119,80 @@ class HostedContractPackageTests(unittest.TestCase):
             ("proposal_validation_failure", "proposal.expected_campaign_head"),
             {(failure.category, failure.path) for failure in failures},
         )
+
+    def test_proposal_v2_reference_resolution_binds_reference_and_permission(self):
+        contract = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))["versioned_contracts"][0]
+        schema = json.loads((CONTRACT_ROOT / contract["schema"]).read_text(encoding="utf-8"))
+        example = json.loads((CONTRACT_ROOT / contract["example"]).read_text(encoding="utf-8"))
+
+        valid = _violating_instance(example, "proposal_reference_resolution_binding")
+        valid["proposal"]["changes"][0]["before"]["reference_id"] = "reference_one"
+        valid["proposal"]["changes"][0]["after"]["reference_id"] = "reference_one"
+        valid["proposal"]["changes"][0]["before"]["permitted_unresolved"] = True
+        self.assertEqual([], list(Draft202012Validator(schema).iter_errors(valid)))
+        self.assertEqual([], list(contract_errors(valid, schema)))
+
+        mismatched_reference = deepcopy(valid)
+        mismatched_reference["proposal"]["changes"][0]["after"]["reference_id"] = "reference_two"
+        forbidden_unresolved = deepcopy(valid)
+        forbidden_unresolved["proposal"]["changes"][0]["before"]["permitted_unresolved"] = False
+        for value in (mismatched_reference, forbidden_unresolved):
+            with self.subTest(value=value):
+                failures = list(contract_errors(value, schema))
+                self.assertIn("proposal_validation_failure", {failure.category for failure in failures})
+
+    def test_proposal_v2_status_codes_match_rejected_and_conflict_states(self):
+        contract = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))["versioned_contracts"][0]
+        schema = json.loads((CONTRACT_ROOT / contract["schema"]).read_text(encoding="utf-8"))
+        example = json.loads((CONTRACT_ROOT / contract["example"]).read_text(encoding="utf-8"))
+
+        for status, code_key, code in (
+            ("rejected", "rejection_code", "unsafe_content"),
+            ("conflict", "conflict_code", "stale_head"),
+        ):
+            value = deepcopy(example)
+            value["proposal"]["status"] = status
+            value["proposal"][code_key] = code
+            with self.subTest(status=status):
+                self.assertEqual([], list(Draft202012Validator(schema).iter_errors(value)))
+                self.assertEqual([], list(contract_errors(value, schema)))
+
+        invalid = []
+        missing_rejection = deepcopy(example)
+        missing_rejection["proposal"]["status"] = "rejected"
+        invalid.append(missing_rejection)
+        missing_conflict = deepcopy(example)
+        missing_conflict["proposal"]["status"] = "conflict"
+        invalid.append(missing_conflict)
+        code_on_draft = deepcopy(example)
+        code_on_draft["proposal"]["rejection_code"] = "unsafe_content"
+        invalid.append(code_on_draft)
+        conflicting_codes = deepcopy(example)
+        conflicting_codes["proposal"].update({
+            "status": "rejected",
+            "rejection_code": "unsafe_content",
+            "conflict_code": "stale_head",
+        })
+        invalid.append(conflicting_codes)
+        for value in invalid:
+            with self.subTest(value=value):
+                self.assertIn(
+                    "proposal_validation_failure",
+                    {failure.category for failure in contract_errors(value, schema)},
+                )
+
+    def test_proposal_v2_validation_status_and_error_count_are_consistent(self):
+        contract = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))["versioned_contracts"][0]
+        schema = json.loads((CONTRACT_ROOT / contract["schema"]).read_text(encoding="utf-8"))
+        example = json.loads((CONTRACT_ROOT / contract["example"]).read_text(encoding="utf-8"))
+        for status, error_count in (("pending", 1), ("passed", 1), ("failed", 0)):
+            value = deepcopy(example)
+            value["validation"].update({"status": status, "error_count": error_count})
+            with self.subTest(status=status, error_count=error_count):
+                self.assertIn(
+                    "proposal_validation_failure",
+                    {failure.category for failure in contract_errors(value, schema)},
+                )
 
     def test_proposal_v2_later_versions_require_correction_ancestry(self):
         contract = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))["versioned_contracts"][0]

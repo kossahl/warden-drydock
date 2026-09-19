@@ -4,10 +4,14 @@
   "title": "Generated Draft and immutable Canon Proposal contracts v2",
   "x-invariants": [
     "proposal_exact_binding",
+    "proposal_campaign_head",
     "proposal_validation_gate",
+    "proposal_validation_result",
     "proposal_logical_ids",
     "proposal_authority_transition_ids",
     "proposal_visibility_transition_ids",
+    "proposal_reference_resolution_binding",
+    "proposal_status_codes",
     "proposal_correction_version",
     "proposal_correction_ancestry"
   ],
