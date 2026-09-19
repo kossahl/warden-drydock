@@ -29,6 +29,12 @@
       "rule": "authority_change_ids must equal the set of proposal change IDs whose from_authority and to_authority differ; every authority transition must be explicitly confirmed."
     },
     {
+      "id": "proposal_visibility_transition_ids",
+      "category": "proposal_validation_failure",
+      "schema": "schemas/v2/proposal.schema.json",
+      "rule": "visibility_change_ids must equal the set of proposal change IDs whose before and after record visibility objects differ, including audience or Warden-only state; every visibility transition must be explicitly confirmed."
+    },
+    {
       "id": "proposal_correction_version",
       "category": "proposal_validation_failure",
       "schema": "schemas/v2/proposal.schema.json",

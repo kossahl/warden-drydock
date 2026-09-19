@@ -277,6 +277,7 @@ def _semantic_errors(instance, schema):
                 yield ContractValidationError("prior_receipt.outcome", "changed digest must conflict", "idempotency_digest_conflict")
     elif name == "canon_proposal":
         proposal, binding, validation = instance["proposal"], instance["approval_binding"], instance["validation"]
+        is_v2 = instance.get("contract_version") == 2
         if proposal.get("status") in {"approving", "approved"} and binding is None:
             yield ContractValidationError("approval_binding", "approval state requires Warden binding", "proposal_approval_conflict")
         if proposal.get("status") not in {"approving", "approved"} and binding is not None:
@@ -295,9 +296,13 @@ def _semantic_errors(instance, schema):
                     yield ContractValidationError("approval_binding.validation_status", "approval binding validation status mismatch", "proposal_approval_conflict")
                 if binding.get("validation_digest") != validation.get("validation_digest"):
                     yield ContractValidationError("approval_binding.validation_digest", "approval binding validation digest mismatch", "proposal_approval_conflict")
-            if binding.get("expected_campaign_head") != proposal.get("base_revision"):
-                yield ContractValidationError("approval_binding.expected_campaign_head", "expected campaign head must equal proposal base", "proposal_approval_conflict")
-        if "expected_editor_workflow_version" in instance.get("proposal", {}):
+        if is_v2 and proposal.get("expected_campaign_head") != proposal.get("base_revision"):
+            yield ContractValidationError(
+                "proposal.expected_campaign_head",
+                "expected campaign head must equal proposal base",
+                "proposal_validation_failure",
+            )
+        if is_v2:
             for key, items, identifier in (
                 ("proposal.changes", proposal.get("changes", []), "change_id"),
             ):
@@ -326,24 +331,39 @@ def _semantic_errors(instance, schema):
                     "authority transition IDs must cover every authority change",
                     "proposal_validation_failure",
                 )
-        if (
-            proposal.get("correction_of_version") is not None
-            and proposal["correction_of_version"] >= proposal["proposal_version"]
-        ):
-            yield ContractValidationError(
-                "proposal.correction_of_version",
-                "correction_of_version must be less than proposal_version",
-                "proposal_validation_failure",
-            )
-        if (
-            proposal.get("proposal_version", 1) > 1
-            and proposal.get("correction_of_version") is None
-        ):
-            yield ContractValidationError(
-                "proposal.correction_of_version",
-                "later proposal versions require correction ancestry",
-                "proposal_validation_failure",
-            )
+            expected_visibility_change_ids = {
+                item.get("change_id")
+                for item in proposal.get("changes", [])
+                if isinstance(item.get("before"), dict)
+                and isinstance(item.get("after"), dict)
+                and "visibility" in item["before"]
+                and "visibility" in item["after"]
+                and item["before"]["visibility"] != item["after"]["visibility"]
+            }
+            if set(proposal.get("visibility_change_ids", [])) != expected_visibility_change_ids:
+                yield ContractValidationError(
+                    "proposal.visibility_change_ids",
+                    "visibility transition IDs must cover every record visibility change",
+                    "proposal_validation_failure",
+                )
+            if (
+                proposal.get("correction_of_version") is not None
+                and proposal["correction_of_version"] >= proposal["proposal_version"]
+            ):
+                yield ContractValidationError(
+                    "proposal.correction_of_version",
+                    "correction_of_version must be less than proposal_version",
+                    "proposal_validation_failure",
+                )
+            if (
+                proposal.get("proposal_version", 1) > 1
+                and proposal.get("correction_of_version") is None
+            ):
+                yield ContractValidationError(
+                    "proposal.correction_of_version",
+                    "later proposal versions require correction ancestry",
+                    "proposal_validation_failure",
+                )
         if proposal.get("status") in {"needs_review", "approving", "approved"} and (
             validation.get("status") != "passed" or validation.get("error_count") != 0
         ):
@@ -833,6 +853,7 @@ class HostedContractPackageTests(unittest.TestCase):
             "proposal_validation_gate",
             "proposal_logical_ids",
             "proposal_authority_transition_ids",
+            "proposal_visibility_transition_ids",
             "proposal_correction_version",
             "proposal_correction_ancestry",
         ]
@@ -902,6 +923,48 @@ class HostedContractPackageTests(unittest.TestCase):
             {(failure.category, failure.path) for failure in failures},
         )
 
+    def test_proposal_v2_visibility_transition_ids_cover_audience_and_warden_only_changes(self):
+        contract = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))["versioned_contracts"][0]
+        schema = json.loads((CONTRACT_ROOT / contract["schema"]).read_text(encoding="utf-8"))
+        example = json.loads((CONTRACT_ROOT / contract["example"]).read_text(encoding="utf-8"))
+        validate(example, schema)
+        for before_visibility, after_visibility in (
+            (
+                {"audience": "warden", "warden_only": False},
+                {"audience": "shared", "warden_only": False},
+            ),
+            (
+                {"audience": "shared", "warden_only": False},
+                {"audience": "shared", "warden_only": True},
+            ),
+        ):
+            value = deepcopy(example)
+            change = value["proposal"]["changes"][0]
+            change["before"]["visibility"] = before_visibility
+            change["after"]["visibility"] = after_visibility
+            value["proposal"]["visibility_change_ids"] = []
+            with self.subTest(before=before_visibility, after=after_visibility):
+                self.assertEqual([], list(Draft202012Validator(schema).iter_errors(value)))
+                failures = list(contract_errors(value, schema))
+                self.assertIn(
+                    ("proposal_validation_failure", "proposal.visibility_change_ids"),
+                    {(failure.category, failure.path) for failure in failures},
+                )
+
+    def test_proposal_v2_requires_campaign_head_to_match_base_without_binding(self):
+        contract = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))["versioned_contracts"][0]
+        schema = json.loads((CONTRACT_ROOT / contract["schema"]).read_text(encoding="utf-8"))
+        example = json.loads((CONTRACT_ROOT / contract["example"]).read_text(encoding="utf-8"))
+        value = deepcopy(example)
+        value["proposal"]["expected_campaign_head"] = "revision_other"
+        self.assertIsNone(value["approval_binding"])
+        self.assertEqual([], list(Draft202012Validator(schema).iter_errors(value)))
+        failures = list(contract_errors(value, schema))
+        self.assertIn(
+            ("proposal_validation_failure", "proposal.expected_campaign_head"),
+            {(failure.category, failure.path) for failure in failures},
+        )
+
     def test_proposal_v2_later_versions_require_correction_ancestry(self):
         contract = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))["versioned_contracts"][0]
         schema = json.loads((CONTRACT_ROOT / contract["schema"]).read_text(encoding="utf-8"))
@@ -914,6 +977,30 @@ class HostedContractPackageTests(unittest.TestCase):
             ("proposal_validation_failure", "proposal.correction_of_version"),
             {(failure.category, failure.path) for failure in failures},
         )
+
+    def test_proposal_v1_later_versions_do_not_require_correction_ancestry(self):
+        family = next(item for item in self.index["families"] if item["family"] == "proposal")
+        schema = json.loads((CONTRACT_ROOT / family["schema"]).read_text(encoding="utf-8"))
+        example = json.loads((CONTRACT_ROOT / family["example"]).read_text(encoding="utf-8"))
+        value = deepcopy(example)
+        value["proposal"]["proposal_version"] = 3
+        value["proposal"].pop("correction_of_version", None)
+        validate(value, schema)
+        self.assertEqual([], list(contract_errors(value, schema)))
+
+    def test_proposal_v2_domain_ids_follow_editor_bounds_and_path_safety(self):
+        contract = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))["versioned_contracts"][0]
+        schema = json.loads((CONTRACT_ROOT / contract["schema"]).read_text(encoding="utf-8"))
+        example = json.loads((CONTRACT_ROOT / contract["example"]).read_text(encoding="utf-8"))
+        for subject_id in ("x", "a" * 200):
+            value = deepcopy(example)
+            value["proposal"]["changes"][0]["subject_id"] = subject_id
+            with self.subTest(subject_id=subject_id):
+                validate(value, schema)
+        invalid = deepcopy(example)
+        invalid["proposal"]["changes"][0]["subject_id"] = "../record"
+        with self.assertRaises(AssertionError):
+            validate(invalid, schema)
 
     def test_every_negative_fixture_fails_at_expected_binding(self):
         fixture_paths = [fixture for family in self.index["families"] for fixture in family["negative_fixtures"]]
