@@ -2,13 +2,16 @@
 
 ## Version selection
 
-Contract names and positive integer versions form the compatibility key. A
-consumer must select a schema from `index-v1.json` before processing a payload.
-Unknown names and versions fail closed as `unsupported_contract_version`.
-There is no implicit "latest" version and no content negotiation in this
-package.
+`index-v2.json` is the current machine-readable registry and selector. A
+consumer must select a contract by name and positive integer version from it
+before processing a payload. It includes the current v2 entries and the
+supported transport-neutral v1 families. `index-v1.json` remains a supported
+legacy contract registry for consumers that require the original v1 registry;
+it is not the current selector. Unknown names and versions fail closed as
+`unsupported_contract_version`. There is no implicit "latest" version and no
+content negotiation in this package.
 
-Version 1 objects are closed. Adding a required or optional property, changing
+Versioned objects are closed. Adding a required or optional property, changing
 an enum, relaxing an authority invariant, or changing canonicalization is a
 contract change that requires a reviewed new version. Documentation-only
 clarifications that do not change validation or meaning may retain the version.

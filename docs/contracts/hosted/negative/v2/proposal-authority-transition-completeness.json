@@ -1,0 +1,58 @@
+{
+  "schema": "schemas/v2/proposal.schema.json",
+  "expected_category": "proposal_validation_failure",
+  "expected_path": "proposal.authority_change_ids",
+  "expected_evidence": "authority transition IDs",
+  "instance": {
+    "contract_name": "canon_proposal",
+    "contract_version": 2,
+    "draft": {
+      "draft_id": "draft_editor",
+      "authority": "draft",
+      "source_set_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "content_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "proposal": {
+      "proposal_id": "proposal_editor",
+      "proposal_version": 1,
+      "status": "needs_review",
+      "campaign_id": "campaign_alpha",
+      "base_revision": "revision_12",
+      "source_revision": "revision_12",
+      "expected_campaign_head": "revision_12",
+      "expected_editor_workflow_version": 7,
+      "diff_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "authority_change_ids": [],
+      "visibility_change_ids": [],
+      "changes": [
+        {
+          "change_id": "change_station",
+          "subject_id": "record-station",
+          "change_type": "update",
+          "from_authority": "preparation",
+          "to_authority": "canon",
+          "before": {
+            "record_type": "location",
+            "displayed_name": "Synthetic Station",
+            "visibility": {"audience": "warden", "warden_only": true},
+            "content_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "connections": []
+          },
+          "after": {
+            "record_type": "location",
+            "displayed_name": "Synthetic Station",
+            "visibility": {"audience": "warden", "warden_only": true},
+            "content_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "connections": []
+          }
+        }
+      ]
+    },
+    "validation": {
+      "status": "passed",
+      "validation_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "error_count": 0
+    },
+    "approval_binding": null
+  }
+}
