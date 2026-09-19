@@ -352,6 +352,15 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
     return _document(value)
 
 
+def _connection_line(connection: Mapping[str, Any]) -> str:
+    readable_target = connection["target_record_id"].replace("-", " ").title()
+    return (
+        f"- `{connection['relationship']}` → "
+        f"[[{connection['target_record_id']}|{readable_target}]] "
+        f"(`{connection['state']}`) — {connection['context']}"
+    )
+
+
 def serialize_document(value: Mapping[str, Any], section_labels: Mapping[str, str] | None = None) -> str:
     value = _document(value)
     _mutation_status(value["status"])
@@ -378,7 +387,7 @@ def serialize_document(value: Mapping[str, Any], section_labels: Mapping[str, st
         lines += ["## Connections", ""]
         for item in value["connections"]:
             lines.append(f"<!-- drydock:connection-id={item['connection_id']} -->")
-            lines.append(f"- `{item['relationship']}` -> [[{item['target_record_id']}]] (`{item['state']}`) — {item['context']}")
+            lines.append(_connection_line(item))
     return normalize_text("\n".join(lines)) + "\n"
 
 
@@ -399,13 +408,6 @@ def _format_frontmatter_value(value: Any) -> str:
                 return value
         return encoded(value)
     return encoded(value)
-
-
-def _connection_line(connection: Mapping[str, Any]) -> str:
-    return (
-        f"- `{connection['relationship']}` -> [[{connection['target_record_id']}]] "
-        f"(`{connection['state']}`) — {connection['context']}"
-    )
 
 
 def mutate_document(

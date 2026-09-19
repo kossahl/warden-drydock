@@ -112,6 +112,33 @@ class EditorCodecReviewTests(unittest.TestCase):
         headings = re.findall(r"^# (?!#)(.+)$", serialized, re.MULTILINE)
         self.assertEqual(["The One"], headings)
 
+    def test_typed_connections_use_canonical_markdown_in_both_paths(self):
+        connection = {
+            "connection_id": "connection_two",
+            "target_record_id": "record-two",
+            "relationship": "knows",
+            "state": "current",
+            "context": "A useful contact.",
+        }
+        value = _document(connections=[connection])
+        expected = "- `knows` → [[record-two|Record Two]] (`current`) — A useful contact."
+
+        serialized = serialize_document(value)
+        self.assertIn(expected, serialized)
+        self.assertNotIn(" -> [[record-two]]", serialized)
+        parsed = parse_document(serialized, "record-one", "npc")
+        self.assertEqual([connection], parsed["connections"])
+        self.assertEqual(serialized, mutate_document(serialized, parsed))
+
+        changed = dict(value, connections=[dict(connection, context="A trusted contact.")])
+        changed["content_digest"] = document_digest(changed)
+        mutated = mutate_document(serialized, changed)
+        self.assertIn(
+            "- `knows` → [[record-two|Record Two]] (`current`) — A trusted contact.",
+            mutated,
+        )
+        self.assertNotIn(" -> [[record-two]]", mutated)
+
 
 if __name__ == "__main__":
     unittest.main()
