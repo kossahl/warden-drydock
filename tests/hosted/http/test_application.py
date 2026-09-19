@@ -1081,6 +1081,7 @@ class SliceApplicationTests(unittest.TestCase):
             "displayed_name": "Created Record",
             "status": "draft",
             "authority": "preparation",
+            "ownership": "campaign",
             "visibility": {"audience": "warden", "warden_only": True},
             "fields": [{"field_id": "ownership", "value": "campaign"}],
             "sections": [{"section_id": "summary", "body": "Synthetic record."}],
