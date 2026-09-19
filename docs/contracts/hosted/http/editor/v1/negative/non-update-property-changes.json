@@ -1,0 +1,30 @@
+{
+  "schema": "../editor.schema.json",
+  "expected_category": "mutation_consistency",
+  "expected_path": "diff.cards.0.property_changes",
+  "description": "Create cards cannot carry record property deltas.",
+  "instance": {
+    "contract_name": "editor_proposal_view",
+    "contract_version": 1,
+    "proposal_id": "proposal_editor",
+    "proposal_version": 1,
+    "campaign_id": "campaign_alpha",
+    "source_revision": {"revision_id": "revision_12", "ordinal": 12, "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    "base_revision": {"revision_id": "revision_12", "ordinal": 12, "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    "expected_campaign_head": {"revision_id": "revision_12", "ordinal": 12, "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    "editor_workflow_version": 7,
+    "proposal_payload_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "mutation_kind": "create",
+    "record_bindings": [{"campaign_id": "campaign_alpha", "base_revision": {"revision_id": "revision_12", "ordinal": 12, "tree_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "record_id": "record-station", "record_digest": null, "expected_editor_workflow_version": 7}],
+    "core_proposal": {"contract_name": "canon_proposal", "contract_version": 2, "draft": {"draft_id": "draft_editor", "authority": "draft", "source_set_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "content_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}, "proposal": {"proposal_id": "proposal_editor", "proposal_version": 1, "status": "needs_review", "campaign_id": "campaign_alpha", "base_revision": "revision_12", "source_revision": "revision_12", "expected_campaign_head": "revision_12", "expected_editor_workflow_version": 7, "diff_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "authority_change_ids": [], "visibility_change_ids": [], "changes": [{"change_id": "change_station", "subject_id": "record-station", "change_type": "add", "from_authority": "absent", "to_authority": "preparation", "content_digest": "1111111111111111111111111111111111111111111111111111111111111111"}]}, "validation": {"status": "passed", "validation_digest": "2222222222222222222222222222222222222222222222222222222222222222", "error_count": 0}, "approval_binding": null},
+    "correction_of": null,
+    "diff": {"diff_digest": "3333333333333333333333333333333333333333333333333333333333333333", "cards": [{"change_id": "change_station", "kind": "record_created", "subject_record_id": "record-station", "before": null, "after": {"record_id": "record-station", "record_type": "location", "displayed_name": "Station", "ownership": "campaign", "status": "draft", "authority": "preparation", "visibility": {"audience": "warden", "warden_only": true}, "fields": [], "sections": [], "connections": [], "content_digest": "4444444444444444444444444444444444444444444444444444444444444444"}, "property_changes": [{"property": "status", "before": null, "after": "draft", "before_present": false, "after_present": true}], "connection": null, "resolution": null, "derived_backlinks": []}], "affected_record_count": 1, "authority_changes": [], "visibility_changes": [], "unresolved_reference_count": 0, "impact_digest": null, "source_changes": [{"change_id": "source_station", "subject_record_id": "record-station", "change_type": "create", "before_source": null, "after_source": "---\nid: record-station\ntype: location\n---\n\n# Station"}], "summary": "Create station."},
+    "impact_digest": null,
+    "impact_binding": null,
+    "resolutions": [],
+    "validation": {"status": "passed", "validation_digest": "6666666666666666666666666666666666666666666666666666666666666666", "error_count": 0, "findings": []},
+    "authority_outcome": [],
+    "visibility_outcome": [],
+    "publication": {"status": "not_published", "published_revision": null}
+  }
+}

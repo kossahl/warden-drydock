@@ -8,17 +8,19 @@ active HTTP registry. `index-v1.json` remains a supported legacy contract
 registry for consumers of the original transport-neutral v1 families.
 
 Validation requires both the Draft 2020-12 schema named by a family and every
-normative `x-invariants` rule it declares. The versioned registry is
-`semantic-invariants-v1.json` and is mandatory, not advisory. A consumer that
-runs only a stock JSON Schema validator has not validated a hosted contract.
+normative `x-invariants` rule it declares. The legacy families use the shared
+`semantic-invariants-v1.json` registry; versioned contracts carry their own
+invariant file. These rules are mandatory, not advisory. A consumer that runs
+only a stock JSON Schema validator has not validated a hosted contract.
 The executable golden vectors in `tests/hosted/contracts` bind each rule to a
 stable failure category.
 
-All payloads declare `contract_name` and `contract_version`. The current index
-includes the v2 `canon_proposal` contract alongside transport-neutral v1
-families; v1 is supported, not the only accepted version. Schemas use JSON
-Schema Draft 2020-12, reject unknown object properties, and contain no
-endpoint, database, provider, device storage, import, or export design.
+Legacy transport-neutral payloads declare `contract_name` and
+`contract_version: 1`. Versioned contracts declare their own explicit version
+in `index-v2.json`; the current index includes the v2 `canon_proposal` contract
+alongside the supported transport-neutral v1 families. Schemas use JSON Schema
+Draft 2020-12, reject unknown object properties, and contain no endpoint,
+database, provider, device storage, import, or export design.
 
 The contracts describe data that later implementations may exchange. They do
 not authorize a caller, provider, engine, or browser to publish snapshots,
@@ -29,8 +31,9 @@ See [compatibility.md](compatibility.md) for evolution rules and
 [authority-redaction.md](authority-redaction.md) for authority and safe-output
 requirements.
 
-The HTTP registry at [`http/index.json`](http/index.json) lists the complete
-active HTTP package set:
-general hosted HTTP v2 and Campaign Atlas HTTP v2. General hosted HTTP v1 and
-Campaign Atlas HTTP v1 stay at their stable paths for historical traceability
-but are no longer active.
+The transport-neutral v1 package remains unchanged. The current transport
+registry is [`http/index-v5.json`](http/index-v5.json); its preserved v4
+registry remains at [`http/index.json`](http/index.json). The current package
+set includes general hosted HTTP v2, Campaign Atlas HTTP v2, Live HTTP v1, and
+record editor HTTP v1. Older packages stay at stable paths for historical
+traceability but are not active.

@@ -961,6 +961,14 @@ class HostedContractPackageTests(unittest.TestCase):
                 self.assertTrue(failures, "contradicting example unexpectedly validated")
                 self.assertIn(expected_category, {failure.category for failure in failures})
 
+    def test_current_index_points_to_v5_http_registry(self):
+        current = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))
+        self.assertEqual("http/index-v5.json", current["http_registry"])
+        registry_path = CONTRACT_ROOT / current["http_registry"]
+        self.assertTrue(registry_path.is_file(), registry_path)
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        self.assertEqual(5, registry["contract_version"])
+
     def test_new_versioned_registry_preserves_legacy_index_and_binds_proposal_v2(self):
         legacy = json.loads((CONTRACT_ROOT / "index-v1.json").read_text(encoding="utf-8"))
         current = json.loads((CONTRACT_ROOT / "index-v2.json").read_text(encoding="utf-8"))
