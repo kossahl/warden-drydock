@@ -72,24 +72,39 @@ class PostgresProposalRepository:
 
     def add_editor(self, item, campaign_id, expected_version):
         """Insert an editor proposal and advance its campaign CAS atomically."""
+        if campaign_id != item.campaign_id:
+            return False
+        if (item.editor_metadata or {}).get("editor_workflow_version") != expected_version + 1:
+            return False
         with self._transaction() as connection, connection.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 3))", (campaign_id,))
-            cursor.execute("INSERT INTO hosted_editor_workflow(campaign_id,version) VALUES(%s,1) ON CONFLICT DO NOTHING", (campaign_id,))
             cursor.execute("SELECT version FROM hosted_editor_workflow WHERE campaign_id=%s FOR UPDATE", (campaign_id,))
-            current = cursor.fetchone()[0]
+            workflow = cursor.fetchone()
+            current = workflow[0] if workflow else 1
             if current != expected_version:
                 return False
             cursor.execute("SELECT COALESCE(MAX(version),0)+1 FROM hosted_proposal_version WHERE proposal_id=%s", (item.proposal_id,))
             if cursor.fetchone()[0] != item.version:
                 raise ValueError("proposal_version_conflict")
             correction = (item.editor_metadata or {}).get("correction_of")
+            prior = None
             if correction:
-                prior = self._select(cursor, correction["proposal_id"], correction["proposal_version"], lock=True)
-                if prior is None or prior.status not in (ProposalStatus.DRAFT, ProposalStatus.CONFLICT) or item.version != prior.version + 1:
+                if not isinstance(correction, dict) or not {"proposal_id", "proposal_version"} <= correction.keys():
                     return False
+                prior = self._select(cursor, correction["proposal_id"], correction["proposal_version"], lock=True)
+                if (prior is None or not prior.editor_metadata
+                        or prior.status not in (ProposalStatus.DRAFT, ProposalStatus.CONFLICT)
+                        or prior.proposal_id != item.proposal_id
+                        or prior.campaign_id != item.campaign_id
+                        or item.version != prior.version + 1):
+                    return False
+            if workflow is None:
+                cursor.execute("INSERT INTO hosted_editor_workflow(campaign_id,version) VALUES(%s,1)", (campaign_id,))
+            if prior is not None:
                 retired_metadata = _retire_editor_metadata(prior.editor_metadata)
                 cursor.execute("UPDATE hosted_proposal_version SET status='rejected', editor_metadata=%s::jsonb WHERE proposal_id=%s AND version=%s", (json.dumps(retired_metadata), prior.proposal_id, prior.version))
                 self._audit(cursor, replace(prior, status=ProposalStatus.REJECTED, editor_metadata=retired_metadata), "rejected")
+            item = replace(item, status=ProposalStatus.DRAFT)
             cursor.execute("INSERT INTO hosted_proposal_version(proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,editor_metadata) VALUES(%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)",
                 (item.proposal_id, item.version, item.campaign_id, item.base_revision,
                  json.dumps(_encode_changes(item.changes)), item.diff_digest, item.payload_digest,
@@ -104,18 +119,27 @@ class PostgresProposalRepository:
 
     def advance_editor(self, campaign_id, expected_version):
         with self._transaction() as connection, connection.cursor() as cursor:
-            cursor.execute("INSERT INTO hosted_editor_workflow(campaign_id,version) VALUES(%s,1) ON CONFLICT DO NOTHING", (campaign_id,))
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 3))", (campaign_id,))
+            cursor.execute("SELECT version FROM hosted_editor_workflow WHERE campaign_id=%s FOR UPDATE", (campaign_id,))
+            workflow = cursor.fetchone()
+            current = workflow[0] if workflow else 1
+            if current != expected_version:
+                return False
+            if workflow is None:
+                cursor.execute("INSERT INTO hosted_editor_workflow(campaign_id,version) VALUES(%s,1)", (campaign_id,))
             cursor.execute("UPDATE hosted_editor_workflow SET version=%s WHERE campaign_id=%s AND version=%s", (expected_version + 1, campaign_id, expected_version))
             return cursor.rowcount == 1
 
     def save_editor_metadata(self, proposal_id, version, metadata, published_revision_id=None):
         with self._transaction() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "UPDATE hosted_proposal_version SET editor_metadata=%s::jsonb, published_revision_id=COALESCE(%s,published_revision_id) WHERE proposal_id=%s AND version=%s",
+                "UPDATE hosted_proposal_version SET editor_metadata=%s::jsonb, published_revision_id=COALESCE(%s,published_revision_id) WHERE proposal_id=%s AND version=%s RETURNING proposal_id,version,campaign_id,base_revision,changes,diff_digest,payload_digest,status,generation_id,source_revision,source_set_digest,terminal_draft_digest,published_revision_id,editor_metadata",
                 (json.dumps(metadata), published_revision_id, proposal_id, version),
             )
-            if cursor.rowcount != 1:
+            updated = self._item(cursor.fetchone())
+            if updated is None:
                 raise ValueError("proposal_not_found")
+            return updated
 
     def add(self, item):
         with self._transaction() as connection, connection.cursor() as cursor:
@@ -232,6 +256,7 @@ class PostgresProposalRepository:
                 source_revision=current.source_revision,
                 source_set_digest=current.source_set_digest,
                 terminal_draft_digest=current.terminal_draft_digest,
+                editor_metadata=current.editor_metadata,
             )
             cursor.execute("UPDATE hosted_proposal_version SET status='rejected' WHERE proposal_id=%s AND version=%s AND status=%s", (item.proposal_id, item.version, current.status.value))
             if cursor.rowcount != 1:

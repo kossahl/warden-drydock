@@ -1,7 +1,7 @@
 import threading
 import unittest
 from warden_drydock.hosted.engine.models import ExactTextChange, Status
-from warden_drydock.hosted.proposals.service import InMemoryProposalRepository, ProposalService, ProposalStatus
+from warden_drydock.hosted.proposals.service import InMemoryProposalRepository, ProposalService, ProposalStatus, ProposalVersion
 from warden_drydock.hosted.revisions.models import StaleHeadError
 from warden_drydock.hosted.revisions.models import FileHash, SnapshotManifest
 
@@ -13,6 +13,11 @@ class Proposals(unittest.TestCase):
   self.repo=InMemoryProposalRepository(); self.head='rev_one'; self.published=[]
   self.s=ProposalService(self.repo, head=lambda _:self.head, stage=lambda p:type('Stage',(),{'status':Status.STAGED})(), publish=lambda p,x:self.published.append((p,x)) or manifest(p), verify_publication=lambda value:value)
  def draft(self): return self.s.draft('proposal_one','campaign_one','rev_one',(ExactTextChange('change_one','record_one','a'*64,'# Two'),))
+ def editor_item(self, proposal_id='proposal_editor', version=1, campaign_id='campaign_one', workflow_version=2, status=ProposalStatus.DRAFT, correction_of=None, diff_digest=None):
+  changes=(ExactTextChange('change_%s_%d'%(proposal_id,version),'record_one','a'*64,'# Version %d'%version),)
+  metadata={'editor_workflow_version':workflow_version}
+  if correction_of is not None: metadata['correction_of']=correction_of
+  return ProposalVersion(proposal_id,version,campaign_id,'rev_one',changes,diff_digest or self.s._diff_digest(changes),self.s._payload_digest(changes),status=status,editor_metadata=metadata)
  def test_correction_retires_old_and_binding_is_exact(self):
   old=self.draft(); new=self.s.correct(old,(ExactTextChange('change_two','record_one','a'*64,'# Three'),))
   self.assertEqual(ProposalStatus.REJECTED, self.repo.items[('proposal_one',1)].status)
@@ -91,3 +96,78 @@ class Proposals(unittest.TestCase):
   self.assertEqual(changes,item.changes)
   self.assertNotEqual(item.payload_digest,self.s.draft(
       'proposal_reverse','campaign_one','rev_one',tuple(reversed(changes))).payload_digest)
+ def test_editor_add_rejects_campaign_and_workflow_mismatches_before_mutation(self):
+  item=self.editor_item(status=ProposalStatus.PUBLISHED)
+  self.assertFalse(self.repo.add_editor(item,'campaign_other',1))
+  self.assertNotIn('campaign_one',self.repo._editor_workflow)
+  wrong_stamp=self.editor_item(workflow_version=1)
+  self.assertFalse(self.repo.add_editor(wrong_stamp,'campaign_one',1))
+  stale=self.editor_item(workflow_version=3)
+  self.assertFalse(self.repo.add_editor(stale,'campaign_one',2))
+  self.assertNotIn('campaign_one',self.repo._editor_workflow)
+  self.assertEqual({},self.repo.items)
+  self.assertTrue(self.repo.add_editor(item,'campaign_one',1))
+  self.assertEqual(ProposalStatus.DRAFT,self.repo.get(item.proposal_id,item.version).status)
+  self.assertEqual((item.proposal_id,item.version,ProposalStatus.DRAFT.value),self.repo.audit[-1])
+ def test_editor_add_rejects_version_gaps_and_orders_editor_reads(self):
+  first=self.editor_item('proposal_zulu',workflow_version=2,status=ProposalStatus.PUBLISHED)
+  self.assertTrue(self.repo.add_editor(first,'campaign_one',1))
+  gap=self.editor_item('proposal_gap',version=3,workflow_version=3)
+  with self.assertRaisesRegex(ValueError,'proposal_version_conflict'):
+   self.repo.add_editor(gap,'campaign_one',2)
+  second=self.editor_item('proposal_alpha',workflow_version=3,status=ProposalStatus.APPROVED)
+  self.assertTrue(self.repo.add_editor(second,'campaign_one',2))
+  self.assertEqual(('proposal_alpha','proposal_zulu'),tuple(item.proposal_id for item in self.repo.editor_proposals()))
+  self.assertEqual((ProposalStatus.DRAFT,ProposalStatus.DRAFT),tuple(item.status for item in self.repo.editor_proposals()))
+ def test_editor_correction_cannot_retire_missing_unrelated_or_non_editor_proposals(self):
+  prior=self.editor_item(workflow_version=2)
+  self.assertTrue(self.repo.add_editor(prior,'campaign_one',1))
+  unrelated=self.editor_item('proposal_other',workflow_version=3)
+  self.assertTrue(self.repo.add_editor(unrelated,'campaign_one',2))
+  cross_proposal=self.editor_item('proposal_other',version=2,workflow_version=4,correction_of={'proposal_id':prior.proposal_id,'proposal_version':prior.version})
+  self.assertFalse(self.repo.add_editor(cross_proposal,'campaign_one',3))
+  self.assertEqual(ProposalStatus.DRAFT,self.repo.get(prior.proposal_id,prior.version).status)
+  missing=self.editor_item(version=2,workflow_version=4,correction_of={'proposal_id':'proposal_missing','proposal_version':1})
+  self.assertFalse(self.repo.add_editor(missing,'campaign_one',3))
+  self.assertEqual(ProposalStatus.DRAFT,self.repo.get(prior.proposal_id,prior.version).status)
+  plain=self.s.draft('proposal_plain','campaign_one','rev_one',(ExactTextChange('change_plain','record_one','a'*64,'# Plain'),))
+  non_editor=self.editor_item('proposal_plain',version=2,workflow_version=4,correction_of={'proposal_id':plain.proposal_id,'proposal_version':plain.version})
+  self.assertFalse(self.repo.add_editor(non_editor,'campaign_one',3))
+  self.assertEqual(ProposalStatus.DRAFT,self.repo.get(plain.proposal_id,plain.version).status)
+  self.assertNotIn((non_editor.proposal_id,non_editor.version),self.repo.items)
+ def test_valid_editor_correction_retires_prior_and_preserves_metadata_in_correction(self):
+  metadata={'editor_workflow_version':2,'marker':'prior'}
+  prior= self.editor_item(workflow_version=2)
+  prior=ProposalVersion(prior.proposal_id,prior.version,prior.campaign_id,prior.base_revision,prior.changes,prior.diff_digest,prior.payload_digest,editor_metadata=metadata)
+  self.assertTrue(self.repo.add_editor(prior,'campaign_one',1))
+  replacement=self.editor_item(version=2,workflow_version=3,correction_of={'proposal_id':prior.proposal_id,'proposal_version':prior.version})
+  self.assertTrue(self.repo.add_editor(replacement,'campaign_one',2))
+  self.assertEqual(ProposalStatus.REJECTED,self.repo.get(prior.proposal_id,prior.version).status)
+  self.assertEqual(ProposalStatus.DRAFT,self.repo.get(replacement.proposal_id,replacement.version).status)
+  corrected=self.s.correct(self.repo.get(replacement.proposal_id,replacement.version),(ExactTextChange('change_corrected','record_one','a'*64,'# Corrected'),))
+  self.assertEqual(replacement.editor_metadata,corrected.editor_metadata)
+  self.assertEqual(ProposalStatus.REJECTED,self.repo.get(replacement.proposal_id,replacement.version).status)
+ def test_approve_finalize_is_safe_for_publishers_with_or_without_keyword(self):
+  item=self.draft()
+  callback=object()
+  approved=self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest,finalize=callback)
+  self.assertEqual(ProposalStatus.PUBLISHED,approved.status)
+  self.assertEqual(1,len(self.published))
+
+  item=self.s.draft('proposal_finalize','campaign_one','rev_one',(ExactTextChange('change_finalize','record_one','a'*64,'# Finalize'),))
+  received=[]
+  def publish(version, staged, *, finalize):
+   received.append(finalize)
+   return manifest(version)
+  self.s._publish=publish
+  self.assertEqual(ProposalStatus.PUBLISHED,self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest,finalize=callback).status)
+  self.assertEqual([callback],received)
+ def test_editor_approval_and_reconciliation_bind_stored_digest(self):
+  item=self.editor_item(diff_digest='e'*64)
+  self.assertTrue(self.repo.add_editor(item,'campaign_one',1))
+  self.s._publish=lambda version, staged: None
+  approved=self.s.approve(item,diff_digest=item.diff_digest,base_revision=item.base_revision,payload_digest=item.payload_digest)
+  self.assertEqual(ProposalStatus.APPROVED,approved.status)
+  reconciled=self.s.reconcile(approved,manifest(item))
+  self.assertEqual(ProposalStatus.PUBLISHED,reconciled.status)
+  self.assertEqual('revision_two',reconciled.published_revision_id)
