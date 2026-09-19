@@ -151,6 +151,33 @@ class DeterministicOperationTests(EngineTestCase):
 
         self.assertEqual(first.findings, second.findings)
         self.assertRegex(first.findings[0].subject_id, r"^validation_warning_[a-f0-9]{32}$")
+        self.assertEqual(
+            "validation_warning_"
+            + hashlib.sha256(b"records/ship.md: self-connection").hexdigest()[:32],
+            first.findings[0].subject_id,
+        )
+
+    def test_validation_warning_subject_preserves_embedded_numeric_colons(self) -> None:
+        import warden_drydock.hosted.engine.facade as facade_module
+
+        def warning_for(target: str) -> int:
+            print(f"WARNING: records/ship.md:12: unresolved wikilink [[{target}]]")
+            return 0
+
+        with mock.patch.object(
+            facade_module,
+            "validate_campaign",
+            side_effect=lambda root: warning_for("target:1:name"),
+        ):
+            first = self.engine.validate(WorkspaceRequest("command_validate", self.handle))
+        with mock.patch.object(
+            facade_module,
+            "validate_campaign",
+            side_effect=lambda root: warning_for("target:2:name"),
+        ):
+            second = self.engine.validate(WorkspaceRequest("command_validate", self.handle))
+
+        self.assertNotEqual(first.findings[0].subject_id, second.findings[0].subject_id)
 
     def test_repeated_index_context_validate_and_retrieve_are_deterministic(self) -> None:
         first_index = self.engine.index(WorkspaceRequest("command_index", self.handle))
@@ -491,6 +518,52 @@ class ExactDiffTests(EngineTestCase):
         self.assertEqual(Status.INVALID, stale.status)
         self.assertEqual("content_digest_mismatch", stale.findings[0].code)
         self.assertEqual(original, self.show().records[0].content)
+
+    def test_exact_diff_binds_crlf_and_cr_sources_to_normalized_digest(self) -> None:
+        root = self.registry._resolve(self.handle)
+        source_path = root / "01-campaign" / "campaign-overview.md"
+        normalized = source_path.read_bytes().decode("utf-8")
+
+        for index, line_ending in enumerate(("\r\n", "\r"), start=1):
+            with self.subTest(line_ending=repr(line_ending)):
+                source = normalized.replace("\n", line_ending)
+                source_path.write_bytes(source.encode("utf-8"))
+                replacement = source.replace(
+                    'name: "Engine Test"', 'name: "Normalized Test"'
+                ).replace("# Engine Test", "# Normalized Test")
+                change = ExactTextChange(
+                    f"change_line_endings_{index}",
+                    "campaign-main",
+                    content_digest(source),
+                    replacement,
+                )
+                stale_change = replace(
+                    change,
+                    expected_content_digest=content_digest(
+                        source.replace("Engine Test", "Stale Test")
+                    ),
+                )
+
+                stale = self.engine.stage_exact_diff(
+                    StageExactDiffRequest(
+                        f"command_stale_line_endings_{index}",
+                        self.handle,
+                        exact_diff_digest((stale_change,)),
+                        (stale_change,),
+                    )
+                )
+                self.assertEqual(Status.INVALID, stale.status)
+                self.assertEqual("content_digest_mismatch", stale.findings[0].code)
+
+                staged = self.engine.stage_exact_diff(
+                    StageExactDiffRequest(
+                        f"command_line_endings_{index}",
+                        self.handle,
+                        exact_diff_digest((change,)),
+                        (change,),
+                    )
+                )
+                self.assertEqual(Status.STAGED, staged.status)
 
     def test_invalid_staged_candidate_returns_typed_findings(self) -> None:
         source = self.show()

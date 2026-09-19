@@ -48,7 +48,7 @@ from .registry import UnknownWorkspaceError, UnsafeWorkspaceError, WorkspaceRegi
 
 _DOMAIN_ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
-_WARNING_LOCATION = re.compile(r"^(.*):(\d+):(.*)$")
+_WARNING_LOCATION = re.compile(r"^([^:]+):(\d+):(.*)$")
 
 
 def _canonical_digest(value: object) -> str:
