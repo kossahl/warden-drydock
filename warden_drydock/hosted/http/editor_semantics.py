@@ -194,6 +194,8 @@ def _source_change_failure(value: Mapping[str, Any]) -> None:
     subjects = {card["subject_record_id"] for card in cards}
     if {source.get("subject_record_id") for source in sources} != subjects:
         _fail("mutation_consistency", "diff.source_changes")
+    if len({source["subject_record_id"] for source in sources}) != len(sources):
+        _fail("mutation_consistency", "diff.source_changes")
     by_subject = {source["subject_record_id"]: source for source in sources}
     for subject, source in by_subject.items():
         subject_cards = [card for card in cards if card["subject_record_id"] == subject]

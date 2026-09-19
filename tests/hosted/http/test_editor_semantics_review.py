@@ -100,3 +100,12 @@ class EditorSemanticsReviewTests(unittest.TestCase):
             validate_editor_semantics(payload)
 
         self.assertEqual(raised.exception.category, "mutation_consistency")
+
+    def test_duplicate_source_subject_is_mutation_inconsistency(self) -> None:
+        payload = deepcopy(_example("editor_proposal_view"))
+        payload["diff"]["source_changes"].append(deepcopy(payload["diff"]["source_changes"][0]))
+
+        with self.assertRaises(EditorSemanticError) as raised:
+            validate_editor_semantics(payload)
+
+        self.assertEqual(raised.exception.category, "mutation_consistency")
