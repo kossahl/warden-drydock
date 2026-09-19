@@ -173,18 +173,17 @@ class MultiReferenceRemovalTests(unittest.TestCase):
         }
         payload = self._remove_payload(revision, impact, [resolution], key="idem_remove_accept_unresolved")
 
-        with (
-            mock.patch.object(self.app, "editor_removal_impact", return_value=(200, impact)),
-            mock.patch.object(self.app, "_editor_validate_changes", return_value=[]),
-        ):
-            _, proposal = self.app.editor_record_remove("campaign_alpha", revision, "record-target", payload)
-            self.assertEqual(1, proposal["diff"]["unresolved_reference_count"])
-            source_change = next(
-                item for item in proposal["diff"]["source_changes"]
-                if item["subject_record_id"] == "record-source"
-            )
-            self.assertEqual(source_change["before_source"], source_change["after_source"])
-            self.assertIn("[[record-target|Record Target]]", source_change["after_source"])
+        with mock.patch.object(self.app, "editor_removal_impact", return_value=(200, impact)):
+            status, proposal = self.app.editor_record_remove("campaign_alpha", revision, "record-target", payload)
+        self.assertEqual(201, status)
+        self.assertEqual("passed", proposal["validation"]["status"])
+        self.assertEqual(1, proposal["diff"]["unresolved_reference_count"])
+        source_change = next(
+            item for item in proposal["diff"]["source_changes"]
+            if item["subject_record_id"] == "record-source"
+        )
+        self.assertEqual(source_change["before_source"], source_change["after_source"])
+        self.assertIn("[[record-target|Record Target]]", source_change["after_source"])
 
     def test_removal_impact_accepts_duplicate_normalized_headings(self):
         revision = self.backend._create_record("record-target")

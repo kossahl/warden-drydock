@@ -1923,6 +1923,7 @@ class SliceApplication:
             section_labels=section_labels,
         )
         changes = [change]
+        validation_changes = [change]
         source_before = {change.change_id: before}
         removal_impact = None
         resolutions = payload.get("resolutions", [])
@@ -1945,6 +1946,7 @@ class SliceApplication:
                 for record_id in self._editor_record_ids(campaign_id, revision_id)
             }
             source_mutations = {}
+            accepted_unresolved_connections = {}
             for reference in removal_impact["incoming_references"]:
                 resolution = next(item for item in resolutions if item.get("reference_id") == reference["reference_id"])
                 if resolution.get("action") == "accept_unresolved" and not reference["permitted_unresolved"]:
@@ -1952,6 +1954,8 @@ class SliceApplication:
                 if resolution.get("action") == "redirect" and resolution.get("replacement_target_record_id") not in self._editor_record_ids(campaign_id, revision_id) - {record_id}:
                     raise HTTPFailure(422, "proposal_validation_failure", "unknown_connection_target", "editor_proposal", self._request_id(payload))
                 source_record_id = reference["source_record_id"]
+                if resolution["action"] == "accept_unresolved":
+                    accepted_unresolved_connections.setdefault(source_record_id, set()).add(reference["connection_id"])
                 if source_record_id not in source_mutations:
                     source_mutations[source_record_id] = [
                         deepcopy(documents[source_record_id][0]),
@@ -1970,9 +1974,27 @@ class SliceApplication:
                 source_change = change_for(source_content, source, self._id("change", campaign_id, revision_id, source_record_id, first_connection_id), ChangeKind.UPDATE, section_labels=source_labels)
                 changes.append(source_change)
                 source_before[source_change.change_id] = source_content
+                if source_record_id not in accepted_unresolved_connections:
+                    validation_changes.append(source_change)
+                    continue
+                # The adapter has explicitly permitted these retained links,
+                # but generic campaign validation still rejects their missing
+                # targets. Validate the rest of the source mutation against a
+                # projection with only those links omitted; keep the original
+                # source change in the proposal for the accepted resolution.
+                validation_source = deepcopy(source)
+                validation_source["connections"] = [
+                    item for item in validation_source["connections"]
+                    if item["connection_id"] not in accepted_unresolved_connections[source_record_id]
+                ]
+                validation_source["content_digest"] = document_digest(validation_source)
+                validation_changes.append(change_for(
+                    source_content, validation_source, source_change.change_id,
+                    ChangeKind.UPDATE, section_labels=source_labels,
+                ))
 
         validation_findings = self._editor_validate_changes(
-            campaign_id, revision_id, changes, self._request_id(payload),
+            campaign_id, revision_id, validation_changes, self._request_id(payload),
         )
 
         head_manifest = self.campaigns[campaign_id].revisions[head_id]
