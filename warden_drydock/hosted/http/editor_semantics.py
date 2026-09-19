@@ -9,8 +9,9 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
+from warden_drydock.standalone import frontmatter
 from .contracts import canonical_digest, text_digest
-from .editor import _document, _typed_equal, document_digest
+from .editor import _document, _typed_equal, document_digest, parse_document
 
 
 class EditorSemanticError(ValueError):
@@ -41,6 +42,8 @@ def _record(value: Mapping[str, Any], path: str) -> None:
     except ValueError as exc:
         if str(exc) == "authority_status_mismatch":
             _fail("invalid_authority_transition", f"{path}.authority")
+        if str(exc) == "content_digest_mismatch":
+            _fail("idempotency_digest_conflict", f"{path}.content_digest")
         _fail("proposal_validation_failure", path)
     except (KeyError, TypeError):
         _fail("proposal_validation_failure", path)
@@ -50,16 +53,34 @@ def _record(value: Mapping[str, Any], path: str) -> None:
 def _property_changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for name in ("displayed_name", "status", "authority", "visibility"):
-        if not _typed_equal(before[name], after[name]):
-            result.append({"property": name, "before": before[name], "after": after[name]})
+        before_present = name in before
+        after_present = name in after
+        if not _typed_equal(before.get(name), after.get(name)) or before_present != after_present:
+            result.append({
+                "property": name,
+                "before": before.get(name),
+                "after": after.get(name),
+                "before_present": before_present,
+                "after_present": after_present,
+            })
     for collection, identifier, value_key in (("fields", "field_id", "value"), ("sections", "section_id", "body")):
         old = {item[identifier]: item for item in before[collection]}
         new = {item[identifier]: item for item in after[collection]}
-        for member_id in sorted(set(old) | set(new)):
-            old_value = old.get(member_id, {}).get(value_key)
-            new_value = new.get(member_id, {}).get(value_key)
-            if not _typed_equal(old_value, new_value):
-                result.append({"property": f"{collection}.{member_id}", "before": old_value, "after": new_value})
+        member_ids = list(old) + [member_id for member_id in new if member_id not in old]
+        missing = object()
+        for member_id in member_ids:
+            old_value = old.get(member_id, {}).get(value_key, missing)
+            new_value = new.get(member_id, {}).get(value_key, missing)
+            old_present = old_value is not missing
+            new_present = new_value is not missing
+            if not _typed_equal(old_value, new_value) or old_present != new_present:
+                result.append({
+                    "property": f"{collection}.{member_id}",
+                    "before": None if old_value is missing else old_value,
+                    "after": None if new_value is missing else new_value,
+                    "before_present": old_present,
+                    "after_present": new_present,
+                })
     return result
 
 
@@ -119,6 +140,8 @@ def _resolution_check(resolutions: list[Mapping[str, Any]], references: Mapping[
     _equal({item["reference_id"] for item in resolutions}, set(references), "incomplete_removal_resolution", "resolutions")
     for item in resolutions:
         reference = references[item["reference_id"]]
+        if reference.get("resolution_required") is not True:
+            _fail("proposal_validation_failure", "resolutions.reference_id")
         if item["action"] == "accept_unresolved" and not reference["permitted_unresolved"]:
             _fail("proposal_validation_failure", "resolutions.action")
         if item["action"] == "redirect":
@@ -127,6 +150,99 @@ def _resolution_check(resolutions: list[Mapping[str, Any]], references: Mapping[
                 _fail("proposal_validation_failure", "resolutions.replacement_target_record_id")
             if existing_record_ids is not None and target not in existing_record_ids:
                 _fail("invalid_connections", "resolutions.replacement_target_record_id")
+
+
+def _source_record(source: str, subject_id: str, resolution_cards: list[Mapping[str, Any]] = ()) -> dict[str, Any] | None:
+    try:
+        metadata = frontmatter(source)
+        if metadata.get("id") != subject_id or metadata.get("ownership") != "campaign":
+            return None
+        record = parse_document(source, subject_id, metadata.get("type"))
+        headings = [line for line in source.replace("\r\n", "\n").replace("\r", "\n").splitlines() if line.startswith("# ")]
+        if headings != [f"# {record['displayed_name']}"]:
+            return None
+        record = dict(
+            record,
+            sections=[dict(section, body=section["body"].strip("\n")) for section in record["sections"]],
+        )
+        record["content_digest"] = document_digest(record)
+        used: set[int] = set()
+        connections = []
+        for connection in record["connections"]:
+            replacement = None
+            for index, card in enumerate(resolution_cards):
+                reference = card.get("before")
+                if index in used or not isinstance(reference, Mapping):
+                    continue
+                if all(connection[key] == reference[key] for key in ("target_record_id", "relationship", "state", "context")):
+                    replacement = reference["connection_id"]
+                    used.add(index)
+                    break
+            connections.append(dict(connection, connection_id=replacement or connection["connection_id"]))
+        if connections != record["connections"]:
+            record = dict(record, connections=connections)
+            record["content_digest"] = document_digest(record)
+        return record
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _source_change_failure(value: Mapping[str, Any]) -> None:
+    diff = value["diff"]
+    cards = diff["cards"]
+    sources = diff.get("source_changes", [])
+    subjects = {card["subject_record_id"] for card in cards}
+    if {source.get("subject_record_id") for source in sources} != subjects:
+        _fail("mutation_consistency", "diff.source_changes")
+    if len({source["subject_record_id"] for source in sources}) != len(sources):
+        _fail("mutation_consistency", "diff.source_changes")
+    by_subject = {source["subject_record_id"]: source for source in sources}
+    for subject, source in by_subject.items():
+        subject_cards = [card for card in cards if card["subject_record_id"] == subject]
+        record_cards = [card for card in subject_cards if card["kind"] in {"record_created", "record_updated", "record_removed"}]
+        if len({card["kind"] for card in record_cards}) > 1:
+            _fail("mutation_consistency", "diff.source_changes")
+        kind = record_cards[0]["kind"] if record_cards else "record_updated"
+        expected_change_type = {"record_created": "create", "record_updated": "update", "record_removed": "delete"}[kind]
+        if source["change_type"] != expected_change_type:
+            _fail("mutation_consistency", f"diff.source_changes.{subject}.change_type")
+        before_source, after_source = source.get("before_source"), source.get("after_source")
+        expected_presence = {
+            "record_created": (None, False, True),
+            "record_updated": (None, True, True),
+            "record_removed": (None, True, False),
+        }[kind]
+        if (before_source is None) != (not expected_presence[1]) or (after_source is None) != (not expected_presence[2]):
+            _fail("mutation_consistency", f"diff.source_changes.{subject}")
+        for side, source_text in (("before", before_source), ("after", after_source)):
+            if source_text is None:
+                continue
+            record = _source_record(source_text, subject)
+            if record is None:
+                _fail("mutation_consistency", f"diff.source_changes.{subject}.{side}_source")
+            structured = next(
+                (card.get(side) for card in subject_cards if isinstance(card.get(side), Mapping) and "record_id" in card[side]),
+                None,
+            )
+            if structured is not None:
+                for key in ("record_id", "record_type", "displayed_name", "ownership", "status", "authority", "visibility", "fields", "sections"):
+                    _equal(record[key], structured[key], "mutation_consistency", f"diff.source_changes.{subject}.{side}_source.{key}")
+                if len(record["connections"]) != len(structured["connections"]):
+                    _fail("mutation_consistency", f"diff.source_changes.{subject}.{side}_source.connections")
+                for actual, expected in zip(record["connections"], structured["connections"]):
+                    _equal(
+                        {key: actual[key] for key in ("target_record_id", "relationship", "state", "context")},
+                        {key: expected[key] for key in ("target_record_id", "relationship", "state", "context")},
+                        "mutation_consistency", f"diff.source_changes.{subject}.{side}_source.connections",
+                    )
+
+
+def _impact_digest(value: Mapping[str, Any]) -> str:
+    return canonical_digest({
+        key: value[key]
+        for key in ("contract_name", "contract_version", "record", "outgoing_connections", "incoming_references")
+        if key in value
+    })
 
 
 def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = None, existing_record_ids: set[str] | None = None) -> None:
@@ -175,6 +291,16 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
     _equal(validation["validation_digest"], canonical_digest({key: validation[key] for key in ("status", "error_count", "findings")}), "idempotency_digest_conflict", "validation.validation_digest")
     if status in {"needs_review", "approving", "approved"} and (validation["status"], validation["error_count"]) != ("passed", 0):
         _fail("proposal_validation_failure", "validation")
+    if status in {"needs_review", "approving", "approved"} and any(
+        isinstance(finding, Mapping) and finding.get("severity") == "error"
+        for finding in validation.get("findings", [])
+    ):
+        _fail("proposal_validation_failure", "validation.findings")
+    if status in {"approving", "approved"} and any(
+        isinstance(finding, Mapping) and finding.get("severity") == "warning"
+        for finding in validation.get("findings", [])
+    ):
+        _fail("proposal_validation_failure", "validation.findings")
     approval_binding = value["core_proposal"].get("approval_binding")
     if status in {"approving", "approved"} and approval_binding is None:
         _fail("proposal_approval_conflict", "approval_binding")
@@ -201,6 +327,17 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
     actual_authority: set[tuple[Any, ...]] = set()
     actual_visibility: set[tuple[Any, ...]] = set()
     for card in cards:
+        for side in ("before", "after"):
+            record = card.get(side)
+            if isinstance(record, Mapping) and "record_id" in record:
+                _equal(record["record_id"], card["subject_record_id"], "unsafe_binding", f"diff.cards.{card['change_id']}.{side}.record_id")
+        if (
+            card["kind"] == "record_updated"
+            and isinstance(card.get("before"), Mapping)
+            and isinstance(card.get("after"), Mapping)
+            and card["before"]["record_type"] != card["after"]["record_type"]
+        ):
+            _fail("proposal_validation_failure", f"diff.cards.{card['change_id']}.after.record_type")
         for key in ("before", "after"):
             if isinstance(card.get(key), dict) and "content_digest" in card[key]:
                 _record(card[key], f"card.{card['change_id']}.{key}")
@@ -215,10 +352,6 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
                 actual_authority.add((card["change_id"], card["subject_record_id"], before_authority, after["authority"]))
             if isinstance(before, dict) and before["visibility"] != after["visibility"]:
                 actual_visibility.add((card["change_id"], card["subject_record_id"], json.dumps(before["visibility"], sort_keys=True), json.dumps(after["visibility"], sort_keys=True)))
-        elif card["kind"] == "record_removed" and isinstance(card.get("before"), dict):
-            before = card["before"]
-            if before["authority"] in {"canon", "revealed"}:
-                actual_authority.add((card["change_id"], card["subject_record_id"], before["authority"], "absent"))
     declared_authority = {(x["change_id"], x["record_id"], x["from"], x["to"]) for x in value["diff"]["authority_changes"]}
     declared_visibility = {(x["change_id"], x["record_id"], json.dumps(x["before"], sort_keys=True), json.dumps(x["after"], sort_keys=True)) for x in value["diff"]["visibility_changes"]}
     _equal(actual_authority, declared_authority, "proposal_validation_failure", "authority_changes")
@@ -240,10 +373,36 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
     kinds = {"create": {"record_created", "connection_added"}, "edit": {"record_updated", "connection_added", "connection_updated", "connection_removed"}, "remove": {"record_removed", "connection_removed", "reference_resolution"}}
     if value["mutation_kind"] not in kinds or any(card["kind"] not in kinds[value["mutation_kind"]] for card in cards):
         _fail("proposal_validation_failure", "diff.cards.kind")
-    if value["mutation_kind"] == "create" and sum(card["kind"] == "record_created" for card in cards) != 1:
-        _fail("proposal_validation_failure", "diff.cards.record_created")
-    if value["mutation_kind"] in {"edit", "remove"} and any(binding["record_digest"] is None for binding in value["record_bindings"]):
-        _fail("unsafe_binding", "record_bindings.record_digest")
+    primary_kind = {"create": "record_created", "edit": "record_updated", "remove": "record_removed"}.get(value["mutation_kind"])
+    if primary_kind is None or sum(card["kind"] in {"record_created", "record_updated", "record_removed"} for card in cards) != 1 or sum(card["kind"] == primary_kind for card in cards) != 1:
+        _fail("proposal_validation_failure", "diff.cards.record_mutation")
+    record_cards = {
+        card["subject_record_id"]: card
+        for card in cards
+        if card["kind"] in {"record_created", "record_updated", "record_removed"}
+    }
+    source_changes = {source["subject_record_id"]: source for source in value["diff"].get("source_changes", [])}
+    for index, binding in enumerate(value["record_bindings"]):
+        card = record_cards.get(binding["record_id"])
+        if value["mutation_kind"] == "create":
+            if binding["record_digest"] is not None:
+                _fail("unsafe_binding", f"record_bindings.{index}.record_digest")
+        elif card is not None and not isinstance(card.get("before"), Mapping):
+            _fail("unsafe_binding", f"record_bindings.{index}.record_digest")
+        elif card is not None:
+            _equal(binding["record_digest"], card["before"]["content_digest"], "idempotency_digest_conflict", f"record_bindings.{index}.record_digest")
+        else:
+            source = source_changes.get(binding["record_id"])
+            if source is None or source.get("before_source") is None:
+                _fail("unsafe_binding", f"record_bindings.{index}.record_digest")
+            resolution_cards = [
+                item for item in cards
+                if item["kind"] == "reference_resolution" and item["subject_record_id"] == binding["record_id"]
+            ]
+            parsed = _source_record(source["before_source"], binding["record_id"], resolution_cards)
+            if parsed is None:
+                _fail("unsafe_binding", f"record_bindings.{index}.record_digest")
+            _equal(binding["record_digest"], parsed["content_digest"], "idempotency_digest_conflict", f"record_bindings.{index}.record_digest")
     if value["mutation_kind"] == "create" and any(binding["record_digest"] is not None for binding in value["record_bindings"]):
         _fail("unsafe_binding", "record_bindings.record_digest")
     if value["mutation_kind"] == "remove":
@@ -268,9 +427,37 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
             _fail("unsafe_binding", "core change")
         expected_type = "add" if card["kind"] == "record_created" else "remove" if card["kind"] == "record_removed" else "update"
         _equal((change["change_type"], change["subject_id"]), (expected_type, card["subject_record_id"]), "unsafe_binding", "core change binding")
-        document = card.get("after") if isinstance(card.get("after"), dict) and "content_digest" in card["after"] else card.get("before")
-        if isinstance(document, dict) and "content_digest" in document:
-            _equal(change["content_digest"], document["content_digest"], "unsafe_binding", "core change digest")
+        record_card = record_cards.get(card["subject_record_id"])
+        if card["kind"] in {"record_created", "record_updated", "record_removed"}:
+            before = card.get("before")
+            after = card.get("after")
+            expected = {
+                "change_type": "add" if card["kind"] == "record_created" else "remove" if card["kind"] == "record_removed" else "update",
+                "subject_id": card["subject_record_id"],
+                "from_authority": before.get("authority") if isinstance(before, Mapping) else "absent",
+                "to_authority": after.get("authority") if isinstance(after, Mapping) else "absent",
+                "content_digest": (after or before).get("content_digest") if isinstance(after or before, Mapping) else None,
+            }
+        elif card["kind"] in {"connection_added", "connection_updated", "connection_removed"}:
+            expected = {
+                "change_type": "update",
+                "subject_id": card["subject_record_id"],
+                "from_authority": (record_card.get("before") or record_card.get("after"))["authority"] if record_card else "preparation",
+                "to_authority": (record_card.get("after") or record_card.get("before"))["authority"] if record_card else "preparation",
+                "content_digest": (record_card.get("after") or record_card.get("before")).get("content_digest") if record_card else canonical_digest(card["connection"]),
+            }
+        elif card["kind"] == "reference_resolution":
+            expected = {
+                "change_type": "update",
+                "subject_id": card["subject_record_id"],
+                "from_authority": "preparation",
+                "to_authority": "preparation",
+                "content_digest": canonical_digest(card["after"]),
+            }
+        else:
+            _fail("unsafe_binding", "core change kind")
+        for key, expected_value in expected.items():
+            _equal(change[key], expected_value, "unsafe_binding", f"core change {key}")
     _equal(value["diff"]["affected_record_count"], len({card["subject_record_id"] for card in cards}), "proposal_validation_failure", "affected_record_count")
     if value["mutation_kind"] != "remove":
         _equal(value["impact_binding"], None, "unsafe_binding", "impact_binding")
@@ -301,9 +488,14 @@ def validate_editor_semantics(
         _equal(payload["outgoing_connections"], payload["record"]["connections"], "unsafe_binding", "outgoing_connections")
         _unique(payload["outgoing_connections"], "connection_id", "outgoing_connections.connection_id")
         _unique(payload["incoming_references"], "reference_id", "incoming_references.reference_id")
-        _equal(payload["impact_digest"], canonical_digest({key: payload[key] for key in ("record", "outgoing_connections", "incoming_references")}), "idempotency_digest_conflict", "impact_digest")
+        for index, reference in enumerate(payload["incoming_references"]):
+            _equal(reference["target_record_id"], payload["binding"]["record_id"], "unsafe_binding", f"incoming_references.{index}.target_record_id")
+            if reference["resolution_required"] is not True or reference["permitted_unresolved"] is not False:
+                _fail("proposal_validation_failure", f"incoming_references.{index}")
+        _equal(payload["impact_digest"], _impact_digest(payload), "idempotency_digest_conflict", "impact_digest")
         return
     if name == "editor_proposal_view":
+        _source_change_failure(payload)
         _proposal(payload, impact=impact, existing_record_ids=existing_record_ids)
         return
     if name == "editor_proposal_approval_result":
@@ -373,6 +565,15 @@ def validate_editor_semantics(
         if proposal is None:
             _fail("proposal_approval_conflict", "loaded proposal")
         _proposal(proposal, impact=impact, existing_record_ids=existing_record_ids)
+        operation = payload["operation_request"]
+        if stored_receipt is not None and stored_receipt.get("idempotency_key") == operation["idempotency_key"] and stored_receipt.get("payload_digest") != operation["payload_digest"]:
+            _fail("replay_mismatch", "operation_request.payload_digest")
+        operation_projection = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"contract_name", "contract_version", "operation_request", "request_id", "idempotency_key", "payload_digest"}
+        }
+        _equal(operation["payload_digest"], canonical_digest(operation_projection), "idempotency_digest_conflict", "operation_request.payload_digest")
         for key in ("source_revision", "base_revision", "expected_campaign_head", "proposal_payload_digest", "impact_digest", "impact_binding", "resolutions", "record_bindings", "authority_outcome", "visibility_outcome"):
             _equal(payload[key], proposal[key], "proposal_approval_conflict", key)
         _equal(payload["proposal"], {"proposal_id": proposal["proposal_id"], "proposal_version": proposal["proposal_version"]}, "proposal_approval_conflict", "proposal")

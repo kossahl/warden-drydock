@@ -23,7 +23,7 @@
       "json_ascii_escaping": false,
       "include_fields": ["record_id", "record_type", "displayed_name", "ownership", "status", "authority", "visibility", "fields", "sections", "connections", "content_digest"],
       "exclude_fields": ["content_digest"],
-      "normalize_paths": ["sections[].body"],
+      "normalize_paths": ["all string-valued paths in the included projection"],
       "array_order": "Preserve fields, sections, and connections order."
     },
     "impact_digest": {

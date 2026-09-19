@@ -239,7 +239,12 @@ class RuntimeTests(unittest.TestCase):
             )
             assert_no_outer_transaction_wrapper(shared_clean)
 
-    def test_readiness_requires_each_editor_migration_marker(self) -> None:
+    def test_readiness_requires_current_schema_markers(self) -> None:
+        health_source = (ROOT / "warden_drydock" / "hosted" / "operations" / "health.py").read_text(encoding="utf-8")
+        for version in ("0007", "0008", "0009", "0010", "0011", "0012"):
+            self.assertIn(f"version='{version}'", health_source)
+        self.assertNotIn("version='0002'", health_source)
+
         from warden_drydock.hosted.operations import health
 
         with tempfile.TemporaryDirectory() as directory:

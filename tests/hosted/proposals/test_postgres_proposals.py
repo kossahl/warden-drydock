@@ -7,7 +7,7 @@ import uuid
 
 from warden_drydock.hosted.engine.models import ExactTextChange, Status
 from warden_drydock.hosted.proposals import PostgresProposalRepository
-from warden_drydock.hosted.proposals.service import ProposalService, ProposalStatus
+from warden_drydock.hosted.proposals.service import ProposalService, ProposalStatus, ProposalVersion
 from warden_drydock.hosted.revisions.models import FileHash, SnapshotManifest
 
 
@@ -37,6 +37,7 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("DELETE FROM hosted_proposal_audit WHERE proposal_id LIKE %s", (self.prefix + "%",))
             cursor.execute("DELETE FROM hosted_proposal_version WHERE proposal_id LIKE %s", (self.prefix + "%",))
+            cursor.execute("DELETE FROM hosted_editor_workflow WHERE campaign_id LIKE %s", (self.prefix + "%",))
 
     def draft(self, suffix="one"):
         return self.service.draft(
@@ -69,6 +70,151 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
         for thread in threads: thread.join(10)
         self.assertTrue(all(not thread.is_alive() for thread in threads))
         return results
+
+    def editor_item(self, suffix, campaign_id, *, version=1, workflow_version=2,
+                    correction_of=None, status=ProposalStatus.DRAFT):
+        metadata = {"editor_workflow_version": workflow_version}
+        if correction_of is not None:
+            metadata["correction_of"] = correction_of
+        return ProposalVersion(
+            self.prefix + suffix, version, campaign_id, "revision_one",
+            (ExactTextChange("change_one", "record_one", "a" * 64, "# Two"),),
+            "a" * 64, "b" * 64, status=status, editor_metadata=metadata,
+        )
+
+    def test_stale_initial_editor_operations_do_not_create_workflow_or_proposals(self):
+        campaign_id = self.prefix + "_campaign"
+        item = self.editor_item("_stale", campaign_id, workflow_version=3)
+
+        self.assertFalse(self.repository.add_editor(item, campaign_id, 2))
+        self.assertFalse(self.repository.advance_editor(campaign_id, 2))
+        self.assertIsNone(self.repository.get(item.proposal_id, item.version))
+        self.assertEqual(1, self.repository.editor_workflow_version(campaign_id))
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM hosted_editor_workflow WHERE campaign_id=%s", (campaign_id,))
+            self.assertEqual((0,), cursor.fetchone())
+
+    def test_editor_binding_mismatches_leave_workflow_and_proposals_unchanged(self):
+        campaign_id = self.prefix + "_campaign"
+        other_campaign_id = self.prefix + "_other_campaign"
+        mismatched = self.editor_item("_mismatched", campaign_id)
+
+        self.assertFalse(self.repository.add_editor(mismatched, other_campaign_id, 1))
+        self.assertIsNone(self.repository.get(mismatched.proposal_id, mismatched.version))
+        self.assertEqual(1, self.repository.editor_workflow_version(other_campaign_id))
+
+        bound = self.editor_item("_bound", campaign_id)
+        self.assertTrue(self.repository.add_editor(bound, campaign_id, 1))
+        published = self.editor_item("_published", campaign_id, status=ProposalStatus.PUBLISHED)
+        self.assertTrue(self.repository.add_editor(published, campaign_id, 2))
+        self.assertEqual(ProposalStatus.DRAFT, self.repository.get(published.proposal_id, 1).status)
+        stale = self.editor_item("_stale_binding", campaign_id, workflow_version=2)
+        self.assertFalse(self.repository.add_editor(stale, campaign_id, 3))
+        self.assertIsNone(self.repository.get(stale.proposal_id, stale.version))
+        self.assertEqual(3, self.repository.editor_workflow_version(campaign_id))
+        self.assertEqual((bound, published), self.repository.editor_proposals())
+
+    def test_empty_editor_correction_leaves_workflow_and_proposals_unchanged(self):
+        campaign_id = self.prefix + "_campaign"
+        prior = self.editor_item("_empty_correction", campaign_id)
+        self.assertTrue(self.repository.add_editor(prior, campaign_id, 1))
+
+        successor = self.editor_item(
+            "_empty_correction", campaign_id, version=2, workflow_version=3,
+            correction_of={},
+        )
+        self.assertFalse(self.repository.add_editor(successor, campaign_id, 2))
+        self.assertEqual(ProposalStatus.DRAFT, self.repository.get(prior.proposal_id, 1).status)
+        self.assertIsNone(self.repository.get(successor.proposal_id, 2))
+        self.assertEqual(2, self.repository.editor_workflow_version(campaign_id))
+        self.assertEqual((prior,), self.repository.editor_proposals())
+
+    def test_editor_corrections_require_same_editor_lineage(self):
+        campaign_id = self.prefix + "_campaign"
+        unrelated = self.editor_item("_unrelated", campaign_id)
+        self.assertTrue(self.repository.add_editor(unrelated, campaign_id, 1))
+        target = self.editor_item("_target", campaign_id, workflow_version=3)
+        self.assertTrue(self.repository.add_editor(target, campaign_id, 2))
+
+        wrong_proposal = self.editor_item(
+            "_target", campaign_id, version=2, workflow_version=4,
+            correction_of={"proposal_id": unrelated.proposal_id, "proposal_version": 1},
+        )
+        self.assertFalse(self.repository.add_editor(wrong_proposal, campaign_id, 3))
+        self.assertEqual(ProposalStatus.DRAFT, self.repository.get(unrelated.proposal_id, 1).status)
+        self.assertEqual(3, self.repository.editor_workflow_version(campaign_id))
+
+        plain = ProposalVersion(
+            self.prefix + "_plain", 1, campaign_id, "revision_one",
+            (ExactTextChange("change_plain", "record_one", "a" * 64, "# Two"),),
+            "a" * 64, "b" * 64,
+        )
+        self.repository.add(plain)
+        non_editor_prior = self.editor_item(
+            "_target", campaign_id, version=2, workflow_version=4,
+            correction_of={"proposal_id": plain.proposal_id, "proposal_version": 1},
+        )
+        self.assertFalse(self.repository.add_editor(non_editor_prior, campaign_id, 3))
+        self.assertEqual(ProposalStatus.DRAFT, self.repository.get(plain.proposal_id, 1).status)
+        self.assertEqual(3, self.repository.editor_workflow_version(campaign_id))
+
+        gap = self.editor_item(
+            "_target", campaign_id, version=3, workflow_version=4,
+            correction_of={"proposal_id": target.proposal_id, "proposal_version": 1},
+        )
+        with self.assertRaisesRegex(ValueError, "proposal_version_conflict"):
+            self.repository.add_editor(gap, campaign_id, 3)
+        self.assertEqual(3, self.repository.editor_workflow_version(campaign_id))
+
+        valid = self.editor_item(
+            "_target", campaign_id, version=2, workflow_version=4,
+            correction_of={"proposal_id": target.proposal_id, "proposal_version": 1},
+        )
+        self.assertTrue(self.repository.add_editor(valid, campaign_id, 3))
+        self.assertEqual(ProposalStatus.REJECTED, self.repository.get(target.proposal_id, 1).status)
+        self.assertEqual(ProposalStatus.DRAFT, self.repository.get(valid.proposal_id, 2).status)
+        self.assertEqual(4, self.repository.editor_workflow_version(campaign_id))
+
+    def test_editor_metadata_survives_correction_save_and_restart(self):
+        campaign_id = self.prefix + "_campaign"
+        item = self.editor_item("_correct", campaign_id)
+        self.assertTrue(self.repository.add_editor(item, campaign_id, 1))
+        corrected = self.repository.correct(
+            item,
+            (ExactTextChange("change_two", "record_one", "a" * 64, "# Three"),),
+            item.base_revision,
+        )
+        self.assertEqual(item.editor_metadata, corrected.editor_metadata)
+
+        restarted = PostgresProposalRepository(self.connect)
+        self.assertEqual(corrected, restarted.get(corrected.proposal_id, corrected.version))
+        self.assertEqual(
+            (item.editor_metadata, corrected.editor_metadata),
+            tuple(value.editor_metadata for value in restarted.editor_proposals()),
+        )
+
+        saved_metadata = {"editor_workflow_version": 2, "saved": "yes"}
+        saved = restarted.save_editor_metadata(
+            corrected.proposal_id, corrected.version, saved_metadata, "revision_two",
+        )
+        self.assertEqual(saved_metadata, saved.editor_metadata)
+        self.assertEqual("revision_two", saved.published_revision_id)
+        self.assertEqual(saved, PostgresProposalRepository(self.connect).get(saved.proposal_id, saved.version))
+
+    def test_editor_proposals_read_back_in_stable_order(self):
+        campaign_id = self.prefix + "_campaign"
+        items = (
+            self.editor_item("_z", campaign_id, workflow_version=2),
+            self.editor_item("_a", campaign_id, workflow_version=2),
+            self.editor_item("_z", campaign_id, version=2, workflow_version=3),
+            self.editor_item("_a", campaign_id, version=2, workflow_version=3),
+        )
+        for item in (items[0], items[1], items[2], items[3]):
+            self.repository.add(item)
+
+        expected = tuple(sorted(items, key=lambda item: (item.proposal_id, item.version)))
+        self.assertEqual(expected, self.repository.editor_proposals())
+        self.assertEqual(expected, PostgresProposalRepository(self.connect).editor_proposals())
 
     def test_competing_approvals_publish_once_and_exact_retry_is_idempotent(self):
         item = self.draft()
