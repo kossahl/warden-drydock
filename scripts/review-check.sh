@@ -42,16 +42,35 @@ source_state() {
 
 github_repository_slug() {
   local remote_url="$1"
+  local remote_authority
   local remote_path
   case "$remote_url" in
-    https://github.com/*)
-      remote_path="${remote_url#https://github.com/}"
+    https://*|http://*)
+      case "$remote_url" in
+        https://*) remote_url="${remote_url#https://}" ;;
+        http://*) remote_url="${remote_url#http://}" ;;
+      esac
+      case "$remote_url" in
+        */*)
+          remote_authority="${remote_url%%/*}"
+          remote_path="${remote_url#*/}"
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+      case "$remote_authority" in
+        github.com) ;;
+        *@github.com)
+          [ -n "${remote_authority%@github.com}" ] || return 1
+          ;;
+        *)
+          return 1
+          ;;
+      esac
       ;;
-    https://*@github.com/*)
-      remote_path="${remote_url#https://*@github.com/}"
-      ;;
-    http://github.com/*|ssh://git@github.com/*)
-      remote_path="${remote_url#*github.com/}"
+    ssh://git@github.com/*)
+      remote_path="${remote_url#ssh://git@github.com/}"
       ;;
     git@github.com:*)
       remote_path="${remote_url#git@github.com:}"
