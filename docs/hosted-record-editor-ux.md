@@ -181,11 +181,11 @@ snapshot.
    another deterministic UI suggestion. The Warden can edit the candidate
    before submission, subject to the domain identifier rules. The server owns
    final allocation and validation. The UI never accepts a path.
-5. The form shows the selected adapter and record type's provisional defaults.
-   For the current Mothership templates, those defaults are type-specific. A
-   `handout` uses `visibility: players` and `warden_only: false`; other types
-   retain their adapter-defined defaults. The form must not silently choose
-   canon or revealed authority.
+5. The form shows the selected record type's adapter-defined defaults and marks
+   adapter-required values read-only. For current Mothership record types, a
+   `handout` requires `visibility: players` and `warden_only: false`; every
+   other registered type requires `visibility: warden` and `warden_only: true`.
+   The form must not silently choose canon or revealed authority.
 6. `Save as proposal` validates the entered record and creates a Draft proposal
    bound to the current head. It does not create a head or canon record.
 7. The Warden reviews the exact creation diff. The review includes the new
@@ -212,8 +212,10 @@ receives focus after the error summary is announced.
    is fixed by the adapter. Optional adapter sections may be left empty. The UI
    must not invent headings or silently delete content from an unsupported
    section.
-5. The Warden may change status, visibility, Warden-only state, and other
-   adapter-supported metadata. Authority is shown as a computed consequence.
+5. The Warden may change status and other adapter-supported metadata. Visibility
+   and Warden-only state are editable only when the adapter permits changes. If
+   the adapter fixes either value for the selected type, the form shows the
+   required value as read-only. Authority is shown as a computed consequence.
 6. `Save as proposal` validates the complete candidate revision and opens the
    review state. It does not update the record page behind the review.
 7. The exact review lists every changed record property and section, including
@@ -237,8 +239,9 @@ The Basics section contains:
 - stable Record ID, read-only after creation;
 - record type, read-only after creation;
 - adapter-supported status;
-- adapter-supported visibility;
-- adapter-supported Warden-only flag;
+- adapter-supported visibility, read-only when the adapter fixes its value;
+- adapter-supported Warden-only flag, read-only when the adapter fixes its
+  value;
 - adapter-required fields such as date or audience, when applicable; and
 - a collapsed `Source details` area containing viewed revision and digest
   bindings for inspection.
@@ -274,9 +277,12 @@ Visibility is an audience label, not permission to edit. The current Mothership
 values are `warden`, `players`, and `shared`. The editor must:
 
 - show the current visibility and Warden-only state together;
+- show adapter-fixed values as read-only and allow edits only when the adapter
+  permits them;
 - show the adapter validation warning before review when a combination is
   forbidden;
-- show a prominent warning before approving a change that broadens audience;
+- show a prominent warning before approving a permitted change that broadens
+  audience;
 - require the handout audience when the adapter requires it; and
 - keep Warden-only content out of any player-facing response or preview.
 
@@ -291,8 +297,8 @@ Each adapter-supported field uses the simplest suitable control:
 | --- | --- |
 | Single-line text | Labelled input with length and required state. Long values wrap in review. |
 | Multi-line prose | Labelled textarea. Preserve line breaks and entered content. Show a plain-text preview and exact source inspection in review. |
-| Status, visibility, authority-related values | Select or radio group with the current value, allowed values, and a text explanation of the resulting authority. |
-| Boolean Warden-only state | Checkbox with an explicit label. Do not encode it only as a badge. |
+| Status, visibility, authority-related values | Select or radio group when editable. Otherwise show a read-only value. In both cases, show the allowed values and a text explanation of the resulting authority. |
+| Boolean Warden-only state | Checkbox only when the adapter permits changes. Otherwise show a read-only value with an explicit label and fixed-rule explanation. |
 | Date or adapter-defined scalar | Labelled control with the adapter's validation message. Do not infer a date from the browser locale. |
 | Adapter-defined optional section | Collapsible section. Empty optional sections remain empty and are not silently removed. |
 | Adapter-defined required section | Expanded when invalid or incomplete. The error names the section and preserves its contents. |
@@ -679,17 +685,18 @@ Issue #212 authorizes these choices for this contract and the #67 editor work:
    preserving v1 authority and error meanings while supporting create, remove,
    and multi-connection changes. This UX artifact records that requirement; it
    does not register or publish the contract.
-5. Warden-safe visibility metadata is explicit. Visibility changes appear in
-   the exact diff, widening requires approval, and no automatic widening is
-   permitted.
+5. Warden-safe visibility metadata is explicit. Where the adapter permits
+   visibility changes, they appear in the exact diff, widening requires
+   approval, and no automatic widening is permitted. Adapter-fixed visibility
+   remains read-only.
 6. Existing hyphenated Atlas/domain record IDs are accepted directly, subject
    to the active public `domain_id` rules, including a minimum length of three.
    No legacy-ID mapping or translation table exists; path-like values remain
    invalid.
 - Adapter metadata may define additional fields, optional sections, allowed
-  status transitions, and the provisional default. The current Mothership
-  template defaults remain the local default; future adapters must supply their
-  own values.
+  status transitions, fixed metadata values, and provisional defaults. The
+  current Mothership values remain the local adapter rules; future adapters must
+  supply their own values.
 - The exact visual diff algorithm is an implementation detail. The observable
   requirement is complete, readable before/after content and structured
   metadata, authority, connection, and removal changes.
