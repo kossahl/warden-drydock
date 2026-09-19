@@ -314,13 +314,15 @@ class SliceApplication:
                 self._editor_workflow.get(item.campaign_id, 1),
                 value["editor_workflow_version"],
             )
-        if self._editor_proposals:
-            return
         if not self._editor_state_file.exists():
             return
         try:
             value = json.loads(self._editor_state_file.read_text(encoding="utf-8"))
-            self._editor_workflow = {str(k): int(v) for k, v in value.get("workflow", {}).items()}
+            for campaign_id, workflow in value.get("workflow", {}).items():
+                campaign_id = str(campaign_id)
+                self._editor_workflow[campaign_id] = max(
+                    self._editor_workflow.get(campaign_id, 1), int(workflow),
+                )
             for stored in value.get("proposals", []):
                 proposal_id, version = stored["proposal_id"], int(stored["version"])
                 item = self.proposal_repository.get(proposal_id, version)
@@ -1546,12 +1548,26 @@ class SliceApplication:
         if result.staged_handle != base_handle:
             self.registry.discard(result.staged_handle)
         if result.status is Status.STAGED:
+            messages = {
+                "validation_warning": "Review this validation warning before approval.",
+                "validation_error": "Fix this validation error before approval.",
+            }
+            recovery_actions = {
+                "validation_warning": "Review the warning and update the record if needed.",
+                "validation_error": "Correct the record and retry validation.",
+            }
             return [
                 {
                     "finding_id": self._id("finding", request_id, index, finding.code, finding.subject_id),
                     "code": finding.code,
                     "severity": finding.severity.value,
                     "location": "record",
+                    "message": messages.get(
+                        finding.code, "Review this validation finding before approval."
+                    ),
+                    "recovery_action": recovery_actions.get(
+                        finding.code, "Correct the record and retry validation."
+                    ),
                     "retryable": False,
                 }
                 for index, finding in enumerate(result.findings)
@@ -1846,11 +1862,11 @@ class SliceApplication:
         expected_subject = proposal_id_override if operation_name == "editor_proposal_correct" else record_id
         if operation.get("subject_id") != expected_subject or operation.get("expected_revision") != revision_id:
             raise HTTPFailure(422, "unsafe_binding", "invalid_operation_binding", "editor_proposal", self._request_id(payload))
+        if operation.get("operation") != operation_name or operation.get("payload_digest") != self._editor_payload_digest(payload):
+            raise HTTPFailure(422, "idempotency_digest_conflict", "payload_digest_mismatch", "editor_proposal", self._request_id(payload))
         replay = self._replay(operation_name, operation.get("idempotency_key"), operation.get("payload_digest"))
         if replay:
             return 200, replay[1]
-        if operation.get("operation") != operation_name or operation.get("payload_digest") != self._editor_payload_digest(payload):
-            raise HTTPFailure(422, "idempotency_digest_conflict", "payload_digest_mismatch", "editor_proposal", self._request_id(payload))
         recovered = self._editor_abandoned_proposal_replay(
             campaign_id, revision_id, record_id, payload, operation_name, correction_of=correction_of,
         )
