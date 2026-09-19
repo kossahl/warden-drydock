@@ -105,7 +105,7 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
 
         bound = self.editor_item("_bound", campaign_id)
         self.assertTrue(self.repository.add_editor(bound, campaign_id, 1))
-        published = self.editor_item("_published", campaign_id, status=ProposalStatus.PUBLISHED)
+        published = self.editor_item("_published", campaign_id, workflow_version=3, status=ProposalStatus.PUBLISHED)
         self.assertTrue(self.repository.add_editor(published, campaign_id, 2))
         self.assertEqual(ProposalStatus.DRAFT, self.repository.get(published.proposal_id, 1).status)
         stale = self.editor_item("_stale_binding", campaign_id, workflow_version=2)
