@@ -183,8 +183,60 @@ class GeneratorTest(unittest.TestCase):
 
             escaped = create_entity(root, 'npc', 'npc-backslash', r'A\name')
             self.assertEqual(r'A\name', standalone.frontmatter(escaped.read_text(encoding='utf-8'))['name'])
+            self.assertIn(r'# A\name', escaped.read_text(encoding='utf-8'))
             separated = create_entity(root, 'npc', 'npc-line-separators', 'A\u2028B\u2029C')
             self.assertEqual('A\u2028B\u2029C', standalone.frontmatter(separated.read_text(encoding='utf-8'))['name'])
+
+    def test_frontmatter_preserves_arbitrarily_large_integer_scalars(self):
+        value = int('9' * 400)
+        text = f'---\nlarge: {value}\n---\n'
+
+        self.assertEqual(value, standalone.frontmatter(text)['large'])
+
+    def test_validation_normalizes_typed_scalars_in_adapter_rules(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test Campaign', adapter='mothership')
+            adapter_path = root / '00-drydock' / 'adapter.json'
+            adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['validation']['field_values'].update({
+                'score': ['0'],
+                'enabled': ['false'],
+            })
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+            npc = create_entity(root, 'npc', 'npc-typed-rules', 'Typed Rules')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                'visibility: warden\n',
+                'visibility: warden\nscore: 0\nenabled: false\n',
+            ), encoding='utf-8')
+
+            self.assertEqual(validate_campaign(root), 0)
+
+            adapter['validation']['forbidden_combinations'].append({
+                'score': '0',
+                'enabled': 'false',
+            })
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root), 1)
+            self.assertIn('forbidden field combination score=0, enabled=false', output.getvalue())
+
+    def test_required_values_preserve_case_sensitive_matching(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test Campaign', adapter='mothership')
+            adapter_path = root / '00-drydock' / 'adapter.json'
+            adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['entity_types']['npc']['required_values'] = {'rank': 'ALPHA'}
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+            npc = create_entity(root, 'npc', 'npc-case-sensitive', 'Case Sensitive')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                'visibility: warden\n', 'visibility: warden\nrank: alpha\n',
+            ), encoding='utf-8')
+
+            self.assertEqual(validate_campaign(root), 1)
 
     def test_semantic_validation_rejects_missing_adapter_fields(self):
         with TemporaryDirectory() as tmp:

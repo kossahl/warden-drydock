@@ -250,7 +250,9 @@ def _frontmatter_scalar(value: str, key: str) -> object:
             return value
         if decoded is None or isinstance(decoded, bool):
             return decoded
-        if isinstance(decoded, (int, float)) and math.isfinite(decoded):
+        if isinstance(decoded, int):
+            return decoded
+        if isinstance(decoded, float) and math.isfinite(decoded):
             return decoded
     return value
 
@@ -528,10 +530,16 @@ def validate_campaign(root: Path) -> int:
             errors.append(f"{relative}: invalid ownership {ownership}")
         for field, allowed_values in field_values.items():
             value = metadata.get(field)
-            if value is not None and value not in allowed_values:
+            if value is not None and _frontmatter_text(value) not in {
+                _frontmatter_text(allowed) for allowed in allowed_values
+            }:
                 errors.append(f"{relative}: invalid {field} {value}")
         for combination in forbidden_combinations:
-            if all(metadata.get(field) == value for field, value in combination.items()):
+            if all(
+                field in metadata
+                and _frontmatter_text(metadata[field]) == _frontmatter_text(value)
+                for field, value in combination.items()
+            ):
                 rendered = ", ".join(
                     f"{field}={value}" for field, value in combination.items()
                 )
@@ -553,7 +561,7 @@ def validate_campaign(root: Path) -> int:
                 if value is None or (isinstance(value, str) and not value.strip()):
                     errors.append(f"{relative}: field {field} must not be empty")
             for field, required_value in entity_rule.get("required_values", {}).items():
-                if field not in metadata or _frontmatter_text(metadata[field]).lower() != _frontmatter_text(required_value).lower():
+                if field not in metadata or _frontmatter_text(metadata[field]) != _frontmatter_text(required_value):
                     errors.append(
                         f"{relative}: {field} must be {required_value} for {entity_type}"
                     )
@@ -629,7 +637,12 @@ def create_entity(root: Path, kind: str, entity_id: str, name: str | None) -> Pa
             text = re.sub(
                 r"(?m)^name:\s*.*$", lambda _match: f"name: {escaped_name}", text, count=1
             )
-        text = re.sub(r"(?m)^# (Name|Adventure|Session)$", f"# {name}", text, count=1)
+        text = re.sub(
+            r"(?m)^# (Name|Adventure|Session)$",
+            lambda _match: f"# {name}",
+            text,
+            count=1,
+        )
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(text, encoding="utf-8")
     print(f"Created {destination.relative_to(root)}")
