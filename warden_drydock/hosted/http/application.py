@@ -1962,7 +1962,7 @@ class SliceApplication:
                 connection = next(item for item in source["connections"] if item["connection_id"] == reference["connection_id"])
                 if resolution["action"] == "redirect":
                     connection["target_record_id"] = resolution["replacement_target_record_id"]
-                else:
+                elif resolution["action"] == "remove_reference":
                     source["connections"] = [item for item in source["connections"] if item["connection_id"] != reference["connection_id"]]
                 source["content_digest"] = document_digest(source)
             for source_record_id, (source, source_content, first_connection_id) in source_mutations.items():

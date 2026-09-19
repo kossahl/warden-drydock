@@ -1,4 +1,5 @@
 import unittest
+from copy import deepcopy
 from unittest import mock
 
 from warden_drydock.hosted.http.application import HTTPFailure
@@ -145,6 +146,45 @@ class MultiReferenceRemovalTests(unittest.TestCase):
         self.assertEqual(1, len(source["connections"]))
         self.assertEqual("record-replacement", source["connections"][0]["target_record_id"])
         self.assertEqual("Redirect this context.", source["connections"][0]["context"])
+
+    def test_accept_unresolved_preserves_source_connection_and_count(self):
+        self.backend._create_record("record-target")
+        revision = self.backend._create_record(
+            "record-source",
+            connections=[{
+                "connection_id": "connection_accept",
+                "target_record_id": "record-target",
+                "relationship": "connected-to",
+                "state": "current",
+                "context": "Keep this context.",
+            }],
+        )
+        _, impact = self.app.editor_removal_impact("campaign_alpha", revision, "record-target")
+        impact = deepcopy(impact)
+        impact["incoming_references"][0]["permitted_unresolved"] = True
+        impact["impact_digest"] = canonical_digest({
+            key: impact[key]
+            for key in ("contract_name", "contract_version", "record", "outgoing_connections", "incoming_references")
+        })
+        resolution = {
+            "reference_id": impact["incoming_references"][0]["reference_id"],
+            "action": "accept_unresolved",
+            "replacement_target_record_id": None,
+        }
+        payload = self._remove_payload(revision, impact, [resolution], key="idem_remove_accept_unresolved")
+
+        with (
+            mock.patch.object(self.app, "editor_removal_impact", return_value=(200, impact)),
+            mock.patch.object(self.app, "_editor_validate_changes", return_value=[]),
+        ):
+            _, proposal = self.app.editor_record_remove("campaign_alpha", revision, "record-target", payload)
+            self.assertEqual(1, proposal["diff"]["unresolved_reference_count"])
+            source_change = next(
+                item for item in proposal["diff"]["source_changes"]
+                if item["subject_record_id"] == "record-source"
+            )
+            self.assertEqual(source_change["before_source"], source_change["after_source"])
+            self.assertIn("[[record-target|Record Target]]", source_change["after_source"])
 
     def test_removal_impact_accepts_duplicate_normalized_headings(self):
         revision = self.backend._create_record("record-target")
