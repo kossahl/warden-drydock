@@ -77,7 +77,8 @@ framework source checkout.
 2. Preserve campaign content and the canon gate.
 3. Keep portable maintenance code standard-library-only.
 4. Update user-facing and generated instructions when commands change.
-5. Run the complete test suite and CLI help check.
+5. Run `./scripts/review-check.sh`, the canonical gate covering the complete
+   test suite and CLI/help checks.
 6. Build and smoke-test the wheel for release-affecting changes.
 7. Review `git diff --check` and commit one coherent task.
 
