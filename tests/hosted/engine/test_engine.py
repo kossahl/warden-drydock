@@ -179,6 +179,22 @@ class DeterministicOperationTests(EngineTestCase):
 
         self.assertNotEqual(first.findings[0].subject_id, second.findings[0].subject_id)
 
+    def test_validation_warning_subject_disambiguates_repeated_warnings(self) -> None:
+        import warden_drydock.hosted.engine.facade as facade_module
+
+        def repeated_warnings(root: Path) -> int:
+            print("WARNING: records/ship.md:12: self-connection")
+            print("WARNING: records/ship.md:18: self-connection")
+            return 0
+
+        with mock.patch.object(facade_module, "validate_campaign", side_effect=repeated_warnings):
+            first = self.engine.validate(WorkspaceRequest("command_validate", self.handle))
+        with mock.patch.object(facade_module, "validate_campaign", side_effect=repeated_warnings):
+            second = self.engine.validate(WorkspaceRequest("command_validate", self.handle))
+
+        self.assertEqual(first.findings, second.findings)
+        self.assertEqual(2, len({finding.subject_id for finding in first.findings}))
+
     def test_repeated_index_context_validate_and_retrieve_are_deterministic(self) -> None:
         first_index = self.engine.index(WorkspaceRequest("command_index", self.handle))
         second_index = self.engine.index(WorkspaceRequest("command_index", self.handle))
