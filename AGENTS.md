@@ -84,12 +84,20 @@ commits to `master` are not accepted. See `docs/contributing.md` for branch
 naming, commit discipline, required checks, and review expectations. Parallel
 unrelated changes belong on separate branches or in separate worktrees.
 
-After changes:
+After changes, every agent must run the canonical local CI gate:
 
 ```bash
-python -m unittest discover -s tests
-python -m warden_drydock --help
+./scripts/review-check.sh
 ```
+
+It runs the pinned Python 3.11 and 3.13 lanes, CLI/help checks, package and
+clean-onboarding smoke tests, frontend type/unit/browser/reproducible-build
+checks, live PostgreSQL checks, and whitespace checks. Focused tests may be
+used during iteration but do not replace this gate. It requires Docker and a
+base ref. For a PR based on `master`, keep `origin/master` current. For a
+stacked PR, set `DRYDOCK_CI_BASE_REF` to the exact PR base ref, such as
+`origin/<base-branch>`, or to the base SHA. Otherwise, `review-check.sh`
+prefers `origin/master` when it is present.
 
 When template behavior changes, regenerate the example campaign and inspect the diff.
 

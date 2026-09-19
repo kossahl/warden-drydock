@@ -48,7 +48,7 @@ from .registry import UnknownWorkspaceError, UnsafeWorkspaceError, WorkspaceRegi
 
 _DOMAIN_ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
-_WARNING_LOCATION = re.compile(r"^(.*):(\d+):(.*)$")
+_WARNING_LOCATION = re.compile(r"^([^:]+):(\d+):(.*)$")
 
 
 def _canonical_digest(value: object) -> str:
@@ -68,13 +68,18 @@ def _tree_digest(root: Path) -> str:
     return digest.hexdigest()
 
 
-def _warning_subject_id(detail: str) -> str:
-    """Return a public, stable identity for a validator warning."""
+def _warning_identity(detail: str) -> str:
     match = _WARNING_LOCATION.match(detail)
-    stable_detail = (
+    return (
         f"{match.group(1)}:{match.group(3)}" if match is not None else detail
     )
-    digest = hashlib.sha256(stable_detail.encode("utf-8")).hexdigest()[:32]
+
+
+def _warning_subject_id(detail: str, occurrence: int = 0) -> str:
+    """Return a public, stable identity for a validator warning."""
+    stable_detail = _warning_identity(detail)
+    identity = stable_detail if occurrence == 0 else f"{stable_detail}#{occurrence}"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
     return f"validation_warning_{digest}"
 
 
@@ -323,10 +328,14 @@ class DeterministicEngine:
 
     def _validation_findings(self, output: str, handle: WorkspaceHandle, stage: Stage) -> tuple[Finding, ...]:
         findings: list[Finding] = []
+        warning_occurrences: dict[str, int] = {}
         for line in output.splitlines():
             if line.startswith("WARNING:"):
                 detail = line[len("WARNING:"):].strip()
-                findings.append(Finding("validation_warning", Severity.WARNING, stage, _warning_subject_id(detail)))
+                identity = _warning_identity(detail)
+                occurrence = warning_occurrences.get(identity, 0)
+                warning_occurrences[identity] = occurrence + 1
+                findings.append(Finding("validation_warning", Severity.WARNING, stage, _warning_subject_id(detail, occurrence)))
             elif line.startswith("ERROR:"):
                 findings.append(Finding("validation_error", Severity.ERROR, stage, handle.value))
         return tuple(findings)

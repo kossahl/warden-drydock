@@ -25,6 +25,7 @@ from .contracts import canonical_digest, normalize_text, text_digest
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _PUBLIC = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 _FIELD_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,79}$")
+_RESERVED_FIELD_IDS = {"id", "type", "name", "status", "ownership", "visibility", "warden_only"}
 _CONNECTION_MARKER = re.compile(
     r"^\s*<!--\s*drydock:connection-id=(?P<id>[a-z][a-z0-9]*(?:_[a-z0-9]+)*)\s*-->\s*$"
 )
@@ -54,10 +55,36 @@ def _id(value: Any, *, public: bool = False) -> str:
     return value
 
 
-def authority_for(status: str) -> str:
-    if status not in _STATUSES:
+def _read_status(value: Any) -> str | dict[str, Any]:
+    if isinstance(value, str):
+        if value in _STATUSES:
+            return value
         raise ValueError("invalid_status")
-    return status if status in {"canon", "revealed"} else "preparation"
+    if isinstance(value, Mapping) and set(value) == {"classification", "value"}:
+        classification = value["classification"]
+        raw_value = value["value"]
+        if classification == "missing" and raw_value is None:
+            return {"classification": classification, "value": None}
+        if (
+            classification == "unknown"
+            and isinstance(raw_value, str)
+            and 1 <= len(raw_value) <= 80
+            and raw_value not in _STATUSES
+        ):
+            return {"classification": classification, "value": raw_value}
+    raise ValueError("invalid_status")
+
+
+def _mutation_status(value: Any) -> str:
+    status = _read_status(value)
+    if not isinstance(status, str):
+        raise ValueError("invalid_status")
+    return status
+
+
+def authority_for(status: Any) -> str:
+    status = _read_status(status)
+    return status if isinstance(status, str) and status in {"canon", "revealed"} else "preparation"
 
 
 def _unique(items: list[Mapping[str, Any]], key: str) -> None:
@@ -89,8 +116,8 @@ def _typed_equal(left: Any, right: Any) -> bool:
 
 
 def _document(value: Mapping[str, Any]) -> dict[str, Any]:
-    required = {"record_id", "record_type", "displayed_name", "status", "authority", "visibility", "fields", "sections", "connections", "content_digest"}
-    if set(value) not in (required, required | {"ownership"}) or value.get("ownership", "campaign") != "campaign":
+    required = {"record_id", "record_type", "displayed_name", "ownership", "status", "authority", "visibility", "fields", "sections", "connections", "content_digest"}
+    if set(value) != required:
         raise ValueError("invalid_record_document")
     record_id = _id(value["record_id"])
     record_type = _id(value["record_type"])
@@ -103,6 +130,9 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
         or "\r" in value["displayed_name"]
     ):
         raise ValueError("invalid_record_name")
+    if value["ownership"] != "campaign":
+        raise ValueError("invalid_ownership")
+    status = _read_status(value["status"])
     if value["authority"] != authority_for(status):
         raise ValueError("authority_status_mismatch")
     fields = list(value["fields"]); raw_sections = list(value["sections"]); connections = list(value["connections"])
@@ -130,7 +160,11 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
     sections = [dict(item, body=normalize_text(item["body"])) for item in raw_sections]
     _unique(fields, "field_id"); _unique(sections, "section_id"); _unique(connections, "connection_id")
     for item in fields:
-        if not isinstance(item["field_id"], str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", item["field_id"]) is None:
+        if (
+            not isinstance(item["field_id"], str)
+            or _FIELD_ID.fullmatch(item["field_id"]) is None
+            or item["field_id"] in _RESERVED_FIELD_IDS
+        ):
             raise ValueError("unsafe_identifier")
     for item in sections:
         _id(item["section_id"])
@@ -147,7 +181,8 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
         ):
             raise ValueError("invalid_connection_context")
     if not isinstance(value["content_digest"], str) or not re.fullmatch(r"[a-f0-9]{64}", value["content_digest"]): raise ValueError("invalid_content_digest")
-    normalized = dict(value, ownership="campaign", fields=fields, sections=sections, connections=connections,
+    normalized = dict(value, fields=fields, sections=sections, connections=connections,
+                      ownership="campaign", status=status,
                       visibility=_visibility(value["visibility"]), authority=authority_for(status))
     if document_digest(normalized) != value["content_digest"]:
         raise ValueError("content_digest_mismatch")
@@ -164,7 +199,10 @@ def document_digest(value: Mapping[str, Any]) -> str:
     projection["ownership"] = value.get("ownership", "campaign")
     projection["sections"] = sections
     return hashlib.sha256(json.dumps(
-        projection, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        {key: value[key] for key in (
+            "record_id", "record_type", "displayed_name", "ownership", "status", "authority",
+            "visibility", "fields", "connections",
+        )} | {"sections": sections}, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     ).encode("utf-8")).hexdigest()
 
 
@@ -250,7 +288,13 @@ def _section_headings(headings: list[tuple[int, str]]) -> list[tuple[int, str, s
 def parse_document(content: str, record_id: str, record_type: str | None = None) -> dict[str, Any]:
     normalized_content = content.replace("\r\n", "\n").replace("\r", "\n")
     metadata = frontmatter(normalized_content)
-    status = metadata.get("status", "draft")
+    raw_status = metadata.get("status")
+    if "status" not in metadata:
+        status = {"classification": "missing", "value": None}
+    elif isinstance(raw_status, str) and raw_status not in _STATUSES:
+        status = {"classification": "unknown", "value": raw_status}
+    else:
+        status = _read_status(raw_status)
     body = normalized_content
     if normalized_content.startswith("---\n"):
         end = normalized_content.find("\n---", 4)
@@ -303,25 +347,36 @@ def parse_document(content: str, record_id: str, record_type: str | None = None)
                      "relationship": item.relationship, "state": item.state,
                      "context": item.context.rstrip()})
     fields = [{"field_id": key, "value": int(value) if isinstance(value, float) and math.isfinite(value) and value.is_integer() else value} for key, value in metadata.items()
-              if key not in {"id", "type", "name", "status", "visibility", "warden_only"}
+              if key not in _RESERVED_FIELD_IDS
               and _FIELD_ID.fullmatch(key)]
     audience = metadata.get("visibility", "warden")
     raw_warden_only = metadata.get("warden_only")
     warden_only = (raw_warden_only.lower() == "true") if isinstance(raw_warden_only, str) else (raw_warden_only if isinstance(raw_warden_only, bool) else audience == "warden")
     visibility = {"audience": audience, "warden_only": warden_only}
-    value = {"record_id": record_id, "record_type": record_type or metadata.get("type", "unknown"), "displayed_name": metadata.get("name", record_id), "ownership": "campaign", "status": status, "authority": authority_for(status), "visibility": visibility, "fields": fields, "sections": sections, "connections": conn, "content_digest": "0" * 64}
+    value = {"record_id": record_id, "record_type": record_type or metadata.get("type", "unknown"), "displayed_name": metadata.get("name") or record_id, "ownership": "campaign", "status": status, "authority": authority_for(status), "visibility": visibility, "fields": fields, "sections": sections, "connections": conn, "content_digest": "0" * 64}
     value["content_digest"] = document_digest(value)
     return _document(value)
 
 
+def _connection_line(connection: Mapping[str, Any]) -> str:
+    readable_target = connection["target_record_id"].replace("-", " ").title()
+    return (
+        f"- `{connection['relationship']}` → "
+        f"[[{connection['target_record_id']}|{readable_target}]] "
+        f"(`{connection['state']}`) — {connection['context']}"
+    )
+
+
 def serialize_document(value: Mapping[str, Any], section_labels: Mapping[str, str] | None = None) -> str:
     value = _document(value)
+    _mutation_status(value["status"])
     labels = section_labels or {}
     lines = [
         "---",
         f"id: {_format_frontmatter_value(value['record_id'])}",
         f"type: {_format_frontmatter_value(value['record_type'])}",
         f"name: {_format_frontmatter_value(value['displayed_name'])}",
+        "ownership: campaign",
         f"status: {_format_frontmatter_value(value['status'])}",
         f"visibility: {_format_frontmatter_value(value['visibility']['audience'])}",
         f"warden_only: {_format_frontmatter_value(value['visibility']['warden_only'])}",
@@ -331,14 +386,14 @@ def serialize_document(value: Mapping[str, Any], section_labels: Mapping[str, st
             continue
         scalar = field["value"]
         lines.append(f"{field['field_id']}: {_format_frontmatter_value(scalar)}")
-    lines += ["---", ""]
+    lines += ["---", "", f"# {value['displayed_name']}", ""]
     for section in value["sections"]:
         lines += [f"## {labels.get(section['section_id'], section['section_id'])}", normalize_text(section["body"])]
     if value["connections"]:
         lines += ["## Connections", ""]
         for item in value["connections"]:
             lines.append(f"<!-- drydock:connection-id={item['connection_id']} -->")
-            lines.append(f"- `{item['relationship']}` -> [[{item['target_record_id']}]] (`{item['state']}`) — {item['context']}")
+            lines.append(_connection_line(item))
     return normalize_text("\n".join(lines)) + "\n"
 
 
@@ -361,13 +416,6 @@ def _format_frontmatter_value(value: Any) -> str:
     return encoded(value)
 
 
-def _connection_line(connection: Mapping[str, Any]) -> str:
-    return (
-        f"- `{connection['relationship']}` -> [[{connection['target_record_id']}]] "
-        f"(`{connection['state']}`) — {connection['context']}"
-    )
-
-
 def mutate_document(
     before: str,
     candidate: Mapping[str, Any],
@@ -381,8 +429,12 @@ def mutate_document(
     in place. A no-op returns the original bytes exactly.
     """
     labels = section_labels or {}
-    old = parse_document(before, candidate["record_id"], candidate.get("record_type"))
+    source_metadata = frontmatter(before)
+    source_id = source_metadata.get("id", candidate["record_id"])
+    source_type = source_metadata.get("type", candidate.get("record_type"))
+    old = parse_document(before, source_id, source_type)
     new = _document(candidate)
+    _mutation_status(new["status"])
     old_section_ids = [item["section_id"] for item in old["sections"]]
     new_section_ids = [item["section_id"] for item in new["sections"]]
     old_common = [section_id for section_id in old_section_ids if section_id in new_section_ids]
@@ -439,6 +491,7 @@ def mutate_document(
     metadata_keys = {
         "id": new["record_id"], "type": new["record_type"],
         "name": new["displayed_name"], "status": new["status"],
+        "ownership": "campaign",
         "visibility": new["visibility"]["audience"],
         "warden_only": new["visibility"]["warden_only"],
     }
@@ -456,6 +509,7 @@ def mutate_document(
             (key in metadata_keys and {
                 "id": old["record_id"], "type": old["record_type"],
                 "name": old["displayed_name"], "status": old["status"],
+                "ownership": source_metadata.get("ownership", "campaign"),
                 "visibility": old["visibility"]["audience"],
                 "warden_only": old["visibility"]["warden_only"],
             }.get(key) != all_values[key])
@@ -483,6 +537,15 @@ def mutate_document(
         end = next(index for index, line in enumerate(lines[1:], 1) if line.rstrip("\n") == "---")
 
     body_start = end + 1
+    title_indexes = [
+        index for index in range(body_start, len(lines))
+        if re.match(r"^#\s+", lines[index])
+    ]
+    if len(title_indexes) == 1:
+        title_index = title_indexes[0]
+        expected_title = f"# {new['displayed_name']}"
+        if lines[title_index].rstrip("\n") != expected_title:
+            lines[title_index] = f"{expected_title}{newline}"
     headings: list[tuple[int, str]] = []
     for index in range(body_start, len(lines)):
         match = re.match(r"^##\s+(.+?)\s*\n?$", lines[index])
@@ -569,7 +632,7 @@ def mutate_document(
         segment = lines[heading_index + 1:next_heading]
         block = "## Connections\n" + "".join(segment)
         typed_connections, _ = parse_connections(
-            block, source_id=new["record_id"], path=None  # type: ignore[arg-type]
+            block, source_id=source_id, path=None  # type: ignore[arg-type]
         )
         occurrences = _connection_marker_occurrences(block)
         used_connection_ids: set[str] = set()
@@ -688,6 +751,7 @@ def change_for(
     section_labels: Mapping[str, str] | None = None,
 ) -> ExactTextChange:
     value = _document(candidate)
+    _mutation_status(value["status"])
     replacement = "" if kind is ChangeKind.DELETE else (
         mutate_document(before, value, section_labels) if before is not None else serialize_document(value, section_labels)
     )
@@ -760,10 +824,10 @@ def adapter_editor_definition(adapter_id: str, revision_root: Path | None = None
                 section_labels[section_id] = heading
         definitions[kind] = {
             "metadata": metadata,
-            "fields": set(metadata) - {"id", "type", "name", "status", "visibility", "warden_only"},
+            "fields": set(metadata) - _RESERVED_FIELD_IDS,
             "field_defaults": {
                 field: metadata[field]
-                for field in set(metadata) - {"id", "type", "name", "status", "visibility", "warden_only"}
+                for field in set(metadata) - _RESERVED_FIELD_IDS
             },
             "sections": set(section_order),
             "section_order": tuple(section_order),
@@ -804,6 +868,9 @@ def adapter_editor_contract(definition: dict) -> dict:
 
 
 def validate_adapter_document(candidate: dict, definition: dict, before: dict | None) -> None:
+    if candidate.get("ownership") != "campaign":
+        raise ValueError("invalid_ownership")
+    _mutation_status(candidate["status"])
     spec = definition["records"].get(candidate["record_type"])
     if spec is None or (before is None and candidate["record_type"] not in definition["creatable"]):
         raise ValueError("record_type_unknown")
@@ -842,6 +909,7 @@ def validate_adapter_document(candidate: dict, definition: dict, before: dict | 
         "id": candidate["record_id"],
         "type": candidate["record_type"],
         "name": candidate["displayed_name"],
+        "ownership": "campaign",
         "status": candidate["status"],
         "visibility": candidate["visibility"]["audience"],
         "warden_only": str(candidate["visibility"]["warden_only"]).lower(),

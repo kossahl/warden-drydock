@@ -8,6 +8,7 @@ import tarfile
 import tempfile
 import unittest
 import uuid
+from unittest import mock
 
 import yaml
 
@@ -238,12 +239,34 @@ class RuntimeTests(unittest.TestCase):
             )
             assert_no_outer_transaction_wrapper(shared_clean)
 
-    def test_readiness_requires_v2_receipt_reset_schema(self) -> None:
-        health = (ROOT / "warden_drydock" / "hosted" / "operations" / "health.py").read_text(encoding="utf-8")
-        self.assertIn("version='0007'", health)
-        self.assertNotIn("version='0002'", health)
-        self.assertIn("version='0011'", health)
-        self.assertIn("version='0012'", health)
+    def test_readiness_requires_current_schema_markers(self) -> None:
+        health_source = (ROOT / "warden_drydock" / "hosted" / "operations" / "health.py").read_text(encoding="utf-8")
+        for version in ("0007", "0008", "0009", "0010", "0011", "0012"):
+            self.assertIn(f"version='{version}'", health_source)
+        self.assertNotIn("version='0002'", health_source)
+
+        from warden_drydock.hosted.operations import health
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            environment = {
+                "DRYDOCK_SNAPSHOTS": str(root / "snapshots"),
+                "DRYDOCK_SECRETS": str(root / "secrets"),
+                "DATABASE_URL": "postgresql://test",
+            }
+            (root / "snapshots").mkdir()
+            (root / "secrets").mkdir()
+
+            for missing in ("0011", "0012"):
+                def fake_run(command, **kwargs):
+                    query = command[-1]
+                    ready = f"version='{missing}'" not in query
+                    return mock.Mock(returncode=0, stdout="1\n" if ready else "0\n")
+
+                with self.subTest(missing=missing), mock.patch.dict(os.environ, environment, clear=False), mock.patch.object(
+                    health.subprocess, "run", side_effect=fake_run
+                ):
+                    self.assertFalse(health.readiness())
 
     def test_v2_migration_resets_only_transport_receipts(self) -> None:
         migration = (ROOT / "warden_drydock" / "hosted" / "migrations" / "0007_http_v2_receipt_reset.sql").read_text(encoding="utf-8")

@@ -105,9 +105,10 @@ class EditorBackendTests(unittest.TestCase):
         view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
         candidate = {
             "record_id": record_id, "record_type": record_type, "displayed_name": record_id,
+            "ownership": "campaign",
             "status": authority if authority in {"canon", "revealed"} else "draft", "authority": authority,
             "visibility": {"audience": "warden", "warden_only": True},
-            "fields": [{"field_id": "ownership", "value": "campaign"}],
+            "fields": [],
             "sections": [{"section_id": "summary", "body": "Synthetic record."}],
             "connections": connections or [], "content_digest": "0" * 64,
         }
