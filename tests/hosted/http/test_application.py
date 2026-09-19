@@ -1015,6 +1015,353 @@ class SliceApplicationTests(unittest.TestCase):
         record = json.load(urllib.request.urlopen(record_url))
         self.assertEqual(("campaign_route", campaign["head_revision"]), (record["campaign_id"], record["revision_id"]))
 
+        creation_context_url = (
+            f"{base}/api/v1/campaigns/campaign_route/revisions/{campaign['head_revision']}"
+            "/editor/creation-context"
+        )
+        with mock.patch.object(self.app, "_record", side_effect=AssertionError("creation context read a record")):
+            with urllib.request.urlopen(creation_context_url) as response:
+                self.assertEqual(200, response.status)
+                creation_context = json.load(response)
+        self.assertEqual("editor_creation_context", creation_context["contract_name"])
+        self.assertEqual(1, creation_context["editor_workflow_version"])
+        self.assertEqual(campaign["head_revision"], creation_context["viewed_revision"]["revision_id"])
+        self.assertIn("record_definitions", creation_context["adapter_definition"])
+
+        editor_record_url = record_url.replace("/records/campaign-main", "/records/campaign-main/editor")
+        with urllib.request.urlopen(editor_record_url) as response:
+            self.assertEqual(200, response.status)
+            editor_record = json.load(response)
+        self.assertEqual("editor_record_view", editor_record["contract_name"])
+
+        def editor_request(path, *, method="GET", payload=None, csrf_token=csrf):
+            body = None if payload is None else json.dumps(payload).encode()
+            headers = {"Cookie": cookie}
+            if body is not None:
+                headers["Content-Type"] = "application/json"
+            if csrf_token is not None:
+                headers["X-CSRF-Token"] = csrf_token
+            request = urllib.request.Request(
+                base + path, data=body, headers=headers, method=method,
+            )
+            with urllib.request.urlopen(request) as response:
+                return response.status, json.load(response)
+
+        def editor_error(path, *, method="GET", payload=None, csrf_token=csrf):
+            try:
+                editor_request(path, method=method, payload=payload, csrf_token=csrf_token)
+            except urllib.error.HTTPError as error:
+                response = json.load(error)
+                error.close()
+                return error.code, response
+            self.fail("expected HTTP error")
+
+        removal_impact_path = (
+            f"/api/v1/campaigns/campaign_route/revisions/{campaign['head_revision']}"
+            "/records/campaign-main/removal-impact"
+        )
+        removal_status, removal_error = editor_error(removal_impact_path)
+        self.assertEqual(422, removal_status)
+        self.assertEqual(
+            ("error_response", 3, "proposal_validation_failure", "required_record_removal"),
+            (
+                removal_error["contract_name"],
+                removal_error["contract_version"],
+                removal_error["error"]["category"],
+                removal_error["error"]["code"],
+            ),
+        )
+        self.assertTrue(removal_error["error"]["findings"])
+
+        workflow = editor_record["editor_workflow_version"]
+        revision_id = campaign["head_revision"]
+        candidate = {
+            "record_id": "record-created",
+            "record_type": "npc",
+            "displayed_name": "Created Record",
+            "status": "draft",
+            "authority": "preparation",
+            "ownership": "campaign",
+            "visibility": {"audience": "warden", "warden_only": True},
+            "fields": [{"field_id": "current_status", "value": "unknown"}],
+            "sections": [{"section_id": "summary", "body": "Synthetic record."}],
+            "connections": [],
+            "content_digest": "0" * 64,
+        }
+        candidate["content_digest"] = document_digest(candidate)
+        create_payload = {
+            "contract_name": "editor_record_create_request", "contract_version": 1,
+            "operation_request": {
+                "contract_name": "editor_operation_request", "contract_version": 1,
+                "request_id": "request_editor_create", "operation": "editor_record_create",
+                "idempotency_key": "idem_editor_create", "payload_digest": "0" * 64,
+                "expected_revision": revision_id, "expected_editor_workflow_version": workflow,
+                "subject_id": candidate["record_id"],
+            },
+            "binding": {
+                "campaign_id": "campaign_route", "base_revision": editor_record["viewed_revision"],
+                "record_id": candidate["record_id"], "record_digest": None,
+                "expected_editor_workflow_version": workflow,
+            },
+            "candidate": candidate,
+        }
+        create_payload["operation_request"]["payload_digest"] = canonical_digest(
+            request_digest_input(create_payload)
+        )
+        csrf_status, csrf_payload = editor_error(
+            "/api/v1/campaigns/campaign_route/revisions/" + revision_id + "/editor/records/proposals",
+            method="POST", payload=create_payload, csrf_token=None,
+        )
+        self.assertEqual((403, "unsafe_binding", "csrf_binding_rejected"), (
+            csrf_status, csrf_payload["error"]["category"], csrf_payload["error"]["code"],
+        ))
+
+        create_status, created_proposal = editor_request(
+            "/api/v1/campaigns/campaign_route/revisions/" + revision_id + "/editor/records/proposals",
+            method="POST", payload=create_payload,
+        )
+        self.assertEqual((201, "editor_proposal_view", "create"), (
+            create_status, created_proposal["contract_name"], created_proposal["mutation_kind"],
+        ))
+
+        proposal_path = (
+            f"/api/v1/editor/proposals/{created_proposal['proposal_id']}"
+            f"/versions/{created_proposal['proposal_version']}"
+        )
+        read_status, read_proposal = editor_request(proposal_path)
+        self.assertEqual((200, created_proposal), (read_status, read_proposal))
+
+        corrected_candidate = deepcopy(created_proposal["diff"]["cards"][0]["after"])
+        corrected_candidate["displayed_name"] = "Corrected Record"
+        corrected_candidate["content_digest"] = document_digest(corrected_candidate)
+        correction = {
+            "contract_name": "editor_proposal_correction_request", "contract_version": 1,
+            "operation_request": {
+                "contract_name": "editor_operation_request", "contract_version": 1,
+                "request_id": "request_editor_correct", "operation": "editor_proposal_correct",
+                "idempotency_key": "idem_editor_correct", "payload_digest": "0" * 64,
+                "expected_revision": revision_id,
+                "expected_editor_workflow_version": created_proposal["editor_workflow_version"],
+                "subject_id": created_proposal["proposal_id"],
+            },
+            "prior_proposal": {
+                "proposal_id": created_proposal["proposal_id"],
+                "proposal_version": created_proposal["proposal_version"],
+            },
+            "binding": {
+                "campaign_id": "campaign_route", "base_revision": created_proposal["base_revision"],
+                "record_id": candidate["record_id"], "record_digest": None,
+                "expected_editor_workflow_version": created_proposal["editor_workflow_version"],
+            },
+            "mutation_kind": "create", "candidate": corrected_candidate,
+            "resolutions": [], "impact_digest": None, "impact_binding": None,
+        }
+        correction["operation_request"]["payload_digest"] = canonical_digest(
+            request_digest_input(correction)
+        )
+        correction_path = (
+            f"/api/v1/editor/proposals/{created_proposal['proposal_id']}"
+            f"/versions/{created_proposal['proposal_version']}/corrections"
+        )
+        correction_status, corrected_proposal = editor_request(
+            correction_path, method="POST", payload=correction,
+        )
+        self.assertEqual((201, 2, "create"), (
+            correction_status, corrected_proposal["proposal_version"], corrected_proposal["mutation_kind"],
+        ))
+
+        def editor_action_payload(proposal, action):
+            approve = action == "approve"
+            payload = {
+                "contract_name": "editor_proposal_approval_request" if approve else "editor_proposal_rejection_request",
+                "contract_version": 1,
+                "proposal": {
+                    "proposal_id": proposal["proposal_id"],
+                    "proposal_version": proposal["proposal_version"],
+                },
+                "proposal_status": "needs_review", "mutation_kind": proposal["mutation_kind"],
+                "source_revision": proposal["source_revision"], "base_revision": proposal["base_revision"],
+                "expected_campaign_head": proposal["expected_campaign_head"],
+                "expected_editor_workflow_version": proposal["editor_workflow_version"],
+                "proposal_payload_digest": proposal["proposal_payload_digest"],
+                "diff_digest": proposal["diff"]["diff_digest"],
+                "record_bindings": proposal["record_bindings"],
+                "impact_digest": proposal["impact_digest"], "impact_binding": proposal["impact_binding"],
+                "resolutions": proposal["resolutions"],
+                "validation_status": proposal["validation"]["status"],
+                "validation_digest": proposal["validation"]["validation_digest"],
+                "authority_outcome": proposal["authority_outcome"],
+                "visibility_outcome": proposal["visibility_outcome"], "warden_confirmed": True,
+            }
+            if approve:
+                payload.update({
+                    "diff": proposal["diff"],
+                    "affected_record_count": proposal["diff"]["affected_record_count"],
+                    "confirmed_change_ids": [card["change_id"] for card in proposal["diff"]["cards"]],
+                    "confirmed_authority_change_ids": [item["change_id"] for item in proposal["diff"]["authority_changes"]],
+                    "confirmed_visibility_change_ids": [item["change_id"] for item in proposal["diff"]["visibility_changes"]],
+                })
+            else:
+                payload["reason_code"] = "not_needed"
+            payload["operation_request"] = {
+                "contract_name": "editor_operation_request", "contract_version": 1,
+                "request_id": "request_editor_" + action,
+                "operation": "editor_proposal_approve" if approve else "editor_proposal_reject",
+                "idempotency_key": "idem_editor_" + action, "payload_digest": "0" * 64,
+                "expected_revision": proposal["base_revision"]["revision_id"],
+                "expected_editor_workflow_version": proposal["editor_workflow_version"],
+                "subject_id": proposal["proposal_id"], "intent_digest": proposal["diff"]["diff_digest"],
+            }
+            payload["operation_request"]["payload_digest"] = canonical_digest(
+                request_digest_input(payload)
+            )
+            return payload
+
+        rejection_path = (
+            f"/api/v1/editor/proposals/{corrected_proposal['proposal_id']}"
+            f"/versions/{corrected_proposal['proposal_version']}/rejection"
+        )
+        rejection_status, rejection = editor_request(
+            rejection_path, method="POST",
+            payload=editor_action_payload(corrected_proposal, "reject"),
+        )
+        self.assertEqual((200, "editor_proposal_rejection_result", "rejected"), (
+            rejection_status, rejection["contract_name"], rejection["outcome"],
+        ))
+
+        edit_view_status, edit_view = editor_request(
+            f"/api/v1/campaigns/campaign_route/revisions/{revision_id}/records/campaign-main/editor"
+        )
+        self.assertEqual(200, edit_view_status)
+        edited_candidate = deepcopy(edit_view["record"])
+        edited_candidate["displayed_name"] = "Edited Campaign"
+        edited_candidate["content_digest"] = document_digest(edited_candidate)
+        edit_payload = {
+            "contract_name": "editor_record_edit_request", "contract_version": 1,
+            "operation_request": {
+                "contract_name": "editor_operation_request", "contract_version": 1,
+                "request_id": "request_editor_edit", "operation": "editor_record_edit",
+                "idempotency_key": "idem_editor_edit", "payload_digest": "0" * 64,
+                "expected_revision": revision_id,
+                "expected_editor_workflow_version": edit_view["editor_workflow_version"],
+                "subject_id": "campaign-main",
+            },
+            "binding": {
+                "campaign_id": "campaign_route", "base_revision": edit_view["viewed_revision"],
+                "record_id": "campaign-main", "record_digest": edit_view["record"]["content_digest"],
+                "expected_editor_workflow_version": edit_view["editor_workflow_version"],
+            },
+            "candidate": edited_candidate,
+        }
+        edit_payload["operation_request"]["payload_digest"] = canonical_digest(
+            request_digest_input(edit_payload)
+        )
+        edit_path = (
+            f"/api/v1/campaigns/campaign_route/revisions/{revision_id}"
+            "/editor/records/campaign-main/proposals"
+        )
+        edit_status, edit_proposal = editor_request(
+            edit_path, method="POST", payload=edit_payload,
+        )
+        self.assertEqual((201, "editor_proposal_view", "edit"), (
+            edit_status, edit_proposal["contract_name"], edit_proposal["mutation_kind"],
+        ))
+
+        approved_candidate = deepcopy(candidate)
+        approved_candidate["record_id"] = "record-approved"
+        approved_candidate["displayed_name"] = "Approved Record"
+        approved_candidate["content_digest"] = document_digest(approved_candidate)
+        approved_create = deepcopy(create_payload)
+        approved_create["operation_request"].update({
+            "request_id": "request_editor_create_approved",
+            "idempotency_key": "idem_editor_create_approved",
+            "expected_editor_workflow_version": edit_proposal["editor_workflow_version"],
+            "subject_id": approved_candidate["record_id"], "payload_digest": "0" * 64,
+        })
+        approved_create["binding"].update({
+            "record_id": approved_candidate["record_id"],
+            "expected_editor_workflow_version": edit_proposal["editor_workflow_version"],
+        })
+        approved_create["candidate"] = approved_candidate
+        approved_create["operation_request"]["payload_digest"] = canonical_digest(
+            request_digest_input(approved_create)
+        )
+        approved_status, approved_proposal = editor_request(
+            "/api/v1/campaigns/campaign_route/revisions/" + revision_id + "/editor/records/proposals",
+            method="POST", payload=approved_create,
+        )
+        self.assertEqual(201, approved_status)
+
+        approval_path = (
+            f"/api/v1/editor/proposals/{approved_proposal['proposal_id']}"
+            f"/versions/{approved_proposal['proposal_version']}/approval"
+        )
+        approval_status, approval = editor_request(
+            approval_path, method="POST",
+            payload=editor_action_payload(approved_proposal, "approve"),
+        )
+        self.assertEqual((200, "editor_proposal_approval_result", "published"), (
+            approval_status, approval["contract_name"], approval["outcome"],
+        ))
+
+        published_revision = approval["published_revision"]["revision_id"]
+        published_impact_path = (
+            f"/api/v1/campaigns/campaign_route/revisions/{published_revision}"
+            "/records/record-approved/removal-impact"
+        )
+        impact_status, impact = editor_request(published_impact_path)
+        self.assertEqual((200, "editor_removal_impact", "record-approved"), (
+            impact_status, impact["contract_name"], impact["binding"]["record_id"],
+        ))
+        self.assertEqual("campaign_route", impact["binding"]["campaign_id"])
+        self.assertEqual([], impact["incoming_references"])
+
+        invalid_record_url = record_url.replace("campaign-main", "CAMPAIGN!") + "/editor"
+        with self.assertRaises(urllib.error.HTTPError) as invalid_record:
+            urllib.request.urlopen(invalid_record_url)
+        self.assertEqual(422, invalid_record.exception.code)
+        invalid_record_payload = json.load(invalid_record.exception)
+        invalid_record.exception.close()
+        self.assertEqual(
+            ("error_response", 3, "unsafe_binding", "invalid_route_binding"),
+            (
+                invalid_record_payload["contract_name"],
+                invalid_record_payload["contract_version"],
+                invalid_record_payload["error"]["category"],
+                invalid_record_payload["error"]["code"],
+            ),
+        )
+
+        removal_url = (
+            f"{base}/api/v1/campaigns/campaign_route/revisions/{campaign['head_revision']}"
+            "/editor/records/campaign-main/removal-proposals"
+        )
+        removal_request = urllib.request.Request(
+            removal_url,
+            data=b"{}",
+            headers={
+                "Content-Type": "application/json",
+                "X-CSRF-Token": csrf,
+                "Cookie": cookie,
+            },
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as removal_error:
+            urllib.request.urlopen(removal_request)
+        self.assertEqual(422, removal_error.exception.code)
+        removal_payload = json.load(removal_error.exception)
+        removal_error.exception.close()
+        self.assertEqual(("error_response", 3, "proposal_validation_failure"), (
+            removal_payload["contract_name"],
+            removal_payload["contract_version"],
+            removal_payload["error"]["category"],
+        ))
+        self.assertTrue(removal_payload["error"]["findings"])
+        self.assertEqual(
+            {"finding_id", "code", "severity", "location", "message", "recovery_action", "retryable"},
+            set(removal_payload["error"]["findings"][0]),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
