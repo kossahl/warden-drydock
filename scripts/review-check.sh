@@ -44,7 +44,13 @@ github_repository_slug() {
   local remote_url="$1"
   local remote_path
   case "$remote_url" in
-    https://github.com/*|http://github.com/*|ssh://git@github.com/*)
+    https://github.com/*)
+      remote_path="${remote_url#https://github.com/}"
+      ;;
+    https://*@github.com/*)
+      remote_path="${remote_url#https://*@github.com/}"
+      ;;
+    http://github.com/*|ssh://git@github.com/*)
       remote_path="${remote_url#*github.com/}"
       ;;
     git@github.com:*)
