@@ -1468,6 +1468,25 @@ class SliceApplication:
         )
         return campaign, manifest, head, document
 
+    def editor_creation_context(self, campaign_id: str, revision_id: str) -> tuple[int, dict]:
+        campaign, manifest = self._campaign_revision(campaign_id, revision_id)
+        head_id = self.workflow.head(campaign_id)
+        head = campaign.revisions[head_id] if head_id else manifest
+        if manifest.revision_id != head.revision_id:
+            raise HTTPFailure(
+                409, "snapshot_lineage_failure", "creation_context_requires_current_head",
+                "editor_creation_context",
+            )
+        return 200, {
+            "contract_name": "editor_creation_context",
+            "contract_version": 1,
+            "campaign_id": campaign_id,
+            "viewed_revision": self._editor_revision_ref(manifest),
+            "head_revision": self._editor_revision_ref(head),
+            "editor_workflow_version": self._editor_version(campaign_id),
+            "adapter_definition": adapter_editor_contract(self._editor_definition(campaign_id, revision_id)),
+        }
+
     @staticmethod
     def _editor_revision_ref(manifest: SnapshotManifest) -> dict:
         return {"revision_id": manifest.revision_id, "ordinal": manifest.ordinal,

@@ -1015,6 +1015,71 @@ class SliceApplicationTests(unittest.TestCase):
         record = json.load(urllib.request.urlopen(record_url))
         self.assertEqual(("campaign_route", campaign["head_revision"]), (record["campaign_id"], record["revision_id"]))
 
+        creation_context_url = (
+            f"{base}/api/v1/campaigns/campaign_route/revisions/{campaign['head_revision']}"
+            "/editor/creation-context"
+        )
+        with mock.patch.object(self.app, "_record", side_effect=AssertionError("creation context read a record")):
+            with urllib.request.urlopen(creation_context_url) as response:
+                self.assertEqual(200, response.status)
+                creation_context = json.load(response)
+        self.assertEqual("editor_creation_context", creation_context["contract_name"])
+        self.assertEqual(1, creation_context["editor_workflow_version"])
+        self.assertEqual(campaign["head_revision"], creation_context["viewed_revision"]["revision_id"])
+        self.assertIn("record_definitions", creation_context["adapter_definition"])
+
+        editor_record_url = record_url.replace("/records/campaign-main", "/records/campaign-main/editor")
+        with urllib.request.urlopen(editor_record_url) as response:
+            self.assertEqual(200, response.status)
+            editor_record = json.load(response)
+        self.assertEqual("editor_record_view", editor_record["contract_name"])
+
+        invalid_record_url = record_url.replace("campaign-main", "CAMPAIGN!") + "/editor"
+        with self.assertRaises(urllib.error.HTTPError) as invalid_record:
+            urllib.request.urlopen(invalid_record_url)
+        self.assertEqual(422, invalid_record.exception.code)
+        invalid_record_payload = json.load(invalid_record.exception)
+        invalid_record.exception.close()
+        self.assertEqual(
+            ("error_response", 3, "unsafe_binding", "invalid_route_binding"),
+            (
+                invalid_record_payload["contract_name"],
+                invalid_record_payload["contract_version"],
+                invalid_record_payload["error"]["category"],
+                invalid_record_payload["error"]["code"],
+            ),
+        )
+
+        removal_url = (
+            f"{base}/api/v1/campaigns/campaign_route/revisions/{campaign['head_revision']}"
+            "/editor/records/campaign-main/removal-proposals"
+        )
+        removal_request = urllib.request.Request(
+            removal_url,
+            data=b"{}",
+            headers={
+                "Content-Type": "application/json",
+                "X-CSRF-Token": csrf,
+                "Cookie": cookie,
+            },
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as removal_error:
+            urllib.request.urlopen(removal_request)
+        self.assertEqual(422, removal_error.exception.code)
+        removal_payload = json.load(removal_error.exception)
+        removal_error.exception.close()
+        self.assertEqual(("error_response", 3, "proposal_validation_failure"), (
+            removal_payload["contract_name"],
+            removal_payload["contract_version"],
+            removal_payload["error"]["category"],
+        ))
+        self.assertTrue(removal_payload["error"]["findings"])
+        self.assertEqual(
+            {"finding_id", "code", "severity", "location", "message", "recovery_action", "retryable"},
+            set(removal_payload["error"]["findings"][0]),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
