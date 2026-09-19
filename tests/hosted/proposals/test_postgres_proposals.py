@@ -4,6 +4,7 @@ import os
 import threading
 import unittest
 import uuid
+from dataclasses import replace
 
 from warden_drydock.hosted.engine.models import ExactTextChange, Status
 from warden_drydock.hosted.proposals import PostgresProposalRepository
@@ -112,7 +113,7 @@ class PostgresProposalIntegrationTests(unittest.TestCase):
         self.assertFalse(self.repository.add_editor(stale, campaign_id, 3))
         self.assertIsNone(self.repository.get(stale.proposal_id, stale.version))
         self.assertEqual(3, self.repository.editor_workflow_version(campaign_id))
-        self.assertEqual((bound, published), self.repository.editor_proposals())
+        self.assertEqual((bound, replace(published, status=ProposalStatus.DRAFT)), self.repository.editor_proposals())
 
     def test_empty_editor_correction_leaves_workflow_and_proposals_unchanged(self):
         campaign_id = self.prefix + "_campaign"
