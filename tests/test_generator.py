@@ -229,6 +229,24 @@ class GeneratorTest(unittest.TestCase):
                 self.assertEqual(validate_campaign(root), 1)
             self.assertIn('forbidden field combination score=1e2, enabled=false', output.getvalue())
 
+    def test_validation_rejects_explicit_null_for_field_value_allow_list(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test Campaign', adapter='mothership')
+            adapter_path = root / '00-drydock' / 'adapter.json'
+            adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['validation']['field_values']['custom'] = ['allowed']
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+            npc = create_entity(root, 'npc', 'npc-null-field', 'Null Field')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                'visibility: warden\n', 'visibility: warden\ncustom: null\n',
+            ), encoding='utf-8')
+
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(standalone.validate_campaign(root), 1)
+            self.assertIn('invalid custom None', output.getvalue())
+
     def test_required_values_preserve_case_sensitive_matching(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp) / 'campaign'

@@ -549,7 +549,7 @@ def validate_campaign(root: Path) -> int:
             errors.append(f"{relative}: invalid ownership {ownership}")
         for field, allowed_values in field_values.items():
             value = metadata.get(field)
-            if value is not None and not any(
+            if field in metadata and not any(
                 _frontmatter_matches(value, allowed) for allowed in allowed_values
             ):
                 errors.append(f"{relative}: invalid {field} {value}")
