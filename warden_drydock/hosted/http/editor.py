@@ -192,6 +192,12 @@ def _document(value: Mapping[str, Any]) -> dict[str, Any]:
 def document_digest(value: Mapping[str, Any]) -> str:
     """Digest the typed document, excluding its self-referential digest."""
     sections = [dict(item, body=normalize_text(item["body"])) for item in value["sections"]]
+    projection = {key: value[key] for key in (
+        "record_id", "record_type", "displayed_name", "status", "authority",
+        "visibility", "fields", "connections",
+    )}
+    projection["ownership"] = value.get("ownership", "campaign")
+    projection["sections"] = sections
     return hashlib.sha256(json.dumps(
         {key: value[key] for key in (
             "record_id", "record_type", "displayed_name", "ownership", "status", "authority",
@@ -531,6 +537,15 @@ def mutate_document(
         end = next(index for index, line in enumerate(lines[1:], 1) if line.rstrip("\n") == "---")
 
     body_start = end + 1
+    title_indexes = [
+        index for index in range(body_start, len(lines))
+        if re.match(r"^#\s+", lines[index])
+    ]
+    if len(title_indexes) == 1:
+        title_index = title_indexes[0]
+        expected_title = f"# {new['displayed_name']}"
+        if lines[title_index].rstrip("\n") != expected_title:
+            lines[title_index] = f"{expected_title}{newline}"
     headings: list[tuple[int, str]] = []
     for index in range(body_start, len(lines)):
         match = re.match(r"^##\s+(.+?)\s*\n?$", lines[index])

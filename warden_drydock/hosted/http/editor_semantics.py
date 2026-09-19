@@ -158,13 +158,14 @@ def _source_record(source: str, subject_id: str, resolution_cards: list[Mapping[
         if metadata.get("id") != subject_id or metadata.get("ownership") != "campaign":
             return None
         record = parse_document(source, subject_id, metadata.get("type"))
-        headings = [line for line in source.replace("\r\n", "\n").replace("\r", "\n").splitlines() if line.startswith("# ")]
+        headings = [line for line in source.replace("\r\n", "\n").replace("\r", "\n").split("\n") if line.startswith("# ")]
         if headings != [f"# {record['displayed_name']}"]:
             return None
-        record = dict(
-            record,
-            sections=[dict(section, body=section["body"].strip("\n")) for section in record["sections"]],
-        )
+        # Compare the source projection with the same section bodies exposed by
+        # the editor wire contract.  The blank line after a heading is part of
+        # that representation, not disposable whitespace.  Trimming it here
+        # makes every ordinary source-preserving edit fail semantic validation.
+        record = dict(record)
         record["content_digest"] = document_digest(record)
         used: set[int] = set()
         connections = []
@@ -341,16 +342,21 @@ def _proposal(value: Mapping[str, Any], *, impact: Mapping[str, Any] | None = No
         for key in ("before", "after"):
             if isinstance(card.get(key), dict) and "content_digest" in card[key]:
                 _record(card[key], f"card.{card['change_id']}.{key}")
-        if card["kind"] in {"record_created", "record_updated"} and isinstance(card.get("after"), dict):
-            before, after = card.get("before"), card["after"]
+        if card["kind"] in {"record_created", "record_updated", "record_removed"}:
+            before, after = card.get("before"), card.get("after")
             before_authority = before["authority"] if isinstance(before, dict) else "absent"
-            if before is None:
+            if after is None:
+                authority_transition = before_authority in {"canon", "revealed"}
+                after_authority = "absent"
+            elif before is None:
                 authority_transition = after["authority"] in {"canon", "revealed"}
+                after_authority = after["authority"]
             else:
                 authority_transition = before_authority != after["authority"]
+                after_authority = after["authority"]
             if authority_transition:
-                actual_authority.add((card["change_id"], card["subject_record_id"], before_authority, after["authority"]))
-            if isinstance(before, dict) and before["visibility"] != after["visibility"]:
+                actual_authority.add((card["change_id"], card["subject_record_id"], before_authority, after_authority))
+            if isinstance(before, dict) and isinstance(after, dict) and before["visibility"] != after["visibility"]:
                 actual_visibility.add((card["change_id"], card["subject_record_id"], json.dumps(before["visibility"], sort_keys=True), json.dumps(after["visibility"], sort_keys=True)))
     declared_authority = {(x["change_id"], x["record_id"], x["from"], x["to"]) for x in value["diff"]["authority_changes"]}
     declared_visibility = {(x["change_id"], x["record_id"], json.dumps(x["before"], sort_keys=True), json.dumps(x["after"], sort_keys=True)) for x in value["diff"]["visibility_changes"]}
