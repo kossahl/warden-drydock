@@ -73,6 +73,30 @@ class GeneratorTest(unittest.TestCase):
                 main(['bootstrap',str(root),'--name','Test Campaign'])
             self.assertEqual(existing.read_text(encoding='utf-8'),'user content')
 
+    def test_required_values_keep_string_compatibility_with_typed_frontmatter(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test Campaign', adapter='mothership')
+            adapter_path = root / '00-drydock' / 'adapter.json'
+            adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['entity_types']['npc']['required_values'] = {'rank': '1e2'}
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+            (root / '01-campaign' / 'test-npc.md').write_text(
+                '---\n'
+                'id: test-npc\n'
+                'type: npc\n'
+                'name: Test NPC\n'
+                'status: draft\n'
+                'visibility: warden\n'
+                'warden_only: true\n'
+                'ownership: campaign\n'
+                'rank: 1e2\n'
+                '---\n',
+                encoding='utf-8',
+            )
+
+            self.assertEqual(validate_campaign(root), 0)
+
     def test_context_uses_only_approved_sessions_and_is_stable(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)/'campaign'
@@ -156,6 +180,87 @@ class GeneratorTest(unittest.TestCase):
             self.assertEqual(validate_campaign(root),0)
             with self.assertRaises(SystemExit):
                 create_entity(root,'npc','npc-ripley','Duplicate')
+
+            escaped = create_entity(root, 'npc', 'npc-backslash', r'A\name')
+            self.assertEqual(r'A\name', standalone.frontmatter(escaped.read_text(encoding='utf-8'))['name'])
+            self.assertIn(r'# A\name', escaped.read_text(encoding='utf-8'))
+            separated = create_entity(root, 'npc', 'npc-line-separators', 'A\u2028B\u2029C')
+            self.assertEqual('A\u2028B\u2029C', standalone.frontmatter(separated.read_text(encoding='utf-8'))['name'])
+
+    def test_frontmatter_preserves_arbitrarily_large_integer_scalars(self):
+        value = int('9' * 400)
+        text = f'---\nlarge: {value}\n---\n'
+
+        self.assertEqual(value, standalone.frontmatter(text)['large'])
+
+        oversized = '9' * 5000
+        self.assertEqual(
+            oversized,
+            standalone.frontmatter(f'---\nlarge: {oversized}\n---\n')['large'],
+        )
+
+    def test_validation_normalizes_typed_scalars_in_adapter_rules(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test Campaign', adapter='mothership')
+            adapter_path = root / '00-drydock' / 'adapter.json'
+            adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['validation']['field_values'].update({
+                'score': ['1e2'],
+                'enabled': ['false'],
+            })
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+            npc = create_entity(root, 'npc', 'npc-typed-rules', 'Typed Rules')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                'visibility: warden\n',
+                'visibility: warden\nscore: 1e2\nenabled: false\n',
+            ), encoding='utf-8')
+
+            self.assertEqual(validate_campaign(root), 0)
+
+            adapter['validation']['forbidden_combinations'].append({
+                'score': '1e2',
+                'enabled': 'false',
+            })
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(validate_campaign(root), 1)
+            self.assertIn('forbidden field combination score=1e2, enabled=false', output.getvalue())
+
+    def test_validation_rejects_explicit_null_for_field_value_allow_list(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test Campaign', adapter='mothership')
+            adapter_path = root / '00-drydock' / 'adapter.json'
+            adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['validation']['field_values']['custom'] = ['allowed']
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+            npc = create_entity(root, 'npc', 'npc-null-field', 'Null Field')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                'visibility: warden\n', 'visibility: warden\ncustom: null\n',
+            ), encoding='utf-8')
+
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(standalone.validate_campaign(root), 1)
+            self.assertIn('invalid custom None', output.getvalue())
+
+    def test_required_values_preserve_case_sensitive_matching(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test Campaign', adapter='mothership')
+            adapter_path = root / '00-drydock' / 'adapter.json'
+            adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['entity_types']['npc']['required_values'] = {'rank': 'ALPHA'}
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+            npc = create_entity(root, 'npc', 'npc-case-sensitive', 'Case Sensitive')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                'visibility: warden\n', 'visibility: warden\nrank: alpha\n',
+            ), encoding='utf-8')
+
+            self.assertEqual(validate_campaign(root), 1)
 
     def test_semantic_validation_rejects_missing_adapter_fields(self):
         with TemporaryDirectory() as tmp:
@@ -339,6 +444,21 @@ class GeneratorTest(unittest.TestCase):
                 self.assertEqual(validate_campaign(root),1)
             self.assertIn('forbidden heading Warden truth',output.getvalue())
 
+    def test_validation_accepts_nonempty_numeric_and_boolean_fields(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test Campaign', adapter='mothership')
+            adapter_path = root / '00-drydock' / 'adapter.json'
+            adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
+            adapter['entity_types']['npc']['nonempty_fields'] = ['score', 'enabled']
+            adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
+            npc = create_entity(root, 'npc', 'npc-typed', 'Typed')
+            npc.write_text(npc.read_text(encoding='utf-8').replace(
+                'visibility: warden\n', 'visibility: warden\nscore: 0\nenabled: false\n',
+            ), encoding='utf-8')
+
+            self.assertEqual(validate_campaign(root), 0)
+
     def test_player_visibility_cannot_be_warden_only(self):
         with TemporaryDirectory() as tmp:
             root=Path(tmp)/'campaign'
@@ -424,6 +544,20 @@ class GeneratorTest(unittest.TestCase):
             with redirect_stdout(backlinks):
                 self.assertEqual(main(['backlinks','faction-company','--path',str(root)]),0)
             self.assertIn('npc-ripley\tworks-for\tcurrent',backlinks.getvalue())
+
+    def test_focused_context_normalizes_record_newlines_before_body_extraction(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'campaign'
+            init_campaign(root, name='Test', adapter='mothership')
+            npc = create_entity(root, 'npc', 'npc-ripley', 'Ripley')
+            npc.write_bytes(npc.read_bytes().replace(b'\n', b'\r\n'))
+
+            context = standalone.build_context(root, focus='npc-ripley', depth=0, max_records=1)
+            text = context.read_text(encoding='utf-8')
+
+            self.assertIn('Ripley (`npc-ripley`)', text)
+            self.assertIn('## Summary', text)
+            self.assertNotIn('---\n\nid: npc-ripley', text)
 
     def test_relationship_generation_rejects_parse_errors_without_mutation(self):
         with TemporaryDirectory() as tmp:
