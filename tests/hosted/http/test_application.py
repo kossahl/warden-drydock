@@ -1083,7 +1083,7 @@ class SliceApplicationTests(unittest.TestCase):
             "authority": "preparation",
             "ownership": "campaign",
             "visibility": {"audience": "warden", "warden_only": True},
-            "fields": [{"field_id": "ownership", "value": "campaign"}],
+            "fields": [{"field_id": "current_status", "value": "unknown"}],
             "sections": [{"section_id": "summary", "body": "Synthetic record."}],
             "connections": [],
             "content_digest": "0" * 64,
