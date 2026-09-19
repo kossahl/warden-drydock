@@ -345,6 +345,16 @@ class AtlasProjectionTests(AtlasFixture):
 
         searched = service.record_library(replace(query, query="äTHER"))
         self.assertEqual(("record-010",), tuple(item.record_id for item in searched.items))
+        type_only_record = replace(bundle.records[0], record_type="type-only")
+        type_only_bundle = replace(
+            bundle, records=(type_only_record, *bundle.records[1:])
+        )
+        type_only_projections = InMemoryAtlasProjectionRepository()
+        type_only_projections.replace(type_only_bundle)
+        searched_by_type = AtlasQueryService(type_only_projections).record_library(
+            replace(query, query="type-only")
+        )
+        self.assertEqual(("record-001",), tuple(item.record_id for item in searched_by_type.items))
         canon = service.record_library(
             replace(query, authorities=(Authority.CANON,), statuses=("canon",))
         )
