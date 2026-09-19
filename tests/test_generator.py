@@ -79,7 +79,7 @@ class GeneratorTest(unittest.TestCase):
             init_campaign(root, name='Test Campaign', adapter='mothership')
             adapter_path = root / '00-drydock' / 'adapter.json'
             adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
-            adapter['entity_types']['npc']['required_values'] = {'rank': '1'}
+            adapter['entity_types']['npc']['required_values'] = {'rank': '1e2'}
             adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
             (root / '01-campaign' / 'test-npc.md').write_text(
                 '---\n'
@@ -90,7 +90,7 @@ class GeneratorTest(unittest.TestCase):
                 'visibility: warden\n'
                 'warden_only: true\n'
                 'ownership: campaign\n'
-                'rank: 1\n'
+                'rank: 1e2\n'
                 '---\n',
                 encoding='utf-8',
             )
@@ -193,6 +193,12 @@ class GeneratorTest(unittest.TestCase):
 
         self.assertEqual(value, standalone.frontmatter(text)['large'])
 
+        oversized = '9' * 5000
+        self.assertEqual(
+            oversized,
+            standalone.frontmatter(f'---\nlarge: {oversized}\n---\n')['large'],
+        )
+
     def test_validation_normalizes_typed_scalars_in_adapter_rules(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp) / 'campaign'
@@ -200,20 +206,20 @@ class GeneratorTest(unittest.TestCase):
             adapter_path = root / '00-drydock' / 'adapter.json'
             adapter = json.loads(adapter_path.read_text(encoding='utf-8'))
             adapter['validation']['field_values'].update({
-                'score': ['0'],
+                'score': ['1e2'],
                 'enabled': ['false'],
             })
             adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
             npc = create_entity(root, 'npc', 'npc-typed-rules', 'Typed Rules')
             npc.write_text(npc.read_text(encoding='utf-8').replace(
                 'visibility: warden\n',
-                'visibility: warden\nscore: 0\nenabled: false\n',
+                'visibility: warden\nscore: 1e2\nenabled: false\n',
             ), encoding='utf-8')
 
             self.assertEqual(validate_campaign(root), 0)
 
             adapter['validation']['forbidden_combinations'].append({
-                'score': '0',
+                'score': '1e2',
                 'enabled': 'false',
             })
             adapter_path.write_text(json.dumps(adapter), encoding='utf-8')
@@ -221,7 +227,7 @@ class GeneratorTest(unittest.TestCase):
             output = StringIO()
             with redirect_stdout(output):
                 self.assertEqual(validate_campaign(root), 1)
-            self.assertIn('forbidden field combination score=0, enabled=false', output.getvalue())
+            self.assertIn('forbidden field combination score=1e2, enabled=false', output.getvalue())
 
     def test_required_values_preserve_case_sensitive_matching(self):
         with TemporaryDirectory() as tmp:
