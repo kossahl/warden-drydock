@@ -61,6 +61,11 @@ python -m unittest discover -s tests -v
 python -m warden_drydock --help
 ```
 
+Before opening a PR, every agent and contributor must run
+`./scripts/review-check.sh`, the canonical local gate that mirrors CI in
+pinned containers. Focused tests are useful during iteration but do not
+replace this check.
+
 When generator, template, adapter, or portable maintenance behavior changes,
 generate a fresh campaign in a temporary sibling directory, inspect it, run its
 local validation/context commands, and verify that it does not import the
@@ -72,7 +77,8 @@ framework source checkout.
 2. Preserve campaign content and the canon gate.
 3. Keep portable maintenance code standard-library-only.
 4. Update user-facing and generated instructions when commands change.
-5. Run the complete test suite and CLI help check.
+5. Run `./scripts/review-check.sh`, the canonical gate covering the complete
+   test suite and CLI/help checks.
 6. Build and smoke-test the wheel for release-affecting changes.
 7. Review `git diff --check` and commit one coherent task.
 
