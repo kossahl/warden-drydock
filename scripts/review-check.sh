@@ -4,7 +4,8 @@ set -Eeuo pipefail
 # Run the CI gates in isolated disposable environments with pinned base images.
 # Each container copies from a read-only source mount into a private workspace,
 # so generated artifacts never alter the caller's checkout.
-root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+root_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+unset GIT_INDEX_FILE
 project_name="drydock-review-${RANDOM}-${BASHPID}"
 db_container="${project_name}-postgres"
 network_name="${project_name}-network"
@@ -47,6 +48,18 @@ check_source_guards() {
   esac
   if [ -s "$info_attributes" ]; then
     echo "Cannot test a checkout with non-repository attributes in $info_attributes." >&2
+    return 1
+  fi
+
+  untracked_paths=0
+  while IFS= read -r -d '' untracked_path; do
+    if [ "$untracked_paths" -eq 0 ]; then
+      echo "Cannot test a checkout with untracked non-ignored files:" >&2
+    fi
+    printf '  %q\n' "$untracked_path" >&2
+    untracked_paths=$((untracked_paths + 1))
+  done < <(git -C "$root_dir" ls-files --others --exclude-standard -z)
+  if [ "$untracked_paths" -gt 0 ]; then
     return 1
   fi
 
@@ -172,38 +185,57 @@ git_diff --binary HEAD -- \
   | git -C "$snapshot_dir" apply --allow-empty --whitespace=nowarn -
 # Keep governance tests on snapshot-local metadata instead of exposing the
 # host repository. The index is rebuilt after applying tracked changes, and a
-# credential-free canonical URL is derived from the origin repository slug.
-origin_remote=$(git -C "$root_dir" remote get-url origin)
-if [[ "$origin_remote" == *"?"* || "$origin_remote" == *"#"* ]]; then
-  origin_path=
-elif [[ "$origin_remote" == *"://"* ]]; then
-  origin_path=${origin_remote#*://}
-  origin_path=${origin_path#*@}
-  origin_path=${origin_path#*/}
-elif [[ "$origin_remote" == *:* ]]; then
-  origin_path=${origin_remote#*@}
-  origin_path=${origin_path#*:}
-else
-  origin_path=
-fi
-origin_path=${origin_path%/}
-origin_path=${origin_path%.git}
-IFS=/ read -r -a origin_parts <<< "$origin_path"
-origin_segments=()
-for origin_part in "${origin_parts[@]}"; do
-  if [ -n "$origin_part" ]; then
-    origin_segments+=("$origin_part")
-  fi
-done
-if [ "${#origin_segments[@]}" -ne 2 ] \
-  || [[ ! ${origin_segments[0]} =~ ^[[:alnum:]_.-]+$ ]] \
-  || [[ ! ${origin_segments[1]} =~ ^[[:alnum:]_.-]+$ ]]; then
-  echo "Cannot derive the origin repository slug for the test snapshot." >&2
+# credential-free canonical URL is derived from the tracked allowlist artifact.
+allowlist_relative_path=".github/coordination-allowlist.json"
+if ! git -C "$root_dir" ls-files --error-unmatch -- "$allowlist_relative_path" >/dev/null 2>&1 \
+  || [ ! -f "$root_dir/$allowlist_relative_path" ] \
+  || [ -L "$root_dir/$allowlist_relative_path" ]; then
+  echo "Cannot read the tracked coordination allowlist artifact for the test snapshot." >&2
   exit 1
 fi
-origin_owner=${origin_segments[0]}
-origin_repo=${origin_segments[1]}
-origin_url="https://github.com/${origin_owner}/${origin_repo}.git"
+snapshot_allowlist="$snapshot_dir/$allowlist_relative_path"
+if [ ! -f "$snapshot_allowlist" ] || [ -L "$snapshot_allowlist" ]; then
+  echo "Cannot read the coordination allowlist artifact from the test snapshot." >&2
+  exit 1
+fi
+if ! canonical_repository=$(python3 - "$snapshot_allowlist" <<'PY'
+import json
+import re
+import sys
+
+
+def reject_duplicate_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError
+        result[key] = value
+    return result
+
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        data = json.load(handle, object_pairs_hook=reject_duplicate_keys)
+except (OSError, UnicodeError, ValueError):
+    raise SystemExit(1)
+
+if not isinstance(data, dict) or set(data) != {"coordination_repositories"}:
+    raise SystemExit(1)
+repositories = data["coordination_repositories"]
+if not isinstance(repositories, list) or len(repositories) != 1:
+    raise SystemExit(1)
+repository = repositories[0]
+if not isinstance(repository, str) or not re.fullmatch(
+    r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository
+):
+    raise SystemExit(1)
+print(repository)
+PY
+); then
+  echo "Cannot derive a single valid repository from the coordination allowlist artifact." >&2
+  exit 1
+fi
+origin_url="https://github.com/${canonical_repository}.git"
 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
   git -C "$snapshot_dir" init --quiet --template="$template_dir"
 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
