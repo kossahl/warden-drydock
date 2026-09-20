@@ -88,6 +88,8 @@ a PR based on `master`, keep
 `origin/master` current. For a stacked PR, set `DRYDOCK_CI_BASE_REF` to the
 exact PR base ref, such as `origin/<base-branch>`, or to the base SHA.
 Otherwise, `review-check.sh` prefers `origin/master` when it is present.
+On Windows, run it from Git Bash or WSL; PowerShell is not a supported
+invocation.
 
 ## Continuous integration scope
 

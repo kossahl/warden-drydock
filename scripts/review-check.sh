@@ -209,10 +209,15 @@ done < <(
 
 # Raw blobs do not reproduce built-in checkout conversions such as ident or
 # working-tree-encoding, or eol. Reject those attributes rather than test the
-# wrong bytes while leaving ordinary text handling to the canonical diff.
+# wrong bytes, except for this script's deliberate tracked LF policy.
 while IFS= read -r -d '' attribute_path \
   && IFS= read -r -d '' attribute_name \
   && IFS= read -r -d '' attribute_value; do
+  if [ "$attribute_path" = "scripts/review-check.sh" ] \
+    && [ "$attribute_name" = "eol" ] \
+    && [ "$attribute_value" = "lf" ]; then
+    continue
+  fi
   if [ "$attribute_value" != unspecified ] && [ "$attribute_value" != unset ]; then
     echo "Cannot test a checkout with a built-in conversion attribute ($attribute_path: $attribute_name)." >&2
     return 1
