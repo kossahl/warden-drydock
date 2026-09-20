@@ -60,6 +60,12 @@ class EditorCodecReviewTests(unittest.TestCase):
         candidate["content_digest"] = document_digest(candidate)
         self.assertIn("ownership: campaign\n", mutate_document(source, candidate))
 
+    def test_document_digest_defaults_missing_top_level_ownership(self):
+        complete = _document()
+        legacy = dict(complete)
+        legacy.pop("ownership")
+        self.assertEqual(document_digest(complete), document_digest(legacy))
+
     def test_missing_and_unknown_source_statuses_are_read_only(self):
         for raw_status, expected in ((None, {"classification": "missing", "value": None}), ("future", {"classification": "unknown", "value": "future"})):
             with self.subTest(raw_status=raw_status):
