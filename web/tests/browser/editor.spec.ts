@@ -318,9 +318,9 @@ test("create correction uses the candidate ID, reads campaign context, and opens
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
-    if (request.method() === "GET" && path.endsWith("/records/campaign-main/editor")) {
+    if (request.method() === "GET" && path.endsWith("/editor/creation-context")) {
       editorReads.push(path);
-      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: { ...editorRecord, record_id: "campaign-main" } }) });
+      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_creation_context", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1 }) });
     }
     if (request.method() === "POST" && path.endsWith("/editor/records/proposals")) {
       const submittedBody = JSON.parse(request.postData() ?? "{}");
@@ -350,7 +350,7 @@ test("create correction uses the candidate ID, reads campaign context, and opens
   await editor.getByRole("button", { name: "Submit create proposal" }).click();
   await editor.getByRole("button", { name: "Create correction/rebase" }).click();
   await expect.poll(() => editorReads.length).toBe(2);
-  expect(editorReads.every((path) => !path.endsWith("/records/new-record/editor"))).toBe(true);
+  expect(editorReads.every((path) => path.endsWith("/editor/creation-context"))).toBe(true);
   expect((initialBody as any)?.candidate?.connections?.[0]?.connection_id).toMatch(/^connection_[0-9]+$/);
   expect((initialBody as any)?.candidate?.connections?.[0]?.target_record_id).toBe("record-one");
   await editor.getByLabel("Displayed name").fill("Corrected created record");
@@ -373,8 +373,8 @@ test("create validation carries the handout audience rule into the focused field
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
-    if (request.method() === "GET" && path.endsWith("/records/campaign-main/editor")) {
-      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: editorRecord }) });
+    if (request.method() === "GET" && path.endsWith("/editor/creation-context")) {
+      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_creation_context", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1 }) });
     }
     if (request.method() === "POST" && path.endsWith("/editor/records/proposals")) proposalPosts += 1;
     return route.fallback();
@@ -399,8 +399,8 @@ test("adapter required values block an invalid handout visibility before posting
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
-    if (request.method() === "GET" && path.endsWith("/records/campaign-main/editor")) {
-      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: editorRecord }) });
+    if (request.method() === "GET" && path.endsWith("/editor/creation-context")) {
+      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_creation_context", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1 }) });
     }
     if (request.method() === "POST" && path.endsWith("/editor/records/proposals")) proposalPosts += 1;
     return route.fallback();
