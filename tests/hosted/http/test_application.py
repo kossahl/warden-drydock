@@ -14,7 +14,7 @@ from unittest import mock
 
 from warden_drydock.hosted.http.application import HTTPFailure, SliceApplication, SyntheticProvider
 from warden_drydock.hosted.ai.provider import OpenAIResponsesAdapter
-from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input, text_digest
+from warden_drydock.hosted.http.contracts import canonical_digest, normalize_text, request_digest_input, text_digest
 from warden_drydock.hosted.http.editor import document_digest
 from warden_drydock.hosted.proposals.service import ProposalStatus
 from warden_drydock.hosted.engine import Status
@@ -386,6 +386,44 @@ class SliceApplicationTests(unittest.TestCase):
         self.assertEqual(change["after_content"], published["content"])
         retry = self.app.approve_proposal("proposal_alpha", 1, self.approval(proposal))[1]
         self.assertTrue(retry["exact_replay"])
+
+    def test_proposal_view_normalizes_crlf_and_bare_cr_before_content(self) -> None:
+        proposal = self.proposal()
+        item = self.app.proposal_repository.get(proposal["proposal_id"], proposal["proposal_version"])
+        original = self.app._record(item.campaign_id, item.base_revision, item.changes[0].subject_id)
+        for line_ending in ("\r\n", "\r"):
+            with self.subTest(line_ending=repr(line_ending)), mock.patch.object(
+                self.app, "_record", return_value={**original, "content": original["content"].replace("\n", line_ending)}
+            ):
+                view = self.app._proposal_view(item)
+            before = view["exact_diff"][0]["before_content"]
+            self.assertEqual(normalize_text(original["content"]), before)
+            self.assertNotIn("\r", before)
+
+    def test_proposal_create_replay_normalizes_legacy_line_endings_without_rewriting_receipt(self) -> None:
+        proposal = self.proposal()
+        generation = self.app.generation_view("generation_alpha")[1]
+        receipt_key = ("proposal_create", "idem_proposal")
+        stored_digest, stored_status, stored_response = self.app.receipts._receipts[receipt_key]
+        original = stored_response["exact_diff"][0]["before_content"]
+        payload = {"contract_name": "proposal_create_request", "contract_version": 2,
+                   "request_id": "request_proposal", "idempotency_key": "idem_proposal",
+                   "payload_digest": "0" * 64, "generation_id": generation["generation_id"],
+                   "proposal_id": proposal["proposal_id"], "campaign_id": generation["campaign_id"],
+                   "source_revision": generation["source_revision"], "base_revision": generation["source_revision"],
+                   "source_set_digest": generation["source_set_digest"],
+                   "terminal_draft_digest": generation["terminal_content_digest"], "subject_id": "campaign-main"}
+        payload = self.bind(payload)
+        for line_ending in ("\r\n", "\r"):
+            with self.subTest(line_ending=repr(line_ending)):
+                legacy = deepcopy(stored_response)
+                legacy["exact_diff"][0]["before_content"] = original.replace("\n", line_ending)
+                self.app.receipts._receipts[receipt_key] = (stored_digest, stored_status, legacy)
+                status, replay = self.app.create_proposal(generation["generation_id"], deepcopy(payload))
+                self.assertEqual(200, status)
+                self.assertEqual(normalize_text(original), replay["exact_diff"][0]["before_content"])
+                self.assertNotIn("\r", replay["exact_diff"][0]["before_content"])
+                self.assertEqual(legacy, self.app.receipts._receipts[receipt_key][2])
 
     def test_proposal_create_receipt_prevents_second_version(self) -> None:
         proposal = self.proposal()
