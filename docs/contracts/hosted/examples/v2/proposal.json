@@ -18,7 +18,7 @@
     "expected_editor_workflow_version": 7,
     "diff_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     "authority_change_ids": [],
-    "visibility_change_ids": [],
+    "visibility_change_ids": ["change_station"],
     "changes": [
       {
         "change_id": "change_station",
@@ -26,7 +26,36 @@
         "change_type": "update",
         "from_authority": "preparation",
         "to_authority": "preparation",
-        "content_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        "before": {
+          "record_type": "location",
+          "displayed_name": "Synthetic Station",
+          "visibility": {"audience": "warden", "warden_only": true},
+          "content_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "connections": [
+            {
+              "connection_id": "connection_company",
+              "target_record_id": "record-company",
+              "relationship": "works-for",
+              "state": "current",
+              "context": "The station handles salvage contracts."
+            }
+          ]
+        },
+        "after": {
+          "record_type": "location",
+          "displayed_name": "Synthetic Station",
+          "visibility": {"audience": "shared", "warden_only": false},
+          "content_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "connections": [
+            {
+              "connection_id": "connection_company",
+              "target_record_id": "record-company",
+              "relationship": "works-for",
+              "state": "current",
+              "context": "The station handles salvage contracts."
+            }
+          ]
+        }
       }
     ]
   },

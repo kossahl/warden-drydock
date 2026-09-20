@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import Enum
 import hashlib
+import inspect
 import json
 import re
 import threading
@@ -127,9 +128,8 @@ class ProposalService:
     def _bind_manifest(version, result):
         if not isinstance(result, SnapshotManifest):
             raise ValueError("publication result is not a verified snapshot manifest")
-        expected_change_digest = exact_diff_digest(version.changes) if version.editor_metadata else version.diff_digest
         if (result.campaign_id, result.parent_revision, result.change_digest) != (
-            version.campaign_id, version.base_revision, expected_change_digest
+            version.campaign_id, version.base_revision, version.diff_digest
         ):
             raise ValueError("publication result binding mismatch")
         return result
@@ -183,7 +183,28 @@ class ProposalService:
         if getattr(staged, "status", None) is not Status.STAGED:
             return self.repository.replace_status(version, ProposalStatus.DRAFT)
         try:
-            result = self._publish(version, staged, finalize=finalize) if finalize is not None else self._publish(version, staged)
+            if finalize is None:
+                result = self._publish(version, staged)
+            else:
+                try:
+                    parameters = inspect.signature(self._publish).parameters.values()
+                except (TypeError, ValueError):
+                    parameters = ()
+                accepts_finalize = any(
+                    parameter.name == "finalize"
+                    and parameter.kind in (
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        inspect.Parameter.KEYWORD_ONLY,
+                    )
+                    for parameter in parameters
+                ) or any(
+                    parameter.kind is inspect.Parameter.VAR_KEYWORD
+                    for parameter in parameters
+                )
+                result = (
+                    self._publish(version, staged, finalize=finalize)
+                    if accepts_finalize else self._publish(version, staged)
+                )
         except StaleHeadError:
             return self.repository.replace_status(version, ProposalStatus.CONFLICT)
         except Exception:
@@ -218,23 +239,48 @@ class InMemoryProposalRepository:
     def __init__(self): self.items = {}; self.audit = []; self._lock = threading.RLock(); self._created_at = {}; self._editor_workflow = {}
     def editor_workflow_version(self, campaign_id):
         with self._lock:
-            if campaign_id not in self._editor_workflow:
-                values = [item.editor_metadata.get("editor_workflow_version", 1) - 1 for item in self.items.values() if item.campaign_id == campaign_id and item.editor_metadata]
-                self._editor_workflow[campaign_id] = max(values, default=0) + 1
-            return self._editor_workflow[campaign_id]
+            if campaign_id in self._editor_workflow:
+                return self._editor_workflow[campaign_id]
+            values = [item.editor_metadata.get("editor_workflow_version", 1) - 1 for item in self.items.values() if item.campaign_id == campaign_id and item.editor_metadata]
+            return max(values, default=0) + 1
     def editor_proposals(self):
         with self._lock:
-            return tuple(item for item in self.items.values() if item.editor_metadata)
+            return tuple(sorted(
+                (item for item in self.items.values() if item.editor_metadata),
+                key=lambda item: (item.proposal_id, item.version),
+            ))
     def add_editor(self, item, campaign_id, expected_version):
         with self._lock:
+            if campaign_id != item.campaign_id:
+                return False
+            metadata = item.editor_metadata
+            if not isinstance(metadata, dict) or metadata.get("editor_workflow_version") != expected_version + 1:
+                return False
             if self.editor_workflow_version(campaign_id) != expected_version:
                 return False
-            if (item.proposal_id, item.version) in self.items:
+            if self.next_version(item.proposal_id) != item.version:
                 raise ValueError("proposal_version_conflict")
-            correction = (item.editor_metadata or {}).get("correction_of")
-            if correction:
-                prior = self.items[(correction["proposal_id"], correction["proposal_version"])]
-                if prior.status not in (ProposalStatus.DRAFT, ProposalStatus.CONFLICT) or self.next_version(item.proposal_id) != prior.version + 1:
+            correction = metadata.get("correction_of")
+            if correction is not None:
+                if not isinstance(correction, dict):
+                    return False
+                correction_id = correction.get("proposal_id")
+                correction_version = correction.get("proposal_version")
+                if (
+                    not isinstance(correction_id, str)
+                    or not isinstance(correction_version, int)
+                    or isinstance(correction_version, bool)
+                ):
+                    return False
+                prior = self.items.get((correction_id, correction_version))
+                if (
+                    prior is None
+                    or not prior.editor_metadata
+                    or prior.proposal_id != item.proposal_id
+                    or prior.campaign_id != item.campaign_id
+                    or prior.status not in (ProposalStatus.DRAFT, ProposalStatus.CONFLICT)
+                    or item.version != prior.version + 1
+                ):
                     return False
                 retired = replace(
                     prior,
@@ -243,6 +289,7 @@ class InMemoryProposalRepository:
                 )
                 self.items[(prior.proposal_id, prior.version)] = retired
                 self.audit.append((prior.proposal_id, prior.version, ProposalStatus.REJECTED.value))
+            item = replace(item, status=ProposalStatus.DRAFT)
             self.items[(item.proposal_id, item.version)] = item
             self._created_at[(item.proposal_id, item.version)] = datetime(2000, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=len(self._created_at))
             self._editor_workflow[campaign_id] = expected_version + 1
@@ -318,6 +365,7 @@ class InMemoryProposalRepository:
                 source_revision=current.source_revision,
                 source_set_digest=current.source_set_digest,
                 terminal_draft_digest=current.terminal_draft_digest,
+                editor_metadata=current.editor_metadata,
             )
             self.items[(item.proposal_id, item.version)] = retired
             self.items[(item.proposal_id, version)] = corrected

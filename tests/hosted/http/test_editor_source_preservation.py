@@ -522,6 +522,13 @@ It must remain in place.
 
     def test_no_frontmatter_edit_preserves_prose_before_first_heading(self):
         source = (
+            "---\n"
+            "id: record-main\n"
+            "type: npc\n"
+            "name: Keeper\n"
+            "status: draft\n"
+            "visibility: warden\n"
+            "---\n"
             "Campaign-authored introduction.\n"
             "It must remain before the typed sections.\n\n"
             "## Summary\n"
@@ -584,8 +591,7 @@ Keep this record.
     def test_editor_parse_failures_are_structured_across_read_and_impact_paths(self):
         malformed = [
             "---\nid: record-main\ntype: npc\nname: Keeper\nstatus: draft\nvisibility: yes\n---\n",
-            "---\nid: record-main\ntype: npc\nname: \nstatus: draft\nvisibility: warden\n---\n",
-            "---\nid: record-main\ntype: npc\nname: Keeper\nstatus: unknown\nvisibility: warden\n---\n",
+            "---\nid: record-main\ntype: npc\nname: Keeper\nstatus: \"\"\nvisibility: warden\n---\n",
         ]
         revision = self.app.workflow.head("campaign_alpha")
         for source in malformed:
@@ -718,6 +724,8 @@ legacy_field: from old revision
         }
         candidate = {
             "record_type": "npc",
+            "ownership": "campaign",
+            "status": "draft",
             "fields": [{"field_id": "score", "value": 1}],
             "sections": [],
             "connections": [],
@@ -737,6 +745,7 @@ legacy_field: from old revision
             "record_id": "record-main",
             "record_type": "npc",
             "displayed_name": "Keeper",
+            "ownership": "campaign",
             "status": "draft",
             "visibility": {"audience": "warden", "warden_only": True},
             "fields": [
@@ -805,6 +814,7 @@ Keep this record.
             "record_id": "record-main",
             "record_type": "npc",
             "displayed_name": "Keeper",
+            "ownership": "campaign",
             "status": "draft",
             "authority": "preparation",
             "visibility": {"audience": "warden", "warden_only": True},
@@ -907,6 +917,7 @@ Keep this record.
             "record_id": "record-main",
             "record_type": "npc",
             "displayed_name": "Keeper",
+            "ownership": "campaign",
             "status": "draft",
             "authority": "preparation",
             "visibility": {"audience": "warden", "warden_only": True},
@@ -1130,7 +1141,7 @@ visibility: warden
         result = mutate_document(source, candidate)
 
         self.assertIn("- `guards` -> [[record-gate|Gate]] (`current`) — Watches the gate.", result)
-        self.assertIn("- `supports` -> [[record-hall]] (`current`) — Checks the hall carefully.", result)
+        self.assertIn("- `supports` → [[record-hall|Record Hall]] (`current`) — Checks the hall carefully.", result)
 
     def test_duplicate_connections_heading_preserves_non_typed_content(self):
         source = """---

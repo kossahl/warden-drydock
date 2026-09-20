@@ -240,17 +240,19 @@ def _frontmatter_scalar(value: str, key: str) -> object:
     if value.startswith('"') and value.endswith('"'):
         try:
             decoded = json.loads(value)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, ValueError):
             return value[1:-1]
         return decoded if isinstance(decoded, str) else value[1:-1]
     if key not in _STRING_FRONTMATTER_KEYS:
         try:
             decoded = json.loads(value)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, ValueError):
             return value
         if decoded is None or isinstance(decoded, bool):
             return decoded
-        if isinstance(decoded, (int, float)) and math.isfinite(decoded):
+        if isinstance(decoded, int):
+            return decoded
+        if isinstance(decoded, float) and math.isfinite(decoded):
             return decoded
     return value
 
@@ -273,7 +275,7 @@ def frontmatter(text: str) -> dict[str, object]:
     return result
 
 
-def _frontmatter_text(value: object) -> str:
+def _frontmatter_text(value: object, *, parse_numeric_strings: bool = False) -> str:
     """Compare adapter literals using the pre-typed frontmatter spelling."""
     if value is None:
         return "null"
@@ -281,7 +283,26 @@ def _frontmatter_text(value: object) -> str:
         return "true"
     if value is False:
         return "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(int(value)) if math.isfinite(value) and value.is_integer() else repr(value)
+    if isinstance(value, str) and parse_numeric_strings:
+        try:
+            decoded = json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            return value
+        if not isinstance(decoded, str):
+            return _frontmatter_text(decoded)
     return str(value)
+
+
+def _frontmatter_matches(actual: object, expected: object) -> bool:
+    if actual == expected:
+        return True
+    return _frontmatter_text(actual) == _frontmatter_text(
+        expected, parse_numeric_strings=True
+    )
 
 
 def body(text: str) -> str:
@@ -528,10 +549,15 @@ def validate_campaign(root: Path) -> int:
             errors.append(f"{relative}: invalid ownership {ownership}")
         for field, allowed_values in field_values.items():
             value = metadata.get(field)
-            if value is not None and value not in allowed_values:
+            if field in metadata and not any(
+                _frontmatter_matches(value, allowed) for allowed in allowed_values
+            ):
                 errors.append(f"{relative}: invalid {field} {value}")
         for combination in forbidden_combinations:
-            if all(metadata.get(field) == value for field, value in combination.items()):
+            if all(
+                field in metadata and _frontmatter_matches(metadata[field], value)
+                for field, value in combination.items()
+            ):
                 rendered = ", ".join(
                     f"{field}={value}" for field, value in combination.items()
                 )
@@ -553,7 +579,9 @@ def validate_campaign(root: Path) -> int:
                 if value is None or (isinstance(value, str) and not value.strip()):
                     errors.append(f"{relative}: field {field} must not be empty")
             for field, required_value in entity_rule.get("required_values", {}).items():
-                if field not in metadata or _frontmatter_text(metadata[field]).lower() != _frontmatter_text(required_value).lower():
+                if field not in metadata or not _frontmatter_matches(
+                    metadata[field], required_value
+                ):
                     errors.append(
                         f"{relative}: {field} must be {required_value} for {entity_type}"
                     )
@@ -629,7 +657,12 @@ def create_entity(root: Path, kind: str, entity_id: str, name: str | None) -> Pa
             text = re.sub(
                 r"(?m)^name:\s*.*$", lambda _match: f"name: {escaped_name}", text, count=1
             )
-        text = re.sub(r"(?m)^# (Name|Adventure|Session)$", f"# {name}", text, count=1)
+        text = re.sub(
+            r"(?m)^# (Name|Adventure|Session)$",
+            lambda _match: f"# {name}",
+            text,
+            count=1,
+        )
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(text, encoding="utf-8")
     print(f"Created {destination.relative_to(root)}")

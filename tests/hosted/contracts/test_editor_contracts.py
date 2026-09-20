@@ -74,10 +74,7 @@ def record_content_digest(record: dict) -> str:
             "connections",
         )
     }
-    projection["sections"] = [
-        {**section, "body": section["body"].replace("\r\n", "\n").replace("\r", "\n")}
-        for section in record["sections"]
-    ]
+    projection["sections"] = record["sections"]
     return canonical_digest(projection, ensure_ascii=False)
 
 
@@ -2655,12 +2652,23 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
                     expected_value = "" if field["value"] is None else str(field["value"])
                     if expected_value != metadata.get(field["field_id"]):
                         return False
+                section_labels = {
+                    definition_section["id"]: definition_section["label"]
+                    for definition_section in (record_definition or {}).get("sections", [])
+                    if isinstance(definition_section, dict)
+                    and isinstance(definition_section.get("id"), str)
+                    and isinstance(definition_section.get("label"), str)
+                    and definition_section["label"]
+                }
                 for section in structured["sections"]:
+                    rendered_label = section_labels.get(
+                        section["section_id"], section["section_id"]
+                    )
                     actual = [
                         line
                         for _, line in _section_lines(
                             normalized_source_text,
-                            section["section_id"],
+                            rendered_label,
                         )
                     ]
                     while actual and not actual[0].strip():
@@ -2670,7 +2678,8 @@ def source_snapshots_match(diff: dict, *, adapter_definition: dict | None = None
                     if section["body"].splitlines() != actual:
                         return False
                 expected_sections = [
-                    section["section_id"].casefold() for section in structured["sections"]
+                    section_labels.get(section["section_id"], section["section_id"]).casefold()
+                    for section in structured["sections"]
                 ] + ["connections"]
                 actual_sections = [
                     line[3:].strip().casefold()
@@ -6712,6 +6721,30 @@ class HostedRecordEditorContractTests(unittest.TestCase):
             canonical_digest({"nested": {"body": "a\nb", "items": ["c\nd"]}}),
         )
 
+    def test_record_content_digest_normalizes_all_string_values(self) -> None:
+        head = next(item["payload"] for item in self.examples if item["name"] == "head_record_view")
+        record = deepcopy(head["record"])
+        record["displayed_name"] = "Synthetic\nStation"
+        record["fields"][0]["value"] = "2187-04-03\nUTC"
+        record["sections"][0]["body"] = "A quiet\nstation."
+        record["connections"][0]["context"] = "The station\nhandles salvage contracts."
+        expected = record_content_digest(record)
+
+        for path in (
+            ("displayed_name",),
+            ("fields", 0, "value"),
+            ("sections", 0, "body"),
+            ("connections", 0, "context"),
+        ):
+            with self.subTest(path=path):
+                for line_ending in ("\r\n", "\r"):
+                    candidate = deepcopy(record)
+                    target = candidate
+                    for key in path[:-1]:
+                        target = target[key]
+                    target[path[-1]] = target[path[-1]].replace("\n", line_ending)
+                    self.assertEqual(expected, record_content_digest(candidate))
+
     def test_positive_examples_match_declared_digest_projections(self) -> None:
         projections = self.invariants["digest_projections"]
         for example in self.examples:
@@ -7107,7 +7140,8 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                         "date",
                         "visibility",
                         "warden_only",
-                    ]
+                    ],
+                    "sections": [{"id": "current-state", "label": "Current state"}],
                 }
                 for record_type in record_types
             }
@@ -7127,7 +7161,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "",
                 f"# {subject}",
                 "",
-                "## Summary",
+                "## Current state",
                 "",
                 "A session record.",
                 "",
@@ -7143,7 +7177,7 @@ class HostedRecordEditorContractTests(unittest.TestCase):
                 "authority": "preparation",
                 "visibility": {"audience": "warden", "warden_only": True},
                 "fields": [{"field_id": "date", "value": "2187-04-03"}],
-                "sections": [{"section_id": "summary", "body": "A session record."}],
+                "sections": [{"section_id": "current-state", "body": "A session record."}],
                 "connections": [],
                 "content_digest": "a" * 64,
             }
@@ -7166,11 +7200,23 @@ class HostedRecordEditorContractTests(unittest.TestCase):
 
         wrong_heading = deepcopy(diff)
         wrong_heading["source_changes"][0]["before_source"] = wrong_heading["source_changes"][0]["before_source"].replace(
-            f"# {subject}", "# Completely Wrong"
+            "## Current state", "## Wrong state"
         )
         self.assertFalse(
             source_snapshots_match(
                 wrong_heading,
+                adapter_definition=adapter_definition,
+            )
+        )
+
+        missing_heading = deepcopy(diff)
+        missing_heading["source_changes"][0]["before_source"] = missing_heading["source_changes"][0]["before_source"].replace(
+            "## Current state\n\nA session record.\n\n",
+            "A session record.\n\n",
+        )
+        self.assertFalse(
+            source_snapshots_match(
+                missing_heading,
                 adapter_definition=adapter_definition,
             )
         )

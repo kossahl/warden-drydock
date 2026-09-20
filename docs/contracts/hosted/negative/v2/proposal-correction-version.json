@@ -31,7 +31,20 @@
           "change_type": "update",
           "from_authority": "preparation",
           "to_authority": "preparation",
-          "content_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          "before": {
+            "record_type": "location",
+            "displayed_name": "Synthetic Station",
+            "visibility": {"audience": "warden", "warden_only": true},
+            "content_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "connections": []
+          },
+          "after": {
+            "record_type": "location",
+            "displayed_name": "Synthetic Station",
+            "visibility": {"audience": "warden", "warden_only": true},
+            "content_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "connections": []
+          }
         }
       ],
       "correction_of_version": 1

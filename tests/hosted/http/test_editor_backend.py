@@ -13,7 +13,7 @@ from warden_drydock.hosted.http.contracts import canonical_digest, request_diges
 from warden_drydock.hosted.http.editor import document_digest, mutate_document, parse_document
 from warden_drydock.hosted.http.editor_semantics import validate_editor_semantics
 from warden_drydock.hosted.http.repository import InMemoryHTTPRepository
-from warden_drydock.hosted.proposals.service import ProposalStatus
+from warden_drydock.hosted.proposals.service import ProposalStatus, ProposalVersion
 from warden_drydock.hosted.engine.models import ChangeKind, ExactTextChange, Finding, Severity, Stage, exact_diff_digest, content_digest
 from warden_drydock.hosted.revisions import InMemoryWorkflowRepository
 
@@ -105,9 +105,10 @@ class EditorBackendTests(unittest.TestCase):
         view = self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]
         candidate = {
             "record_id": record_id, "record_type": record_type, "displayed_name": record_id,
+            "ownership": "campaign",
             "status": authority if authority in {"canon", "revealed"} else "draft", "authority": authority,
             "visibility": {"audience": "warden", "warden_only": True},
-            "fields": [{"field_id": "ownership", "value": "campaign"}],
+            "fields": [],
             "sections": [{"section_id": "summary", "body": "Synthetic record."}],
             "connections": connections or [], "content_digest": "0" * 64,
         }
@@ -145,6 +146,63 @@ class EditorBackendTests(unittest.TestCase):
         self.assertEqual((200, proposal), (replay_status, replay))
         self.assertEqual(2, self.app.editor_record_read("campaign_alpha", revision, "campaign-main")[1]["editor_workflow_version"])
         self.assertEqual("edit", proposal["diff"]["summary"])
+
+    def test_record_mutation_rejects_changed_payload_before_receipt_replay(self):
+        revision, payload, (status, proposal) = self._edit("idem_digest_conflict_edit")
+        self.assertEqual((201, 2), (status, proposal["editor_workflow_version"]))
+
+        changed = deepcopy(payload)
+        changed["candidate"]["displayed_name"] = "Changed after receipt"
+        changed["candidate"]["content_digest"] = document_digest(changed["candidate"])
+        with self.assertRaises(HTTPFailure) as caught:
+            self.app.editor_record_edit(
+                "campaign_alpha", revision, "campaign-main", changed,
+            )
+        self.assertEqual((422, "payload_digest_mismatch"), (
+            caught.exception.status, caught.exception.payload["error"]["code"],
+        ))
+
+        replay_status, replay = self.app.editor_record_edit(
+            "campaign_alpha", revision, "campaign-main", deepcopy(payload),
+        )
+        self.assertEqual((200, proposal), (replay_status, replay))
+
+    def test_recovery_loads_legacy_sidecar_alongside_metadata_and_preserves_workflow(self):
+        _, _, (_, metadata_proposal) = self._edit("idem_metadata_recovery")
+        revision = metadata_proposal["base_revision"]["revision_id"]
+        metadata_item = self.app.proposal_repository.get(
+            metadata_proposal["proposal_id"], metadata_proposal["proposal_version"],
+        )
+        legacy_item = ProposalVersion(
+            "proposal_legacy_recovery", 1, "campaign_alpha", revision,
+            metadata_item.changes, metadata_item.diff_digest, metadata_item.payload_digest,
+        )
+        self.app.proposal_repository.add(legacy_item)
+        legacy_value = deepcopy(metadata_proposal)
+        legacy_value["proposal_id"] = "proposal_legacy_recovery"
+        legacy_value["core_proposal"]["proposal"]["proposal_id"] = "proposal_legacy_recovery"
+        change = legacy_item.changes[0]
+        self.app._editor_state_file.write_text(json.dumps({
+            "workflow": {"campaign_alpha": 1},
+            "proposals": [{
+                "proposal_id": legacy_item.proposal_id, "version": legacy_item.version,
+                "value": legacy_value, "change": {
+                    "change_id": change.change_id, "subject_id": change.subject_id,
+                    "expected_content_digest": change.expected_content_digest,
+                    "replacement": change.replacement, "change_kind": change.change_kind.value,
+                    "record_type": change.record_type,
+                }, "campaign_id": legacy_item.campaign_id, "base": legacy_item.base_revision,
+            }],
+        }, sort_keys=True), encoding="utf-8")
+
+        restarted = SliceApplication(
+            Path(self.tmp.name), provider=SyntheticProvider(), receipts=self.receipts,
+            workflow_repository=self.workflow,
+            proposal_repository=self.app.proposal_repository,
+        )
+        self.assertIn((metadata_proposal["proposal_id"], metadata_proposal["proposal_version"]), restarted._editor_proposals)
+        self.assertIn((legacy_item.proposal_id, legacy_item.version), restarted._editor_proposals)
+        self.assertEqual(2, restarted._editor_workflow["campaign_alpha"])
 
     def test_editor_accepts_one_character_record_id(self):
         revision = self._create_record("x")
@@ -361,6 +419,8 @@ class EditorBackendTests(unittest.TestCase):
             _, _, (_, proposal) = self._edit("idem_editor_validation_warning")
         self.assertEqual("warning", proposal["validation"]["findings"][0]["severity"])
         self.assertEqual("validation_warning", proposal["validation"]["findings"][0]["code"])
+        self.assertTrue(proposal["validation"]["findings"][0]["message"])
+        self.assertTrue(proposal["validation"]["findings"][0]["recovery_action"])
         self.assertEqual(
             proposal["validation"]["validation_digest"],
             canonical_digest({key: proposal["validation"][key] for key in ("status", "error_count", "findings")}),

@@ -314,13 +314,15 @@ class SliceApplication:
                 self._editor_workflow.get(item.campaign_id, 1),
                 value["editor_workflow_version"],
             )
-        if self._editor_proposals:
-            return
         if not self._editor_state_file.exists():
             return
         try:
             value = json.loads(self._editor_state_file.read_text(encoding="utf-8"))
-            self._editor_workflow = {str(k): int(v) for k, v in value.get("workflow", {}).items()}
+            for campaign_id, workflow in value.get("workflow", {}).items():
+                campaign_id = str(campaign_id)
+                self._editor_workflow[campaign_id] = max(
+                    self._editor_workflow.get(campaign_id, 1), int(workflow),
+                )
             for stored in value.get("proposals", []):
                 proposal_id, version = stored["proposal_id"], int(stored["version"])
                 item = self.proposal_repository.get(proposal_id, version)
@@ -1468,6 +1470,25 @@ class SliceApplication:
         )
         return campaign, manifest, head, document
 
+    def editor_creation_context(self, campaign_id: str, revision_id: str) -> tuple[int, dict]:
+        campaign, manifest = self._campaign_revision(campaign_id, revision_id)
+        head_id = self.workflow.head(campaign_id)
+        head = campaign.revisions[head_id] if head_id else manifest
+        if manifest.revision_id != head.revision_id:
+            raise HTTPFailure(
+                409, "snapshot_lineage_failure", "creation_context_requires_current_head",
+                "editor_creation_context",
+            )
+        return 200, {
+            "contract_name": "editor_creation_context",
+            "contract_version": 1,
+            "campaign_id": campaign_id,
+            "viewed_revision": self._editor_revision_ref(manifest),
+            "head_revision": self._editor_revision_ref(head),
+            "editor_workflow_version": self._editor_version(campaign_id),
+            "adapter_definition": adapter_editor_contract(self._editor_definition(campaign_id, revision_id)),
+        }
+
     @staticmethod
     def _editor_revision_ref(manifest: SnapshotManifest) -> dict:
         return {"revision_id": manifest.revision_id, "ordinal": manifest.ordinal,
@@ -1546,12 +1567,26 @@ class SliceApplication:
         if result.staged_handle != base_handle:
             self.registry.discard(result.staged_handle)
         if result.status is Status.STAGED:
+            messages = {
+                "validation_warning": "Review this validation warning before approval.",
+                "validation_error": "Fix this validation error before approval.",
+            }
+            recovery_actions = {
+                "validation_warning": "Review the warning and update the record if needed.",
+                "validation_error": "Correct the record and retry validation.",
+            }
             return [
                 {
                     "finding_id": self._id("finding", request_id, index, finding.code, finding.subject_id),
                     "code": finding.code,
                     "severity": finding.severity.value,
                     "location": "record",
+                    "message": messages.get(
+                        finding.code, "Review this validation finding before approval."
+                    ),
+                    "recovery_action": recovery_actions.get(
+                        finding.code, "Correct the record and retry validation."
+                    ),
                     "retryable": False,
                 }
                 for index, finding in enumerate(result.findings)
@@ -1572,18 +1607,26 @@ class SliceApplication:
             return []
         changes = []
         for field in ("displayed_name", "status", "authority", "visibility"):
-            if not _typed_equal(before[field], after[field]):
-                changes.append({"property": field, "before": before[field], "after": after[field],
-                                "before_present": True, "after_present": True})
+            before_present = field in before
+            after_present = field in after
+            if not _typed_equal(before.get(field), after.get(field)) or before_present != after_present:
+                changes.append({"property": field, "before": before.get(field), "after": after.get(field),
+                                "before_present": before_present, "after_present": after_present})
         for collection, identifier, value_key in (("fields", "field_id", "value"), ("sections", "section_id", "body")):
             old = {item[identifier]: item for item in before[collection]}
             new = {item[identifier]: item for item in after[collection]}
-            for member_id in sorted(set(old) | set(new)):
-                old_value = old.get(member_id, {}).get(value_key)
-                new_value = new.get(member_id, {}).get(value_key)
-                if not _typed_equal(old_value, new_value):
-                    changes.append({"property": f"{collection}.{member_id}", "before": old_value, "after": new_value,
-                                    "before_present": member_id in old, "after_present": member_id in new})
+            member_ids = list(old) + [member_id for member_id in new if member_id not in old]
+            missing = object()
+            for member_id in member_ids:
+                old_value = old.get(member_id, {}).get(value_key, missing)
+                new_value = new.get(member_id, {}).get(value_key, missing)
+                old_present = old_value is not missing
+                new_present = new_value is not missing
+                if not _typed_equal(old_value, new_value) or old_present != new_present:
+                    changes.append({"property": f"{collection}.{member_id}",
+                                    "before": None if old_value is missing else old_value,
+                                    "after": None if new_value is missing else new_value,
+                                    "before_present": old_present, "after_present": new_present})
         return changes
 
     def _editor_connection_cards(self, change_id: str, before: dict | None, after: dict | None) -> list[dict]:
@@ -1846,11 +1889,11 @@ class SliceApplication:
         expected_subject = proposal_id_override if operation_name == "editor_proposal_correct" else record_id
         if operation.get("subject_id") != expected_subject or operation.get("expected_revision") != revision_id:
             raise HTTPFailure(422, "unsafe_binding", "invalid_operation_binding", "editor_proposal", self._request_id(payload))
+        if operation.get("operation") != operation_name or operation.get("payload_digest") != self._editor_payload_digest(payload):
+            raise HTTPFailure(422, "idempotency_digest_conflict", "payload_digest_mismatch", "editor_proposal", self._request_id(payload))
         replay = self._replay(operation_name, operation.get("idempotency_key"), operation.get("payload_digest"))
         if replay:
             return 200, replay[1]
-        if operation.get("operation") != operation_name or operation.get("payload_digest") != self._editor_payload_digest(payload):
-            raise HTTPFailure(422, "idempotency_digest_conflict", "payload_digest_mismatch", "editor_proposal", self._request_id(payload))
         recovered = self._editor_abandoned_proposal_replay(
             campaign_id, revision_id, record_id, payload, operation_name, correction_of=correction_of,
         )
@@ -1899,6 +1942,7 @@ class SliceApplication:
             section_labels=section_labels,
         )
         changes = [change]
+        validation_changes = [change]
         source_before = {change.change_id: before}
         removal_impact = None
         resolutions = payload.get("resolutions", [])
@@ -1921,6 +1965,7 @@ class SliceApplication:
                 for record_id in self._editor_record_ids(campaign_id, revision_id)
             }
             source_mutations = {}
+            accepted_unresolved_connections = {}
             for reference in removal_impact["incoming_references"]:
                 resolution = next(item for item in resolutions if item.get("reference_id") == reference["reference_id"])
                 if resolution.get("action") == "accept_unresolved" and not reference["permitted_unresolved"]:
@@ -1928,6 +1973,8 @@ class SliceApplication:
                 if resolution.get("action") == "redirect" and resolution.get("replacement_target_record_id") not in self._editor_record_ids(campaign_id, revision_id) - {record_id}:
                     raise HTTPFailure(422, "proposal_validation_failure", "unknown_connection_target", "editor_proposal", self._request_id(payload))
                 source_record_id = reference["source_record_id"]
+                if resolution["action"] == "accept_unresolved":
+                    accepted_unresolved_connections.setdefault(source_record_id, set()).add(reference["connection_id"])
                 if source_record_id not in source_mutations:
                     source_mutations[source_record_id] = [
                         deepcopy(documents[source_record_id][0]),
@@ -1938,7 +1985,7 @@ class SliceApplication:
                 connection = next(item for item in source["connections"] if item["connection_id"] == reference["connection_id"])
                 if resolution["action"] == "redirect":
                     connection["target_record_id"] = resolution["replacement_target_record_id"]
-                else:
+                elif resolution["action"] == "remove_reference":
                     source["connections"] = [item for item in source["connections"] if item["connection_id"] != reference["connection_id"]]
                 source["content_digest"] = document_digest(source)
             for source_record_id, (source, source_content, first_connection_id) in source_mutations.items():
@@ -1946,9 +1993,27 @@ class SliceApplication:
                 source_change = change_for(source_content, source, self._id("change", campaign_id, revision_id, source_record_id, first_connection_id), ChangeKind.UPDATE, section_labels=source_labels)
                 changes.append(source_change)
                 source_before[source_change.change_id] = source_content
+                if source_record_id not in accepted_unresolved_connections:
+                    validation_changes.append(source_change)
+                    continue
+                # The adapter has explicitly permitted these retained links,
+                # but generic campaign validation still rejects their missing
+                # targets. Validate the rest of the source mutation against a
+                # projection with only those links omitted; keep the original
+                # source change in the proposal for the accepted resolution.
+                validation_source = deepcopy(source)
+                validation_source["connections"] = [
+                    item for item in validation_source["connections"]
+                    if item["connection_id"] not in accepted_unresolved_connections[source_record_id]
+                ]
+                validation_source["content_digest"] = document_digest(validation_source)
+                validation_changes.append(change_for(
+                    source_content, validation_source, source_change.change_id,
+                    ChangeKind.UPDATE, section_labels=source_labels,
+                ))
 
         validation_findings = self._editor_validate_changes(
-            campaign_id, revision_id, changes, self._request_id(payload),
+            campaign_id, revision_id, validation_changes, self._request_id(payload),
         )
 
         head_manifest = self.campaigns[campaign_id].revisions[head_id]
@@ -1991,9 +2056,20 @@ class SliceApplication:
         core_changes = []
         for card in cards:
             document = card.get("after") if isinstance(card.get("after"), dict) and "content_digest" in card["after"] else card.get("before")
-            from_authority = "absent" if card["kind"] == "record_created" else (document.get("authority", "absent") if isinstance(document, dict) else "preparation")
+            if document is None and card["kind"] in {"connection_added", "connection_updated", "connection_removed"}:
+                record_card = next(
+                    item for item in cards
+                    if item["subject_record_id"] == card["subject_record_id"]
+                    and item["kind"] in {"record_created", "record_updated", "record_removed"}
+                )
+                document = record_card.get("after") or record_card.get("before")
+            if card["kind"] == "reference_resolution":
+                change_digest = canonical_digest(card["after"])
+            else:
+                change_digest = None
+            from_authority = "absent" if card["kind"] == "record_created" else ("preparation" if card["kind"] == "reference_resolution" else document.get("authority", "absent") if isinstance(document, dict) else "preparation")
             to_authority = (card["after"].get("authority") if isinstance(card.get("after"), dict) and "authority" in card["after"] else ("absent" if card["kind"] == "record_removed" else document.get("authority", "preparation") if isinstance(document, dict) else "preparation"))
-            core_changes.append({"change_id": card["change_id"], "subject_id": card["subject_record_id"], "change_type": "add" if card["kind"] == "record_created" else ("remove" if card["kind"] == "record_removed" else "update"), "from_authority": from_authority, "to_authority": to_authority, "content_digest": document.get("content_digest", text_digest(json.dumps(card.get("connection"), sort_keys=True))) if isinstance(document, dict) else text_digest(json.dumps(card.get("connection"), sort_keys=True))})
+            core_changes.append({"change_id": card["change_id"], "subject_id": card["subject_record_id"], "change_type": "add" if card["kind"] == "record_created" else ("remove" if card["kind"] == "record_removed" else "update"), "from_authority": from_authority, "to_authority": to_authority, "content_digest": change_digest or (document.get("content_digest", text_digest(json.dumps(card.get("connection"), sort_keys=True))) if isinstance(document, dict) else text_digest(json.dumps(card.get("connection"), sort_keys=True)))})
         proposal_binding = dict(binding, expected_editor_workflow_version=current + 1)
         value = {"contract_name": "editor_proposal_view", "contract_version": 1, "proposal_id": proposal_id, "proposal_version": version, "campaign_id": campaign_id, "source_revision": self._editor_revision_ref(self.campaigns[campaign_id].revisions[revision_id]), "base_revision": self._editor_revision_ref(self.campaigns[campaign_id].revisions[revision_id]), "expected_campaign_head": self._editor_revision_ref(self.campaigns[campaign_id].revisions[revision_id]), "editor_workflow_version": current + 1, "proposal_payload_digest": "0" * 64, "mutation_kind": kind, "record_bindings": [proposal_binding], "core_proposal": {"contract_name": "canon_proposal", "contract_version": 2, "draft": {"draft_id": proposal_id, "authority": "draft", "source_set_digest": text_digest(change.replacement), "content_digest": text_digest(change.replacement)}, "proposal": {"proposal_id": proposal_id, "proposal_version": version, "status": "needs_review", "campaign_id": campaign_id, "base_revision": revision_id, "source_revision": revision_id, "expected_campaign_head": revision_id, "expected_editor_workflow_version": current + 1, "diff_digest": digest, "authority_change_ids": [item["change_id"] for item in authority_changes], "visibility_change_ids": [item["change_id"] for item in visibility_changes], "changes": core_changes}, "validation": {"status": "passed", "validation_digest": validation_digest, "error_count": 0}, "approval_binding": None}, "diff": {"diff_digest": digest, "cards": cards, "affected_record_count": affected_record_count, "authority_changes": authority_changes, "visibility_changes": visibility_changes, "unresolved_reference_count": diff_projection["unresolved_reference_count"], "impact_digest": removal_impact["impact_digest"] if removal_impact else None, "source_changes": source_changes, "summary": kind}, "impact_digest": removal_impact["impact_digest"] if removal_impact else None, "impact_binding": {"binding": binding, "impact_digest": removal_impact["impact_digest"]} if removal_impact else None, "resolutions": resolutions if kind == "remove" else [], "validation": validation, "authority_outcome": authority_changes, "visibility_outcome": visibility_changes, "publication": {"status": "not_published", "published_revision": None}}
         if correction_of is not None:
@@ -2139,7 +2215,13 @@ class SliceApplication:
                   "expected_editor_workflow_version": self._editor_version(campaign_id),
                   "record": removed, "outgoing_connections": removed["connections"],
                   "incoming_references": incoming, "backlink_policy": "server_derived_from_typed_connections"}
-        impact["impact_digest"] = canonical_digest({key: impact[key] for key in ("record", "outgoing_connections", "incoming_references")})
+        impact["impact_digest"] = canonical_digest({
+            "contract_name": "editor_removal_impact",
+            "contract_version": 1,
+            "record": impact["record"],
+            "outgoing_connections": impact["outgoing_connections"],
+            "incoming_references": impact["incoming_references"],
+        })
         response = {"contract_name": "editor_removal_impact", "contract_version": 1,
                      "binding": {key: impact[key] for key in ("campaign_id", "base_revision", "record_id", "record_digest", "expected_editor_workflow_version")},
                      "impact_digest": impact["impact_digest"], "record": removed,
@@ -2817,13 +2899,8 @@ class SliceApplication:
 
     @staticmethod
     def _proposal_publication_digest(item: ProposalVersion) -> str:
-        """Return the digest bound into a revision publication intent.
-
-        Editor proposals expose a structured diff digest to the browser, while
-        publication remains bound to the exact text changes applied by the
-        deterministic engine.  Those are intentionally different identities.
-        """
-        return exact_diff_digest(item.changes) if item.editor_metadata else item.diff_digest
+        """Return the proposal change digest bound into the publication intent."""
+        return item.diff_digest
 
     def _proposal_view(self, item: ProposalVersion) -> dict:
         change = item.changes[0]
@@ -3235,7 +3312,7 @@ class SliceApplication:
         _, tree_digest = canonicalize_tree(source)
         ordinal = campaign.revisions[item.base_revision].ordinal + 1
         revision_id = self._id("revision", item.proposal_id, item.version, item.diff_digest)
-        publication_digest = exact_diff_digest(item.changes) if item.editor_metadata else item.diff_digest
+        publication_digest = item.diff_digest
         intent = PublicationIntent(
             self._id("intent", item.proposal_id, item.version),
             self._id("token", item.proposal_id, item.version),

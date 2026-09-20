@@ -25,15 +25,16 @@ from warden_drydock.hosted.http.query import parse_flat_query, require_int
 _ROUTES = {
     "revision": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)$"),
     "record": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/records/([^/]+)$"),
+    "editor_creation_context": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/editor/creation-context$"),
     "editor_record": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/records/([^/]+)/editor$"),
     "editor_removal_impact": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/records/([^/]+)/removal-impact$"),
     "editor_create": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/editor/records/proposals$"),
     "editor_edit": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/editor/records/([^/]+)/proposals$"),
     "editor_remove": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/editor/records/([^/]+)/removal-proposals$"),
-    "editor_proposal": re.compile(r"^/api/v1/editor/proposals/([^/]+)/versions/(\d+)$"),
-    "editor_correct": re.compile(r"^/api/v1/editor/proposals/([^/]+)/versions/(\d+)/corrections$"),
-    "editor_reject": re.compile(r"^/api/v1/editor/proposals/([^/]+)/versions/(\d+)/rejection$"),
-    "editor_approve": re.compile(r"^/api/v1/editor/proposals/([^/]+)/versions/(\d+)/approval$"),
+    "editor_proposal": re.compile(r"^/api/v1/editor/proposals/([^/]+)/versions/([^/]+)$"),
+    "editor_correct": re.compile(r"^/api/v1/editor/proposals/([^/]+)/versions/([^/]+)/corrections$"),
+    "editor_reject": re.compile(r"^/api/v1/editor/proposals/([^/]+)/versions/([^/]+)/rejection$"),
+    "editor_approve": re.compile(r"^/api/v1/editor/proposals/([^/]+)/versions/([^/]+)/approval$"),
     "generation_start": re.compile(r"^/api/v1/campaigns/([^/]+)/revisions/([^/]+)/generations$"),
     "events": re.compile(r"^/api/v1/generations/([^/]+)/events$"),
     "generation": re.compile(r"^/api/v1/generations/([^/]+)$"),
@@ -55,6 +56,60 @@ _ROUTES = {
     "live_capture": re.compile(r"^/api/v1/campaigns/([^/]+)/live/session/captures$"),
     "live_end": re.compile(r"^/api/v1/campaigns/([^/]+)/live/session/end$"),
 }
+
+_EDITOR_PUBLIC_ID = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+_EDITOR_DOMAIN_ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_EDITOR_VERSION = re.compile(r"^[1-9][0-9]*$")
+_EDITOR_ROUTES = frozenset(name for name in _ROUTES if name.startswith("editor_"))
+_EDITOR_ERROR_CATEGORIES = frozenset({
+    "unsupported_contract_version", "unsafe_binding", "validation_finding",
+    "idempotency_digest_conflict", "stale_revision", "capability_rejected",
+    "provider_unavailable", "provider_retryable_failure", "provider_terminal_failure",
+    "stream_sequence_conflict", "source_digest_conflict", "snapshot_integrity_failure",
+    "snapshot_lineage_failure", "publication_intent_failure", "quarantine_failure",
+    "proposal_validation_failure", "proposal_approval_conflict", "workflow_conflict",
+    "service_unavailable", "not_found",
+})
+_EDITOR_ERROR_CODE = re.compile(r"^[a-z][a-z0-9_]+$")
+
+
+def _editor_error_response(payload: dict) -> dict:
+    """Convert a legacy failure payload to the closed editor v3 envelope."""
+    error = dict(payload.get("error", {}))
+    category = error.get("category")
+    category = {
+        "invalid_connections": "proposal_validation_failure",
+        "invalid_authority_transition": "proposal_validation_failure",
+        "invalid_record_type": "proposal_validation_failure",
+        "invalid_correction": "proposal_validation_failure",
+        "mutation_consistency": "proposal_validation_failure",
+        "stale_record_digest": "stale_revision",
+    }.get(category, category)
+    if category not in _EDITOR_ERROR_CATEGORIES:
+        category = "unsafe_binding"
+    code = error.get("code")
+    if not isinstance(code, str) or _EDITOR_ERROR_CODE.fullmatch(code) is None:
+        code = "editor_error"
+    stage = error.get("stage")
+    if not isinstance(stage, str) or _EDITOR_ERROR_CODE.fullmatch(stage) is None:
+        stage = "editor_routing"
+    request_id = error.get("request_id")
+    if not isinstance(request_id, str) or _EDITOR_PUBLIC_ID.fullmatch(request_id) is None or not 3 <= len(request_id) <= 80:
+        request_id = "request_http"
+    retryable = error.get("retryable") is True
+    error.update({"category": category, "code": code, "stage": stage,
+                  "request_id": request_id, "retryable": retryable})
+    if category in {"validation_finding", "proposal_validation_failure"}:
+        error["findings"] = [{
+            "finding_id": "finding_editor_validation",
+            "code": code if _EDITOR_ERROR_CODE.fullmatch(code) else "editor_error",
+            "severity": "error",
+            "location": "record",
+            "message": "The proposed editor change failed deterministic validation.",
+            "recovery_action": "Review the editor fields and submit a valid change.",
+            "retryable": retryable,
+        }]
+    return {"contract_name": "error_response", "contract_version": 3, "error": error}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -213,6 +268,31 @@ class Handler(SimpleHTTPRequestHandler):
         except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
             return
 
+    @staticmethod
+    def _is_editor_path(path: str) -> bool:
+        return any(_ROUTES[name].fullmatch(path) for name in _EDITOR_ROUTES)
+
+    @staticmethod
+    def _validate_editor_route(route: str, groups: tuple[str, ...]) -> None:
+        public_ids = groups[:2] if route in {
+            "editor_creation_context", "editor_record", "editor_removal_impact",
+            "editor_create", "editor_edit", "editor_remove",
+        } else groups[:1]
+        if any(
+            not 3 <= len(value) <= 80 or _EDITOR_PUBLIC_ID.fullmatch(value) is None
+            for value in public_ids
+        ):
+            raise HTTPFailure(422, "unsafe_binding", "invalid_route_binding", "routing")
+        if route in {"editor_record", "editor_removal_impact", "editor_edit", "editor_remove"}:
+            if _EDITOR_DOMAIN_ID.fullmatch(groups[2]) is None or not 1 <= len(groups[2]) <= 80:
+                raise HTTPFailure(422, "unsafe_binding", "invalid_route_binding", "routing")
+        if route in {"editor_proposal", "editor_correct", "editor_reject", "editor_approve"}:
+            if _EDITOR_VERSION.fullmatch(groups[1]) is None:
+                raise HTTPFailure(422, "unsafe_binding", "invalid_route_binding", "routing")
+
+    def _editor_failure(self, status: int, payload: dict, path: str) -> None:
+        self._send_json(status, _editor_error_response(payload) if self._is_editor_path(path) else payload)
+
     def _api_get(self, path: str) -> None:
         try:
             app = self._application()
@@ -229,13 +309,20 @@ class Handler(SimpleHTTPRequestHandler):
             elif match := _ROUTES["record"].fullmatch(path):
                 parse_flat_query(raw_query, singleton=frozenset())
                 status, payload = app.record_view(*match.groups())
+            elif match := _ROUTES["editor_creation_context"].fullmatch(path):
+                self._validate_editor_route("editor_creation_context", match.groups())
+                parse_flat_query(raw_query, singleton=frozenset())
+                status, payload = app.editor_creation_context(*match.groups())
             elif match := _ROUTES["editor_record"].fullmatch(path):
+                self._validate_editor_route("editor_record", match.groups())
                 parse_flat_query(raw_query, singleton=frozenset())
                 status, payload = app.editor_record_read(*match.groups())
             elif match := _ROUTES["editor_removal_impact"].fullmatch(path):
+                self._validate_editor_route("editor_removal_impact", match.groups())
                 parse_flat_query(raw_query, singleton=frozenset())
                 status, payload = app.editor_removal_impact(*match.groups())
             elif match := _ROUTES["editor_proposal"].fullmatch(path):
+                self._validate_editor_route("editor_proposal", match.groups())
                 parse_flat_query(raw_query, singleton=frozenset())
                 status, payload = app.editor_proposal_read(match.group(1), int(match.group(2)))
             elif match := _ROUTES["generation"].fullmatch(path):
@@ -324,11 +411,11 @@ class Handler(SimpleHTTPRequestHandler):
                 raise HTTPFailure(404, "not_found", "route_not_found", "routing")
             self._send_json(status, payload)
         except HTTPFailure as exc:
-            self._send_json(exc.status, exc.payload)
+            self._editor_failure(exc.status, exc.payload, path)
         except (KeyError, TypeError, ValueError):
-            self._send_json(422, HTTPFailure(422, "unsafe_binding", "invalid_query_binding", "request_validation").payload)
+            self._editor_failure(422, HTTPFailure(422, "unsafe_binding", "invalid_query_binding", "request_validation").payload, path)
         except Exception:
-            self._send_json(503, HTTPFailure(503, "service_unavailable", "service_unavailable", "request_dispatch", retryable=True).payload)
+            self._editor_failure(503, HTTPFailure(503, "service_unavailable", "service_unavailable", "request_dispatch", retryable=True).payload, path)
 
     def _send_events(self, app: SliceApplication, generation_id: str) -> None:
         query = parse_flat_query(
@@ -369,16 +456,22 @@ class Handler(SimpleHTTPRequestHandler):
             elif match := _ROUTES["proposal_create"].fullmatch(path):
                 status, response = app.create_proposal(match.group(1), payload)
             elif match := _ROUTES["editor_create"].fullmatch(path):
+                self._validate_editor_route("editor_create", match.groups())
                 status, response = app.editor_record_create(*match.groups(), payload)
             elif match := _ROUTES["editor_edit"].fullmatch(path):
+                self._validate_editor_route("editor_edit", match.groups())
                 status, response = app.editor_record_edit(*match.groups(), payload)
             elif match := _ROUTES["editor_remove"].fullmatch(path):
+                self._validate_editor_route("editor_remove", match.groups())
                 status, response = app.editor_record_remove(*match.groups(), payload)
             elif match := _ROUTES["editor_correct"].fullmatch(path):
+                self._validate_editor_route("editor_correct", match.groups())
                 status, response = app.editor_proposal_correct(match.group(1), int(match.group(2)), payload)
             elif match := _ROUTES["editor_reject"].fullmatch(path):
+                self._validate_editor_route("editor_reject", match.groups())
                 status, response = app.editor_proposal_reject(match.group(1), int(match.group(2)), payload)
             elif match := _ROUTES["editor_approve"].fullmatch(path):
+                self._validate_editor_route("editor_approve", match.groups())
                 status, response = app.editor_proposal_approve(match.group(1), int(match.group(2)), payload)
             elif match := _ROUTES["correct"].fullmatch(path):
                 status, response = app.correct_proposal(match.group(1), int(match.group(2)), payload)
@@ -400,11 +493,11 @@ class Handler(SimpleHTTPRequestHandler):
             if dispatch is not None:
                 threading.Thread(target=app.dispatch_generation, args=(dispatch,), daemon=True).start()
         except HTTPFailure as exc:
-            self._send_json(exc.status, exc.payload)
+            self._editor_failure(exc.status, exc.payload, path)
         except (KeyError, TypeError, ValueError):
-            self._send_json(422, HTTPFailure(422, "unsafe_binding", "invalid_request", "request_validation").payload)
+            self._editor_failure(422, HTTPFailure(422, "unsafe_binding", "invalid_request", "request_validation").payload, path)
         except Exception:
-            self._send_json(503, HTTPFailure(503, "service_unavailable", "service_unavailable", "request_dispatch", retryable=True).payload)
+            self._editor_failure(503, HTTPFailure(503, "service_unavailable", "service_unavailable", "request_dispatch", retryable=True).payload, path)
 
     @staticmethod
     def _atlas_binding_query(raw_query: str) -> dict[str, object]:

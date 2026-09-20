@@ -1,9 +1,9 @@
 # Hosted record editor UX contract
 
-Status: design artifact for P6-RECORD-EDITOR-CONTRACT v1
+Status: design artifact for P6-EDITOR-UX v1
 
 Scope: the Warden-only browser editor described by [P6-RECORD-EDITOR
-v2](https://github.com/kossahl/warden-drydock/issues/67). This document defines
+v4](https://github.com/kossahl/warden-drydock/issues/67). This document defines
 observable UI behavior. It does not add an API schema, choose endpoint names, or
 define a storage implementation.
 
@@ -23,7 +23,9 @@ This artifact follows:
   pilot local, Warden-operated, and provider credentials out of browser state.
 - [relationships-and-retrieval](relationships-and-retrieval.md), which defines
   the explicit outgoing connection syntax and derived backlinks.
-- The current [hosted contract index](contracts/hosted/index-v2.json),
+- The current [hosted contract index](contracts/hosted/index-v1.json),
+  [active HTTP contract registry](contracts/hosted/http/index.json), and
+  [HTTP v2 package index](contracts/hosted/http/v2/index.json),
   [authority and redaction policy](contracts/hosted/authority-redaction.md),
   and [existing browser UX reference](../web/src/ProposalWorkspace.tsx).
 
@@ -142,8 +144,11 @@ When the viewed revision is historical:
   remain readable.
 - Editing controls are absent or disabled with a text explanation: "Historical
   revisions are read-only. Open the current head to propose a change."
-- A single prominent `Open current head` action preserves the record ID and
-  navigates to the head record. It does not copy or submit edits.
+- If the record still exists at the current head, a single prominent `Open
+  current head` action preserves its ID and navigates to that record. If the
+  record was removed from the current head, the action instead opens the
+  current Atlas view and explains that the record remains readable only in the
+  historical revision. It does not copy or submit edits.
 - Removal and create actions are unavailable in this mode.
 - Any Draft or proposal opened from historical context is visibly bound to its
   historical source. It cannot create a current-head proposal until the Warden
@@ -176,10 +181,11 @@ snapshot.
    another deterministic UI suggestion. The Warden can edit the candidate
    before submission, subject to the domain identifier rules. The server owns
    final allocation and validation. The UI never accepts a path.
-5. The form shows the adapter's provisional defaults. For the current
-   Mothership templates, that means the template's provisional status and
-   Warden-only visibility defaults. The form must not silently choose canon or
-   revealed authority.
+5. The form shows the selected record type's adapter-defined defaults and marks
+   adapter-required values read-only. For current Mothership record types, a
+   `handout` requires `visibility: players` and `warden_only: false`; every
+   other registered type requires `visibility: warden` and `warden_only: true`.
+   The form must not silently choose canon or revealed authority.
 6. `Save as proposal` validates the entered record and creates a Draft proposal
    bound to the current head. It does not create a head or canon record.
 7. The Warden reviews the exact creation diff. The review includes the new
@@ -206,8 +212,10 @@ receives focus after the error summary is announced.
    is fixed by the adapter. Optional adapter sections may be left empty. The UI
    must not invent headings or silently delete content from an unsupported
    section.
-5. The Warden may change status, visibility, Warden-only state, and other
-   adapter-supported metadata. Authority is shown as a computed consequence.
+5. The Warden may change status and other adapter-supported metadata. Visibility
+   and Warden-only state are editable only when the adapter permits changes. If
+   the adapter fixes either value for the selected type, the form shows the
+   required value as read-only. Authority is shown as a computed consequence.
 6. `Save as proposal` validates the complete candidate revision and opens the
    review state. It does not update the record page behind the review.
 7. The exact review lists every changed record property and section, including
@@ -231,8 +239,9 @@ The Basics section contains:
 - stable Record ID, read-only after creation;
 - record type, read-only after creation;
 - adapter-supported status;
-- adapter-supported visibility;
-- adapter-supported Warden-only flag;
+- adapter-supported visibility, read-only when the adapter fixes its value;
+- adapter-supported Warden-only flag, read-only when the adapter fixes its
+  value;
 - adapter-required fields such as date or audience, when applicable; and
 - a collapsed `Source details` area containing viewed revision and digest
   bindings for inspection.
@@ -268,9 +277,12 @@ Visibility is an audience label, not permission to edit. The current Mothership
 values are `warden`, `players`, and `shared`. The editor must:
 
 - show the current visibility and Warden-only state together;
+- show adapter-fixed values as read-only and allow edits only when the adapter
+  permits them;
 - show the adapter validation warning before review when a combination is
   forbidden;
-- show a prominent warning before approving a change that broadens audience;
+- show a prominent warning before approving a permitted change that broadens
+  audience;
 - require the handout audience when the adapter requires it; and
 - keep Warden-only content out of any player-facing response or preview.
 
@@ -285,8 +297,8 @@ Each adapter-supported field uses the simplest suitable control:
 | --- | --- |
 | Single-line text | Labelled input with length and required state. Long values wrap in review. |
 | Multi-line prose | Labelled textarea. Preserve line breaks and entered content. Show a plain-text preview and exact source inspection in review. |
-| Status, visibility, authority-related values | Select or radio group with the current value, allowed values, and a text explanation of the resulting authority. |
-| Boolean Warden-only state | Checkbox with an explicit label. Do not encode it only as a badge. |
+| Status, visibility, authority-related values | Select or radio group when editable. Otherwise show a read-only value. In both cases, show the allowed values and a text explanation of the resulting authority. |
+| Boolean Warden-only state | Checkbox only when the adapter permits changes. Otherwise show a read-only value with an explicit label and fixed-rule explanation. |
 | Date or adapter-defined scalar | Labelled control with the adapter's validation message. Do not infer a date from the browser locale. |
 | Adapter-defined optional section | Collapsible section. Empty optional sections remain empty and are not silently removed. |
 | Adapter-defined required section | Expanded when invalid or incomplete. The error names the section and preserves its contents. |
@@ -421,11 +433,16 @@ The review header shows:
 - a human-readable change summary; and
 - an advanced disclosure for stable IDs and digests.
 
-The proposal is labelled `Draft` or `Proposal`, never `Canon`. A proposal is
-`not_published` until its status is `approved`; `Draft`, `NeedsReview`, and
-`rejected` states never carry a published revision. If any validation finding
-is unresolved, approval is unavailable. `Reject proposal` is explicit, returns
-a rejection result, and leaves the current head unchanged.
+The proposal is labelled `Draft` or `Proposal`, never `Canon`. For status
+display, map `Draft` or `Needs review` to public `draft`, `Rejected` to
+`rejected`, `Conflict` to `conflict`, `Published` to `published`, and
+`Quarantined` to `quarantined`. `Needs review` is a UI label only. Do not expose
+internal workflow labels such as `NeedsReview`, `approving`, or `approved`, or
+the non-status label `not_published`, as API status values. Only `published`
+carries a published revision. Draft, rejected, conflict, and quarantined
+proposals do not. If any validation finding is unresolved, approval is
+unavailable. `Reject proposal` is explicit, returns a rejection result, and
+leaves the current head unchanged.
 
 ### Approval confirmation
 
@@ -440,9 +457,9 @@ the UI announces the new revision and opens it. It does not show a local
 optimistic canon state before the server result.
 
 An exact replay returns the stored response at the same workflow version. A
-correction advances the proposal workflow once, and its rejection or approval
-advances it once more; stale, rejected, invalid, and replayed operations do not
-increment it.
+correction advances the proposal workflow once, and an explicit rejection or
+approval advances it once more. Stale, invalid, and failed requests and exact
+replays do not increment it.
 
 ## 12. Validation, stale, conflict, and correction states
 
@@ -461,21 +478,23 @@ candidate snapshot integrity before publication.
 
 ### Stale base and conflict
 
-If the current head changes after a form or proposal was opened, show a blocking
-banner:
+If the current head or campaign-wide editor workflow version changes after a
+form or proposal was opened, show a blocking banner:
 
 ```text
-This proposal is based on revision 12. The current head is revision 13.
+This proposal is based on revision 12, editor workflow version 7.
+The current campaign binding is revision 13, editor workflow version 8.
 Nothing was published. Your proposal is preserved.
 
 [Compare with current head] [Start correction from revision 13]
 ```
 
 The UI must not silently merge or rebase. `Start correction from current head`
-opens a new editable candidate from the current head and lets the Warden
-manually reapply the intended changes. The old proposal remains inspectable.
-`Compare with current head` shows the proposal base, current head, and proposed
-after state without treating any side as selected.
+opens a new editable candidate from the current head and current workflow
+version and lets the Warden manually reapply the intended changes. The old
+proposal remains inspectable. `Compare with current head` shows the proposal
+base, current head, workflow versions, and proposed after state without treating
+any side as selected.
 
 Approval of a stale proposal is unavailable. A server conflict response changes
 the proposal state to `Conflict`, preserves the exact proposal, and exposes the
@@ -661,19 +680,23 @@ Issue #212 authorizes these choices for this contract and the #67 editor work:
 3. Explicit `canon` and `revealed` transitions are allowed only when shown in
    the exact diff and explicitly approved. Approval alone never promotes a
    record.
-4. The editor extends the existing proposal contract through authoritative
-   proposal v2, preserving v1 authority and error meanings while supporting
-   create, remove, and multi-connection changes.
-5. Warden-safe visibility metadata is explicit. Visibility changes appear in
-   the exact diff, widening requires approval, and no automatic widening is
-   permitted.
-6. Existing hyphenated Atlas/domain record IDs are accepted directly by
-   proposal v2 and the editor contract. No legacy-ID mapping or translation
-   table exists; one-character IDs are valid; path-like values remain invalid.
+4. The downstream editor contract package must extend the existing proposal
+   contract through an accepted and registered proposal v2/editor contract,
+   preserving v1 authority and error meanings while supporting create, remove,
+   and multi-connection changes. This UX artifact records that requirement; it
+   does not register or publish the contract.
+5. Warden-safe visibility metadata is explicit. Where the adapter permits
+   visibility changes, they appear in the exact diff, widening requires
+   approval, and no automatic widening is permitted. Adapter-fixed visibility
+   remains read-only.
+6. Existing hyphenated Atlas/domain record IDs are accepted directly, subject
+   to the active public `domain_id` rules, including a minimum length of three.
+   No legacy-ID mapping or translation table exists; path-like values remain
+   invalid.
 - Adapter metadata may define additional fields, optional sections, allowed
-  status transitions, and the provisional default. The current Mothership
-  template defaults remain the local default; future adapters must supply their
-  own values.
+  status transitions, fixed metadata values, and provisional defaults. The
+  current Mothership values remain the local adapter rules; future adapters must
+  supply their own values.
 - The exact visual diff algorithm is an implementation detail. The observable
   requirement is complete, readable before/after content and structured
   metadata, authority, connection, and removal changes.
@@ -710,7 +733,8 @@ Issue #212 authorizes these choices for this contract and the #67 editor work:
   path or database route; no direct mutation; exact validated approval; no
   silent merge, cascade, or canon promotion.
 - Proposal v2 registration, typed connection impact coverage, and explicit
-  Warden-safe visibility metadata are settled in Issue #212 and are reflected
-  by the editor contract package.
+  Warden-safe visibility metadata are downstream requirements for the editor
+  contract package. This UX artifact records those requirements but does not
+  claim that the package is registered or implemented.
 - No API, schema, code, GitHub, Project field, or campaign-content files were
   changed by this design package.

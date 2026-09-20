@@ -7,6 +7,22 @@ const record = (): EditorRecord => ({
   connections: [], content_digest: "0".repeat(64),
 });
 
+const parityRecord: EditorRecord = {
+  record_id: "record-parity", record_type: "npc", displayed_name: "Café 😀", ownership: "campaign", status: "canon", authority: "canon",
+  visibility: { audience: "shared", warden_only: false },
+  fields: [
+    { field_id: "rank", value: 7 }, { field_id: "alias", value: "Écho" }, { field_id: "active", value: true }, { field_id: "optional", value: null },
+  ],
+  sections: [
+    { section_id: "summary", body: "Line one\r\nLine two\rLine three" }, { section_id: "notes", body: "No trim \r\n" },
+  ],
+  connections: [
+    { connection_id: "connection_alpha", target_record_id: "record-other", relationship: "knows", state: "current", context: "Shared contact" },
+    { connection_id: "connection_beta", target_record_id: "record-third", relationship: "owes", state: "resolved", context: "Debt marker" },
+  ],
+  content_digest: "f".repeat(64),
+};
+
 describe("record editor client bindings", () => {
   it("keeps adapter field validation rules with each record definition", () => {
     expect(recordDefinitions.handout.nonemptyFields).toEqual(["audience"]);
@@ -18,6 +34,10 @@ describe("record editor client bindings", () => {
     const changed = record(); changed.content_digest = "f".repeat(64); changed.displayed_name = "Changed";
     expect(await recomputeRecordDigest(changed)).not.toBe(first);
     expect(first).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("matches the backend document digest for a complete record projection", async () => {
+    expect(await recomputeRecordDigest(parityRecord)).toBe("249e2d2b371ace3f91a633d07b3e84230ad8a34b3fba6b89a46ba9ba63c1a0d9");
   });
 
   it("matches Python ensure_ascii canonical digests for non-ASCII and astral Unicode", async () => {
@@ -42,6 +62,16 @@ describe("record editor client bindings", () => {
     ];
     const next = nextConnectionId(connections);
     expect(next).toBe("connection_4");
+    expect(next).toMatch(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/);
+  });
+
+  it("allocates after adjacent suffixes beyond safe integer precision", () => {
+    const connections = [
+      { connection_id: "connection_9007199254740992", target_record_id: "one", relationship: "related-to", state: "current", context: "One" },
+      { connection_id: "connection_9007199254740993", target_record_id: "two", relationship: "related-to", state: "current", context: "Two" },
+    ];
+    const next = nextConnectionId(connections);
+    expect(next).toBe("connection_9007199254740994");
     expect(next).toMatch(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/);
   });
 
