@@ -588,7 +588,7 @@ test("historical create proposal URLs keep the create review visible", async ({ 
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (request.method() === "GET" && path.endsWith("/atlas/records")) return json(route, { ...records, binding: { campaign_id: "campaign_atlas", viewed_revision: oldRevision, head_revision: headRevision } });
-    if (request.method() === "GET" && path.endsWith("/records/campaign-main/editor")) return json(route, view(oldRevision, headRevision, originalRecord, 7, true));
+    if (request.method() === "GET" && path.endsWith("/editor/creation-context")) return json(route, { contract_name: "editor_creation_context", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 7 });
     if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_historical_create/versions/1")) return json(route, createProposal);
     return route.fallback();
   });

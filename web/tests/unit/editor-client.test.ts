@@ -40,6 +40,19 @@ describe("record editor client bindings", () => {
     expect(await recomputeRecordDigest(parityRecord)).toBe("249e2d2b371ace3f91a633d07b3e84230ad8a34b3fba6b89a46ba9ba63c1a0d9");
   });
 
+  it("reads the typed create context without a record identifier", async () => {
+    const response = { contract_name: "editor_creation_context", contract_version: 1 };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
+      ok: true, headers: new Headers(), json: async () => response,
+      status: 200, statusText: "OK", redirected: false, type: "basic", url: "",
+    }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await httpEditorApi.creationContext("campaign_one", "revision_one");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/campaigns/campaign_one/revisions/revision_one/editor/creation-context");
+  });
+
   it("matches Python ensure_ascii canonical digests for non-ASCII and astral Unicode", async () => {
     expect(await digest({ text: "café 😀", "\uE000": "bmp", "\u{10000}": "astral" })).toBe("a32d1782b2ae0836150433ce5190c088fa8197ccca2f4748adc8834f057168c4");
   });

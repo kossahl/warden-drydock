@@ -2,7 +2,7 @@ import { adapterDefinitionFromWire, defaultAdapterDefinition, recordTypes, newAd
 import { httpAtlasApi } from "../api/atlasClient";
 import type { AtlasRecordSummary } from "../contracts/v2";
 import { useEffect, useRef, useState } from "react";
-import { httpEditorApi, nextConnectionId, type EditorConnection, type EditorField, type EditorProposal, type EditorProposalReference, type EditorRecord, type EditorRecordView, type EditorRemovalImpact, type EditorSection, type RevisionRef } from "./editorClient";
+import { httpEditorApi, nextConnectionId, type EditorConnection, type EditorContext, type EditorField, type EditorProposal, type EditorProposalReference, type EditorRecord, type EditorRecordView, type EditorRemovalImpact, type EditorSection, type RevisionRef } from "./editorClient";
 
 const statuses = ["idea", "draft", "review", "canon", "revealed", "archived", "accepted"];
 const authority = (status: string) => status === "canon" || status === "revealed" ? status : "preparation";
@@ -39,7 +39,7 @@ const correctionReference = (proposal: EditorProposal): EditorProposalReference 
     : null;
 };
 const sameRevision = (left: RevisionRef, right: RevisionRef) => left.revision_id === right.revision_id && left.tree_digest === right.tree_digest;
-const proposalMatchesEditorView = (proposal: EditorProposal, view: EditorRecordView) => {
+const proposalMatchesEditorView = (proposal: EditorProposal, view: EditorContext) => {
   const binding = proposal.record_bindings[0];
   return !!binding
     && sameRevision(proposal.base_revision, view.viewed_revision)
@@ -48,6 +48,8 @@ const proposalMatchesEditorView = (proposal: EditorProposal, view: EditorRecordV
     && proposal.editor_workflow_version === view.editor_workflow_version
     && binding.expected_editor_workflow_version === proposal.editor_workflow_version;
 };
+const isRecordView = (view: EditorContext): view is EditorRecordView => view.contract_name === "editor_record_view";
+const isEditable = (view: EditorContext) => !isRecordView(view) || view.editable;
 const completeRecord = (record: EditorRecord, definitions: AdapterDefinition): EditorRecord => {
   const definition = definitions.recordDefinitions[record.record_type];
   if (!definition) return record;
@@ -59,7 +61,7 @@ const completeRecord = (record: EditorRecord, definitions: AdapterDefinition): E
     sections: [...record.sections, ...definition.sections.filter((section) => !sections.has(section.id)).map((section) => ({ section_id: section.id, body: "" }))],
   };
 };
-const definitionSet = (view: EditorRecordView | null): AdapterDefinition => view?.adapter_definition ? adapterDefinitionFromWire(view.adapter_definition) : defaultAdapterDefinition;
+const definitionSet = (view: EditorContext | null): AdapterDefinition => view?.adapter_definition ? adapterDefinitionFromWire(view.adapter_definition) : defaultAdapterDefinition;
 
 function RecordPicker({ campaignId, revision, label, value, onChange, error, triggerId }: { campaignId: string; revision: RevisionRef; label: string; value: string; onChange: (recordId: string) => void; error?: string; triggerId?: string }) {
   const [open, setOpen] = useState(false);
@@ -130,7 +132,7 @@ function RecordPicker({ campaignId, revision, label, value, onChange, error, tri
 
 export function RecordEditor({ campaignId, revisionId, recordId, proposalId, proposalVersion, navigate }: { campaignId: string; revisionId: string; recordId: string; proposalId?: string | null; proposalVersion?: number | null; navigate?: (href: string) => void }) {
   const isCreate = recordId === "__new__";
-  const [view, setView] = useState<EditorRecordView | null>(null);
+  const [view, setView] = useState<EditorContext | null>(null);
   const [draft, setDraft] = useState<EditorRecord | null>(null);
   const [proposal, setProposal] = useState<EditorProposal | null>(null);
   const [impact, setImpact] = useState<EditorRemovalImpact | null>(null);
@@ -150,9 +152,9 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   const [proposalLoadNonce, setProposalLoadNonce] = useState(0);
   const correctionDraft = useRef<EditorRecord | null>(null);
   const correctionResolutions = useRef<Array<Record<string, unknown>> | null>(null);
-  const correctionView = useRef<EditorRecordView | null>(null);
+  const correctionView = useRef<EditorContext | null>(null);
   const correctionImpact = useRef<EditorRemovalImpact | null>(null);
-  const correctionBase = useRef<{ view: EditorRecordView; impact: EditorRemovalImpact | null } | null>(null);
+  const correctionBase = useRef<{ view: EditorContext; impact: EditorRemovalImpact | null } | null>(null);
   const correctionRequest = useRef(0);
   const proposalRequest = useRef(0);
   const impactRequest = useRef(0);
@@ -172,6 +174,18 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   const proposalIdentityRef = useRef<string | null>(proposalIdentity);
   proposalIdentityRef.current = proposalIdentity;
   const proposalDecisionAvailable = !conflict && proposal !== null && view !== null && proposalMatchesEditorView(proposal, view);
+
+  const readCreationContext = async (requestedRevisionId: string) => {
+    try {
+      return await httpEditorApi.creationContext(campaignId, requestedRevisionId);
+    } catch (reason) {
+      if (errorText(reason) !== "creation_context_requires_current_head") throw reason;
+      const campaigns = await httpAtlasApi.campaigns();
+      const campaign = campaigns.campaigns.find((item) => item.campaign_id === campaignId);
+      if (!campaign) throw new Error("campaign_unavailable");
+      return httpEditorApi.creationContext(campaignId, campaign.head_revision.revision_id);
+    }
+  };
 
   const load = (sourceRevisionId = revisionId) => {
     correctionRequest.current += 1;
@@ -193,7 +207,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
     }
     setView(null); setDraft(null);
     setBusy(false); setError(""); setMessage(""); setConflict(false); setImpact(null); setMode("edit"); setCorrectionMode(false); setCorrectionParentRevision(null); correctionDraft.current = null; correctionResolutions.current = null; correctionView.current = null; correctionImpact.current = null; correctionBase.current = null;
-    const sourceRecordId = isCreate ? "campaign-main" : recordId;
+    const sourceRecordId = isCreate ? "__new__" : recordId;
     const request = { sequence: (loadRequest.current?.sequence ?? 0) + 1, campaignId, revisionId: sourceRevisionId, recordId: sourceRecordId };
     loadRequest.current = request;
     const isCurrentRequest = () => {
@@ -204,13 +218,16 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
         && current.revisionId === request.revisionId
         && current.recordId === request.recordId;
     };
-    void httpEditorApi.read(campaignId, sourceRevisionId, sourceRecordId).then((value) => {
+    const read = isCreate
+      ? readCreationContext(sourceRevisionId)
+      : httpEditorApi.read(campaignId, sourceRevisionId, sourceRecordId);
+    void read.then((value) => {
       if (!isCurrentRequest()) return;
       setView(value);
       const definitions = adapterDefinitionFromWire(value.adapter_definition);
       const nextDraft = isCreate
         ? newAdapterRecord(definitions.recordTypes.includes("npc") ? "npc" : definitions.recordTypes[0] ?? recordTypes[0], "new-record", "New record", definitions.recordDefinitions)
-        : completeRecord(clone(value.record), definitions);
+        : completeRecord(clone((value as EditorRecordView).record), definitions);
       setDraft((current) => proposalRestoreIdentity.current === editorIdentity && current ? current : nextDraft);
     }).catch((reason: unknown) => {
       if (!isCurrentRequest()) return;
@@ -383,7 +400,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       else if (connection.context.length > 200) next[`${connectionKey}-context`] = "Connection context must be 200 characters or fewer.";
       else if (connection.context !== connection.context.trim()) next[`${connectionKey}-context`] = "Connection context must not have leading or trailing whitespace.";
     });
-    if (rejectNoop && mode === "edit" && !isCreate && view && Object.keys(next).length === 0) {
+    if (rejectNoop && mode === "edit" && !isCreate && view && isRecordView(view) && Object.keys(next).length === 0) {
       const original = completeRecord(clone(view.record), definitions);
       const withoutDigest = (record: EditorRecord) => ({ ...record, content_digest: null });
       if (JSON.stringify(withoutDigest(draft)) === JSON.stringify(withoutDigest(original))) {
@@ -456,7 +473,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       || (resolution?.action === "accept_unresolved" && reference.permitted_unresolved === true);
   });
   const startRemove = async () => {
-    if (!view || !draft || !view.editable || !validate()) return;
+    if (!view || !draft || !isEditable(view) || !validate()) return;
     const request = {
       sequence: impactRequest.current + 1,
       editorIdentity,
@@ -478,7 +495,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   };
   const save = async () => {
     if (mode === "remove" && !removalReady) return;
-    if (!view || !draft || !view.editable || !validate(true)) return;
+    if (!view || !draft || !isEditable(view) || !validate(true)) return;
     const request = { sequence: proposalRequest.current + 1, editorIdentity };
     proposalRequest.current = request.sequence;
     const isCurrentRequest = () => proposalRequest.current === request.sequence && editorIdentityRef.current === request.editorIdentity;
@@ -540,13 +557,19 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
     setBusy(true); setFieldErrors({}); setError(""); setConflict(false);
     try {
       const proposalRecordId = proposal.record_bindings[0]?.record_id;
-      const sourceRecordId = proposal.mutation_kind === "create" ? "campaign-main" : proposalRecordId ?? draft?.record_id ?? recordId;
-      const base = await httpEditorApi.read(campaignId, proposal.base_revision.revision_id, sourceRecordId);
+      const sourceRecordId = proposalRecordId ?? draft?.record_id ?? recordId;
+      const base = proposal.mutation_kind === "create"
+        ? await readCreationContext(proposal.base_revision.revision_id)
+        : await httpEditorApi.read(campaignId, proposal.base_revision.revision_id, sourceRecordId);
       if (!isCurrentRequest()) return;
-      const currentHead = base.viewed_revision.revision_id === base.head_revision.revision_id
+      const currentHead = proposal.mutation_kind === "create"
+        ? base
+        : base.viewed_revision.revision_id === base.head_revision.revision_id
         ? base
         : await httpEditorApi.read(campaignId, base.head_revision.revision_id, sourceRecordId);
       if (!isCurrentRequest()) return;
+      const currentRecordView = isRecordView(currentHead) ? currentHead : null;
+      if (proposal.mutation_kind !== "create" && !currentRecordView) throw new Error("record_view_required");
       const currentImpact = proposal.mutation_kind === "remove"
         ? await httpEditorApi.impact(campaignId, currentHead.head_revision.revision_id, sourceRecordId)
         : null;
@@ -558,7 +581,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
         if (candidate) setDraft({ ...candidate, ...(proposalRecordId ? { record_id: proposalRecordId } : {}) });
         else setDraft((current) => current && proposalRecordId ? { ...current, record_id: proposalRecordId } : current);
       } else {
-        setDraft(clone(currentHead.record));
+        if (currentRecordView) setDraft(clone(currentRecordView.record));
       }
       if (currentImpact) {
         setResolutions(currentImpact.incoming_references.map((reference) => resolutions.find((item) => item.reference_id === reference.reference_id) ?? { reference_id: reference.reference_id, action: "", replacement_target_record_id: null }));
@@ -610,9 +633,13 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
       if (!correctionBinding) throw new Error("correction_base_required");
       const currentHead = correctionBinding.view;
       const currentImpact = correctionBinding.impact ?? undefined;
+      const recordDigest = proposal.mutation_kind === "create" ? undefined : (() => {
+        if (!isRecordView(currentHead)) throw new Error("record_view_required");
+        return currentHead.record.content_digest;
+      })();
       const value = await httpEditorApi.correct(
         proposal, proposal.mutation_kind === "remove" ? null : correctedDraft, resolutions,
-        currentHead.head_revision, currentHead.editor_workflow_version, proposal.mutation_kind === "create" ? undefined : currentHead.record.content_digest,
+        currentHead.head_revision, currentHead.editor_workflow_version, recordDigest,
         currentImpact,
       );
       if (!isCurrentRequest()) return;
@@ -670,12 +697,12 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
   })() : null;
   if (error && !view) return <section className="card editor" role="alert" aria-labelledby="editor-error-heading"><h2 id="editor-error-heading" ref={errorHeading} tabIndex={-1}>Record editor</h2><p>{error}</p><button type="button" onClick={() => load()}>Retry</button></section>;
   if (!view || !draft) return <section className="card editor" aria-busy="true"><h2>Record editor</h2><p role="status">Loading structured record.</p></section>;
-  if (!view.editable && !proposal) return <section className="card editor" aria-labelledby="editor-heading"><h2 id="editor-heading">Record editor</h2><p>Historical revisions are read-only. Open the current head to propose a change.</p>{navigate && <button type="button" onClick={openCurrentHead}>Open current head</button>}</section>;
+  if (!isEditable(view) && !proposal) return <section className="card editor" aria-labelledby="editor-heading"><h2 id="editor-heading">Record editor</h2><p>Historical revisions are read-only. Open the current head to propose a change.</p>{navigate && <button type="button" onClick={openCurrentHead}>Open current head</button>}</section>;
 
   const invalid = (key: string) => fieldErrors[key];
   const setField = (index: number, field: EditorField) => update({ fields: draft.fields.map((item, itemIndex) => itemIndex === index ? field : item) });
   const setSection = (index: number, section: EditorSection) => update({ sections: draft.sections.map((item, itemIndex) => itemIndex === index ? section : item) });
-  const locked = busy || proposalLoading || (!!proposal && !correctionMode) || !view.editable;
+  const locked = busy || proposalLoading || (!!proposal && !correctionMode) || !isEditable(view);
   const fieldsLocked = locked || mode === "remove";
   return <section className="card editor" aria-labelledby="editor-heading">{approvalDialogView}<div className="section-title"><h2 id="editor-heading">{isCreate ? "Create record" : "Edit record"}</h2><span role="status">Head · workflow {view.editor_workflow_version}</span></div><p>Changes create a typed proposal. Approval is required before the campaign head changes.</p>{error && <div className="error editor-error" role="alert" aria-labelledby="editor-error-heading"><h3 id="editor-error-heading" ref={errorHeading} tabIndex={-1}>Editor error</h3><p>{error}</p></div>}{message && <p role="status" aria-live="polite">{message}</p>}{conflict && <aside className="editor-conflict" role="alert" aria-labelledby="editor-conflict-heading"><h3 id="editor-conflict-heading">Head changed; rebase required</h3><p>This proposal is bound to an older revision or workflow. Reload the current head before retrying.</p>{navigate && <button type="button" onClick={openCurrentHead}>Reload current head</button>}</aside>}
     <fieldset disabled={fieldsLocked}><legend>Record details</legend><label htmlFor="editor-record-id">Record ID</label><input id="editor-record-id" value={draft.record_id} readOnly={!isCreate || (!!proposal && correctionMode)} onChange={(event) => update({ record_id: event.target.value })} aria-invalid={!!invalid("record_id")} aria-describedby={invalid("record_id") ? "editor-record-id-error" : undefined} />{invalid("record_id") && <span id="editor-record-id-error" className="error">{invalid("record_id")}</span>}<label htmlFor="editor-name">Displayed name</label><input id="editor-name" value={draft.displayed_name} onChange={(event) => update({ displayed_name: event.target.value })} aria-invalid={!!invalid("displayed_name")} aria-describedby={invalid("displayed_name") ? "editor-name-error" : undefined} />{invalid("displayed_name") && <span id="editor-name-error" className="error">{invalid("displayed_name")}</span>}<label htmlFor="editor-type">Record type</label><select id="editor-type" value={draft.record_type} disabled={!isCreate || !!proposal} onChange={(event) => setDraft(newAdapterRecord(event.target.value, draft.record_id, draft.displayed_name, definitions.recordDefinitions))}>{(isCreate ? definitions.recordTypes : [draft.record_type]).map((type) => <option key={type} value={type}>{type}</option>)}</select><label htmlFor="editor-status">Status</label><select id="editor-status" value={draft.status} onChange={(event) => update({ status: event.target.value, authority: authority(event.target.value) as EditorRecord["authority"] })}>{statuses.map((value) => <option key={value} value={value}>{value}</option>)}</select><p>Authority: <strong>{authority(draft.status)}</strong> (derived from status)</p><label htmlFor="editor-visibility">Visibility</label><select id="editor-visibility" value={draft.visibility.audience} onChange={(event) => update({ visibility: event.target.value === "warden" ? { audience: "warden", warden_only: true } : { audience: event.target.value as "players" | "shared", warden_only: false } })} aria-invalid={!!invalid("visibility")} aria-describedby={invalid("visibility") ? "editor-visibility-error" : undefined}><option value="warden">Warden only</option><option value="shared">Shared</option><option value="players">Players</option></select>{invalid("visibility") && <span id="editor-visibility-error" className="error" role="alert">{invalid("visibility")}</span>}</fieldset>
