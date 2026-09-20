@@ -65,8 +65,9 @@ Capture can remain available.
 The in-memory `SliceApplication` configuration is for tests and synthetic
 local demonstrations only. Its workflow, proposal, and projection repositories
 are process-local, so it does not provide cold-restart recovery after a
-publication. Hosted restart recovery requires the PostgreSQL-backed runtime
-and its durable snapshot and projection volumes.
+publication. Hosted restart recovery requires the PostgreSQL-backed runtime, with
+projections in the durable `postgres_data` PostgreSQL data volume and snapshots
+in the durable `snapshots` snapshot volume.
 
 Migration `0007` removes only cached HTTP operation receipts created by the
 v1 runtime. This prevents an exact replay from returning a stored v1 response
