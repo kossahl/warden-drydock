@@ -2,6 +2,7 @@ from copy import deepcopy
 import json
 import os
 from pathlib import Path
+import tempfile
 import threading
 import time
 import unittest
@@ -11,8 +12,12 @@ from unittest import mock
 from tests.hosted.http import test_editor_backend as backend
 from warden_drydock.hosted.engine.models import ChangeKind, ExactTextChange, exact_diff_digest
 from warden_drydock.hosted.http.application import HTTPFailure, SliceApplication, SyntheticProvider
+from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input
+from warden_drydock.hosted.http.repository import PostgresHTTPRepository
 from warden_drydock.hosted.http.editor import document_digest
+from warden_drydock.hosted.proposals import PostgresProposalRepository
 from warden_drydock.hosted.proposals.service import ProposalStatus, _payload_digest
+from warden_drydock.hosted.projections import PostgresAtlasProjectionRepository
 from warden_drydock.hosted.revisions import (
     IntentStatus, PostgresWorkflowRepository, PublicationIntent,
     PublicationIntentError, PublicationKind,
@@ -336,6 +341,9 @@ class PostgresEditorReceiptRecoveryIntegrationTests(unittest.TestCase):
         self.parent_revision = "revision_parent_" + suffix
         self.revision_id = "revision_published_" + suffix
         self.proposal_id = "proposal_" + suffix
+        self.campaign_key = "idem_campaign_" + suffix
+        self.edit_key = "idem_edit_" + suffix
+        self.reject_key = "idem_reject_" + suffix
         self.changes = (
             ExactTextChange(
                 "change_" + suffix, "record_" + suffix, "d" * 64,
@@ -350,11 +358,206 @@ class PostgresEditorReceiptRecoveryIntegrationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("DELETE FROM hosted_proposal_audit WHERE proposal_id=%s", (self.proposal_id,))
-            cursor.execute("DELETE FROM hosted_proposal_version WHERE proposal_id=%s", (self.proposal_id,))
+            cursor.execute(
+                "DELETE FROM hosted_http_operation_receipt WHERE idempotency_key IN (%s,%s,%s)",
+                (self.campaign_key, self.edit_key, self.reject_key),
+            )
+            cursor.execute(
+                "DELETE FROM hosted_atlas_projection_checkpoint WHERE campaign_id=%s",
+                (self.campaign_id,),
+            )
+            cursor.execute(
+                "DELETE FROM hosted_proposal_audit WHERE proposal_id IN "
+                "(SELECT proposal_id FROM hosted_proposal_version WHERE campaign_id=%s) "
+                "OR proposal_id=%s",
+                (self.campaign_id, self.proposal_id),
+            )
+            cursor.execute(
+                "DELETE FROM hosted_proposal_version WHERE campaign_id=%s OR proposal_id=%s",
+                (self.campaign_id, self.proposal_id),
+            )
             cursor.execute("DELETE FROM hosted_editor_workflow WHERE campaign_id=%s", (self.campaign_id,))
             cursor.execute("DELETE FROM hosted_campaign_head WHERE campaign_id=%s", (self.campaign_id,))
-            cursor.execute("DELETE FROM hosted_publication_intent WHERE intent_id=%s", (self.intent_id,))
+            cursor.execute(
+                "DELETE FROM hosted_publication_intent WHERE campaign_id=%s OR intent_id=%s",
+                (self.campaign_id, self.intent_id),
+            )
+
+    def _app(self, directory):
+        root = Path(directory) / "runtime"
+        snapshots = Path(directory) / "snapshots"
+        return SliceApplication(
+            root, snapshot_root=snapshots, provider=SyntheticProvider(),
+            receipts=PostgresHTTPRepository(self.connect),
+            proposal_repository=PostgresProposalRepository(self.connect),
+            workflow_repository=PostgresWorkflowRepository(self.connect),
+            atlas_repository=PostgresAtlasProjectionRepository(self.connect),
+        )
+
+    def _campaign(self, app) -> str:
+        payload = {
+            "contract_name": "campaign_create_request", "contract_version": 2,
+            "operation_request": {
+                "contract_name": "operation_request", "contract_version": 2,
+                "request_id": "request_campaign_" + self.campaign_id,
+                "operation": "campaign_create", "idempotency_key": self.campaign_key,
+                "payload_digest": "0" * 64, "expected_revision": None,
+                "expected_workflow_version": None,
+            },
+            "input": {
+                "campaign_id": self.campaign_id,
+                "campaign_name": "Editor recovery",
+                "adapter_id": "mothership",
+            },
+        }
+        payload["operation_request"]["payload_digest"] = canonical_digest(
+            request_digest_input(payload)
+        )
+        return app.create_campaign(payload)[1]["head_revision"]
+
+    def _rejection_request(self, app, revision: str):
+        revision = app.workflow.head(self.campaign_id)
+        viewed = app.editor_record_read(
+            self.campaign_id, revision, "campaign-main",
+        )[1]
+        candidate = deepcopy(viewed["record"])
+        candidate["displayed_name"] = "Edited Campaign"
+        candidate["content_digest"] = document_digest(candidate)
+        workflow = app._editor_version(self.campaign_id)
+        edit_operation = {
+            "contract_name": "editor_operation_request", "contract_version": 1,
+            "request_id": "request_edit_" + self.campaign_id,
+            "operation": "editor_record_edit", "idempotency_key": self.edit_key,
+            "payload_digest": "0" * 64, "expected_revision": revision,
+            "expected_editor_workflow_version": workflow,
+            "subject_id": "campaign-main",
+        }
+        edit = {
+            "contract_name": "editor_record_edit_request", "contract_version": 1,
+            "operation_request": edit_operation,
+            "binding": {
+                "campaign_id": self.campaign_id,
+                "base_revision": viewed["viewed_revision"],
+                "record_id": "campaign-main",
+                "record_digest": viewed["record"]["content_digest"],
+                "expected_editor_workflow_version": workflow,
+            },
+            "candidate": candidate,
+        }
+        edit_operation["payload_digest"] = canonical_digest(request_digest_input(edit))
+        _, proposal = app.editor_record_edit(
+            self.campaign_id, revision, "campaign-main", edit,
+        )
+        payload = backend.EditorBackendTests._editor_approval_payload(self, proposal)
+        for key in (
+            "diff", "affected_record_count", "confirmed_change_ids",
+            "confirmed_authority_change_ids", "confirmed_visibility_change_ids",
+        ):
+            payload.pop(key)
+        payload["contract_name"] = "editor_proposal_rejection_request"
+        payload["reason_code"] = "warden_rejected"
+        payload["operation_request"] = {
+            "contract_name": "editor_operation_request", "contract_version": 1,
+            "request_id": "request_reject_" + self.campaign_id,
+            "operation": "editor_proposal_reject", "idempotency_key": self.reject_key,
+            "expected_revision": revision,
+            "expected_editor_workflow_version": app._editor_version(self.campaign_id),
+            "subject_id": proposal["proposal_id"], "intent_digest": payload["diff_digest"],
+            "payload_digest": "0" * 64,
+        }
+        payload["operation_request"]["payload_digest"] = app._editor_payload_digest(payload)
+        return proposal, payload
+
+    def test_editor_rejection_recovers_after_receipt_storage_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = self._app(directory)
+            self.app = app
+            revision = self._campaign(app)
+            proposal, payload = self._rejection_request(app, revision)
+
+            with mock.patch.object(app, "_store", side_effect=SystemExit("receipt storage failed")):
+                with self.assertRaises(SystemExit):
+                    app.editor_proposal_reject(
+                        proposal["proposal_id"], proposal["proposal_version"], payload,
+                    )
+
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT status,editor_metadata FROM hosted_proposal_version "
+                    "WHERE proposal_id=%s AND version=1",
+                    (proposal["proposal_id"],),
+                )
+                stored_status, stored_metadata = cursor.fetchone()
+                self.assertEqual("rejected", stored_status)
+                self.assertEqual("editor_proposal_view", stored_metadata["contract_name"])
+                self.assertEqual("rejected", stored_metadata["core_proposal"]["proposal"]["status"])
+                self.assertEqual(3, stored_metadata["editor_workflow_version"])
+                cursor.execute(
+                    "SELECT version FROM hosted_editor_workflow WHERE campaign_id=%s",
+                    (self.campaign_id,),
+                )
+                self.assertEqual((3,), cursor.fetchone())
+                cursor.execute(
+                    "SELECT status,event FROM hosted_proposal_audit "
+                    "WHERE proposal_id=%s AND event='rejected'",
+                    (proposal["proposal_id"],),
+                )
+                self.assertEqual([("rejected", "rejected")], cursor.fetchall())
+                cursor.execute(
+                    "SELECT state,http_status,response_body FROM hosted_http_operation_receipt "
+                    "WHERE operation='editor_proposal_reject' AND idempotency_key=%s",
+                    (self.reject_key,),
+                )
+                self.assertEqual(("pending", None, None), cursor.fetchone())
+
+            restarted = self._app(directory)
+            expected_response = {
+                "contract_name": "editor_proposal_rejection_result",
+                "contract_version": 1,
+                "proposal": {
+                    "proposal_id": proposal["proposal_id"],
+                    "proposal_version": proposal["proposal_version"],
+                },
+                "outcome": "rejected",
+                "editor_workflow_version": 3,
+            }
+            self.assertEqual(
+                (200, expected_response),
+                restarted.editor_proposal_reject(
+                    proposal["proposal_id"], proposal["proposal_version"], deepcopy(payload),
+                ),
+            )
+            self.assertEqual(
+                (200, expected_response),
+                restarted.editor_proposal_reject(
+                    proposal["proposal_id"], proposal["proposal_version"], deepcopy(payload),
+                ),
+            )
+
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT status,editor_metadata FROM hosted_proposal_version "
+                    "WHERE proposal_id=%s AND version=1",
+                    (proposal["proposal_id"],),
+                )
+                stored_status, stored_metadata = cursor.fetchone()
+                self.assertEqual("rejected", stored_status)
+                self.assertEqual(3, stored_metadata["editor_workflow_version"])
+                cursor.execute(
+                    "SELECT count(*) FROM hosted_proposal_audit "
+                    "WHERE proposal_id=%s AND event='rejected'",
+                    (proposal["proposal_id"],),
+                )
+                self.assertEqual((1,), cursor.fetchone())
+                cursor.execute(
+                    "SELECT state,http_status,response_body FROM hosted_http_operation_receipt "
+                    "WHERE operation='editor_proposal_reject' AND idempotency_key=%s",
+                    (self.reject_key,),
+                )
+                receipt = cursor.fetchone()
+                self.assertEqual("completed", receipt[0])
+                self.assertEqual(200, receipt[1])
+                self.assertEqual(expected_response, receipt[2])
 
     def _seed(self, *, intent_status=None, proposal_status="approving",
               head_revision=None, proposal_base=None) -> None:
