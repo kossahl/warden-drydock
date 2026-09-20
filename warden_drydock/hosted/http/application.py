@@ -2918,7 +2918,7 @@ class SliceApplication:
                 "exact_diff": [{"change_id": change.change_id, "subject_id": change.subject_id,
                                 "change_type": change.change_kind.value, "record_type": change.record_type,
                                 "from_authority": record["authority"], "to_authority": record["authority"],
-                                "before_content": record["content"],
+                                "before_content": normalize_text(record["content"]),
                                 "after_content": normalize_text(change.replacement),
                                 "before_digest": change.expected_content_digest,
                                 "after_digest": text_digest(change.replacement)}],

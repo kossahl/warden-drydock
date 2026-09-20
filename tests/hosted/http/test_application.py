@@ -14,7 +14,7 @@ from unittest import mock
 
 from warden_drydock.hosted.http.application import HTTPFailure, SliceApplication, SyntheticProvider
 from warden_drydock.hosted.ai.provider import OpenAIResponsesAdapter
-from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input, text_digest
+from warden_drydock.hosted.http.contracts import canonical_digest, normalize_text, request_digest_input, text_digest
 from warden_drydock.hosted.http.editor import document_digest
 from warden_drydock.hosted.proposals.service import ProposalStatus
 from warden_drydock.hosted.engine import Status
@@ -386,6 +386,19 @@ class SliceApplicationTests(unittest.TestCase):
         self.assertEqual(change["after_content"], published["content"])
         retry = self.app.approve_proposal("proposal_alpha", 1, self.approval(proposal))[1]
         self.assertTrue(retry["exact_replay"])
+
+    def test_proposal_view_normalizes_crlf_and_bare_cr_before_content(self) -> None:
+        proposal = self.proposal()
+        item = self.app.proposal_repository.get(proposal["proposal_id"], proposal["proposal_version"])
+        original = self.app._record(item.campaign_id, item.base_revision, item.changes[0].subject_id)
+        for line_ending in ("\r\n", "\r"):
+            with self.subTest(line_ending=repr(line_ending)), mock.patch.object(
+                self.app, "_record", return_value={**original, "content": original["content"].replace("\n", line_ending)}
+            ):
+                view = self.app._proposal_view(item)
+            before = view["exact_diff"][0]["before_content"]
+            self.assertEqual(normalize_text(original["content"]), before)
+            self.assertNotIn("\r", before)
 
     def test_proposal_create_receipt_prevents_second_version(self) -> None:
         proposal = self.proposal()
