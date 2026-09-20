@@ -98,6 +98,12 @@ check_origin() {
   fi
 }
 
+is_allowed_eol_attribute() {
+  [ "$1" = "scripts/review-check.sh" ] \
+    && [ "$2" = "eol" ] \
+    && [ "$3" = "lf" ]
+}
+
 check_source_guards() {
   check_origin
 
@@ -209,10 +215,13 @@ done < <(
 
 # Raw blobs do not reproduce built-in checkout conversions such as ident or
 # working-tree-encoding, or eol. Reject those attributes rather than test the
-# wrong bytes while leaving ordinary text handling to the canonical diff.
+# wrong bytes, except for this script's deliberate tracked LF policy.
 while IFS= read -r -d '' attribute_path \
   && IFS= read -r -d '' attribute_name \
   && IFS= read -r -d '' attribute_value; do
+  if is_allowed_eol_attribute "$attribute_path" "$attribute_name" "$attribute_value"; then
+    continue
+  fi
   if [ "$attribute_value" != unspecified ] && [ "$attribute_value" != unset ]; then
     echo "Cannot test a checkout with a built-in conversion attribute ($attribute_path: $attribute_name)." >&2
     return 1
