@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import { type AtlasApi, httpAtlasApi } from "./api/atlasClient";
-import { browserId, httpSliceApi, recordGenerationContext, type SliceApi } from "./api/client";
+import { ApiError, browserId, httpSliceApi, recordGenerationContext, type SliceApi } from "./api/client";
 import { ErrorState, Link, useResource } from "./atlas/AtlasCompletion";
 import { AuthorityBadge, RevisionStatus } from "./components/StatusPrimitives";
 import type { CampaignRevisionView, GenerationAction, GenerationContext, GenerationView, ProposalView, ProviderReadiness, RecordView } from "./contracts/v2";
@@ -39,6 +39,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const observedSequence = useRef(0);
   const mainRef = useRef<HTMLElement>(null);
   const wasActive = useRef(active);
+  const pendingCampaignRefresh = useRef(false);
   const hydratedLocation = useRef("");
   const uncertainGeneration = useRef<{ action: GenerationAction; prompt: string; generationId: string } | null>(null);
   const campaigns = useResource(active && !campaign ? () => atlasApi.campaigns() : null, [active, atlasApi, campaign]);
@@ -73,6 +74,46 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
     if (active && !wasActive.current) mainRef.current?.focus();
     wasActive.current = active;
   }, [active]);
+  useEffect(() => {
+    const invalidate = () => {
+      if (active || !campaign) return;
+      pendingCampaignRefresh.current = true;
+      setHydrating(true);
+    };
+    window.addEventListener("drydock:campaign-mutated", invalidate);
+    return () => window.removeEventListener("drydock:campaign-mutated", invalidate);
+  }, [active, campaign]);
+  useEffect(() => {
+    if (!active || !campaign || !pendingCampaignRefresh.current) return;
+    pendingCampaignRefresh.current = false;
+    const currentRecordId = record?.record_id;
+    const currentGeneration = generation;
+    const currentProposal = proposal;
+    void (async () => {
+      const collection = await atlasApi.campaigns();
+      const current = collection.campaigns.find((item) => item.campaign_id === campaign.campaign_id);
+      if (!current) {
+        setCampaign(null); setRecord(null); setRecordContentDigest(null); setGeneration(null); setProposal(null); setStreamDraft(""); setCorrectedContent("");
+        return;
+      }
+      const loadedCampaign = await api.readRevision(current.campaign_id, current.head_revision.revision_id);
+      let loadedRecord: RecordView | null = null;
+      if (currentRecordId) {
+        try {
+          loadedRecord = await api.readRecord(loadedCampaign.campaign_id, loadedCampaign.viewed_revision.revision_id, currentRecordId);
+        } catch (failure) {
+          if (failure instanceof ApiError && failure.code === "record_not_found") {
+            setCampaign(loadedCampaign); setRecord(null); setRecordContentDigest(null);
+            if (currentGeneration?.context.scope === "record" && currentGeneration.context.record_id === currentRecordId) { setGeneration(null); setStreamDraft(""); }
+            if (currentProposal?.exact_diff[0]?.subject_id === currentRecordId) { setProposal(null); setCorrectedContent(""); }
+          }
+          throw failure;
+        }
+      }
+      const loadedDigest = loadedRecord ? (await exactRecordContext(loadedRecord)).content_digest : null;
+      setCampaign(loadedCampaign); setRecord(loadedRecord); setRecordContentDigest(loadedDigest); setAnnouncement(`Opened latest campaign revision ${loadedCampaign.viewed_revision.revision_id}.`);
+    })().catch(failAction).finally(() => setHydrating(false));
+  }, [active, api, atlasApi, campaign, generation, proposal, record]);
 
   async function createCampaign(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy("campaign"); setError(null);

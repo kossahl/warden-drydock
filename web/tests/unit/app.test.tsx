@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "../../src/App";
+import { ProposalWorkspace } from "../../src/ProposalWorkspace";
 import type { AtlasApi } from "../../src/api/atlasClient";
 import type { SliceApi } from "../../src/api/client";
 import type { AtlasCampaignItem, CampaignRevisionView, GenerationEvent, GenerationView, ProposalApprovalResult, ProposalView, ProviderReadiness, RecordView } from "../../src/contracts/v2";
@@ -330,5 +331,27 @@ describe("proposal browser slice", () => {
     expect(screen.getAllByText("revision_alpha").length).toBeGreaterThan(0);
     expect(api.approveProposal).not.toHaveBeenCalled();
     window.history.replaceState(null, "", "/");
+  });
+
+  it("refreshes a hidden workspace after an Atlas campaign mutation", async () => {
+    const latestCampaign = { ...campaign, campaign_name: "Updated Campaign", viewed_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1"), validation_status: "passed" as const }, head_revision: "revision_beta", records: [{ ...campaign.records[0], name: "Updated Campaign" }] };
+    const latestRecord = { ...record, revision_id: "revision_beta", name: "Updated Campaign", content: "# Updated Campaign" };
+    let mutated = false;
+    const atlasApi = { campaigns: vi.fn(async () => ({ contract_name: "atlas_campaign_collection" as const, contract_version: 2 as const, campaigns: [{ ...atlasCampaign, campaign_name: mutated ? "Updated Campaign" : atlasCampaign.campaign_name, head_revision: mutated ? { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1") } : atlasCampaign.head_revision, projected_revision: mutated ? { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1") } : atlasCampaign.projected_revision }] })) } as unknown as AtlasApi;
+    const api = fakeApi({ readRevision: vi.fn(async (_campaignId, revisionId) => revisionId === "revision_beta" ? latestCampaign : campaign), readRecord: vi.fn(async (_campaignId, revisionId) => revisionId === "revision_beta" ? latestRecord : record) });
+    const view = render(<ProposalWorkspace api={api} atlasApi={atlasApi} />);
+    await screen.findByText("Provider: Ready");
+    fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
+    await screen.findByRole("heading", { name: "Synthetic Campaign" });
+
+    view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} active={false} />);
+    mutated = true;
+    window.dispatchEvent(new Event("drydock:campaign-mutated"));
+    view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} />);
+
+    expect(await screen.findByRole("heading", { name: "Updated Campaign" })).toBeVisible();
+    expect(screen.getByText("# Updated Campaign")).toBeVisible();
+    expect(api.readRevision).toHaveBeenCalledWith("campaign_alpha", "revision_beta");
+    expect(api.readRecord).toHaveBeenCalledWith("campaign_alpha", "revision_beta", "campaign-main");
   });
 });
