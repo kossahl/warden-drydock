@@ -144,7 +144,7 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
 .editor details { margin: 1rem 0; padding: .8rem; border: 1px solid #365247; border-radius: .45rem; }
 .editor summary { cursor: pointer; font-weight: 800; }
 .editor-review { margin-top: 1.5rem; padding-top: 1rem; border-top: 2px solid #d497e8; }
-.editor-review .diff article { overflow: hidden; }
+.editor-review .diff article { overflow: visible; }
 .editor-connection { margin: .8rem 0; padding: .8rem; border-left: .2rem solid #5b7b6d; }
 .record-picker { margin: .5rem 0 1rem; }
 .record-picker p { margin: .25rem 0 .5rem; overflow-wrap: anywhere; }
