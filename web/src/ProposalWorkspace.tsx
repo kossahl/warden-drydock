@@ -102,7 +102,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
         try {
           loadedRecord = await api.readRecord(loadedCampaign.campaign_id, loadedCampaign.viewed_revision.revision_id, currentRecordId);
         } catch (failure) {
-          if (failure instanceof ApiError && failure.code === "record_not_found") {
+          if (failure instanceof ApiError && (failure.code === "not_found" || failure.code === "record_not_found")) {
             setCampaign(loadedCampaign); setRecord(null); setRecordContentDigest(null);
             if (currentGeneration?.context.scope === "record" && currentGeneration.context.record_id === currentRecordId) { setGeneration(null); setStreamDraft(""); }
             if (currentProposal?.exact_diff[0]?.subject_id === currentRecordId) { setProposal(null); setCorrectedContent(""); }

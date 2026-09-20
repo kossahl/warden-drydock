@@ -3,8 +3,8 @@ import { App } from "../../src/App";
 import type { AtlasApi } from "../../src/api/atlasClient";
 import { ApiError, type SliceApi } from "../../src/api/client";
 import type { GenerationView, ProposalView, ProviderReadiness } from "../../src/contracts/v2";
-import { WorkflowPanels } from "../../src/atlas/AtlasCompletion";
-import type { AtlasRoute } from "../../src/atlas/routing";
+import { openHeadHref, WorkflowPanels } from "../../src/atlas/AtlasCompletion";
+import { parseAtlasRoute, type AtlasRoute } from "../../src/atlas/routing";
 import { binding, campaigns, detail, fullHistory, generations, headRevision, neighborhood, newestFiveHistory, oldRevision, overview, proposals, readinessUnavailable, recordHistory, records, workflow } from "../fixtures/atlas";
 
 function fakeAtlas(overrides: Partial<AtlasApi> = {}): AtlasApi {
@@ -123,6 +123,11 @@ describe("Campaign Atlas browser experience", () => {
     fireEvent.click(screen.getByRole("link", { name: "Open head" }));
     await waitFor(() => expect(window.location.search).toBe("?revision=revision_two"));
     expect(await screen.findByText(/Viewed revision 2/)).toBeVisible();
+  });
+
+  it("drops proposal bindings when Open head changes the viewed revision", () => {
+    expect(openHeadHref(parseAtlasRoute("/campaigns/campaign_atlas/records?revision=revision_one&proposal=create_proposal&version=1"), headRevision)).toBe("/campaigns/campaign_atlas/records?revision=revision_two");
+    expect(openHeadHref(parseAtlasRoute("/campaigns/campaign_atlas/records/record-one?revision=revision_one&proposal=edit_proposal&version=2"), headRevision)).toBe("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   });
 
   it("blocks the whole affected campaign view after an integrity failure", async () => {
