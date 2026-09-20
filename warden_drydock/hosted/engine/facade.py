@@ -83,6 +83,11 @@ def _warning_subject_id(detail: str, occurrence: int = 0) -> str:
     return f"validation_warning_{digest}"
 
 
+def _text_output() -> io.StringIO:
+    """Capture text without platform newline translation."""
+    return io.StringIO(newline="\n")
+
+
 class DeterministicEngine:
     """Typed in-process facade over deterministic Drydock operations."""
 
@@ -99,7 +104,7 @@ class DeterministicEngine:
             return self._failure(request.command_id, "campaign_initialize", request.workspace_handle, input_digest, stage, "unsafe_binding")
         try:
             root = self._registry._resolve(request.workspace_handle)
-            with redirect_stdout(io.StringIO()):
+            with redirect_stdout(_text_output()):
                 init_campaign(root, name=request.campaign_name, adapter=request.adapter)
             return self._success(request.command_id, "campaign_initialize", request.workspace_handle, request.workspace_handle, input_digest, root)
         except (UnknownWorkspaceError, UnsafeWorkspaceError) as exc:
@@ -120,7 +125,7 @@ class DeterministicEngine:
             return self._failure(request.command_id, "artifacts_rebuild", request.workspace_handle, input_digest, Stage.CONTEXT, "unsafe_binding")
         try:
             root = self._registry._resolve(request.workspace_handle)
-            with redirect_stdout(io.StringIO()):
+            with redirect_stdout(_text_output()):
                 if request.focus_id:
                     related_entities(root, request.focus_id, request.depth)
                 else:
@@ -140,7 +145,7 @@ class DeterministicEngine:
             return invalid
         try:
             root = self._registry._resolve(request.workspace_handle)
-            output = io.StringIO()
+            output = _text_output()
             with redirect_stdout(output):
                 return_code = validate_campaign(root)
             findings = self._validation_findings(output.getvalue(), request.workspace_handle, Stage.VALIDATE)
@@ -254,18 +259,18 @@ class DeterministicEngine:
                 targets.append((change, entity.path))
             staged = self._registry.clone(request.workspace_handle)
             staged_root = self._registry._resolve(staged)
-            output = io.StringIO()
+            output = _text_output()
             with redirect_stdout(output):
                 for change, relative in targets:
                     if change.change_kind is ChangeKind.CREATE:
                         created = create_entity(staged_root, change.record_type or "", change.subject_id, None)
-                        created.write_text(change.replacement, encoding="utf-8")
+                        created.write_bytes(change.replacement.encode("utf-8"))
                     elif change.change_kind is ChangeKind.DELETE:
                         assert relative is not None
                         (staged_root / relative).unlink()
                     else:
                         assert relative is not None
-                        (staged_root / relative).write_text(change.replacement, encoding="utf-8")
+                        (staged_root / relative).write_bytes(change.replacement.encode("utf-8"))
                 build_indexes(staged_root)
                 build_context(staged_root)
                 return_code = validate_campaign(staged_root)
@@ -301,7 +306,7 @@ class DeterministicEngine:
             return invalid
         try:
             root = self._registry._resolve(request.workspace_handle)
-            with redirect_stdout(io.StringIO()):
+            with redirect_stdout(_text_output()):
                 operation(root)
             return self._success(request.command_id, command, request.workspace_handle, request.workspace_handle, input_digest, root, artifact_ids)
         except (UnknownWorkspaceError, UnsafeWorkspaceError) as exc:

@@ -73,7 +73,7 @@ class ParityHarness:
 
     def _run_cli(self, handle: WorkspaceHandle, case: ParityCase) -> ParityOutcome:
         root = self._registry._resolve(handle)
-        stream = io.StringIO()
+        stream = io.StringIO(newline="\n")
         with redirect_stdout(stream):
             return_code = cli.main(self._arguments(case, root=root))
         return ParityOutcome(return_code, stream.getvalue())
@@ -88,10 +88,12 @@ class ParityHarness:
             cwd=root,
             check=False,
             capture_output=True,
-            text=True,
-            encoding="utf-8",
+            text=False,
         )
-        return ParityOutcome(completed.returncode, completed.stdout)
+        stdout = completed.stdout
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8")
+        return ParityOutcome(completed.returncode, stdout)
 
     def compare(
         self,

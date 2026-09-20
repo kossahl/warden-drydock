@@ -5,6 +5,7 @@ import hashlib
 import inspect
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -580,6 +581,9 @@ class ExactDiffTests(EngineTestCase):
                     )
                 )
                 self.assertEqual(Status.STAGED, staged.status)
+                staged_root = self.registry._resolve(staged.staged_handle)
+                self.assertEqual(replacement.encode("utf-8"), (staged_root / "01-campaign" / "campaign-overview.md").read_bytes())
+                self.assertNotIn(b"\r\r\n", (staged_root / "01-campaign" / "campaign-overview.md").read_bytes())
 
     def test_invalid_staged_candidate_returns_typed_findings(self) -> None:
         source = self.show()
@@ -665,6 +669,13 @@ class ParityTests(EngineTestCase):
                 self.assertTrue(
                     harness.compare(self.engine, self.handle, case).matches
                 )
+
+    def test_standalone_parity_decodes_utf8_bytes_without_newline_translation(self) -> None:
+        harness = ParityHarness(self.registry)
+        completed = subprocess.CompletedProcess([], 0, stdout="café\r\n".encode("utf-8"), stderr=b"")
+        with mock.patch("warden_drydock.hosted.engine.parity.subprocess.run", return_value=completed):
+            outcome = harness._run_standalone(self.handle, ParityCase(ParityOperation.INDEX))
+        self.assertEqual("café\r\n", outcome.output)
 
     def test_all_retrieval_operations_have_path_free_three_way_parity(self) -> None:
         harness = ParityHarness(self.registry)
