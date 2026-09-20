@@ -75,12 +75,12 @@ test("Overview requests and displays only the newest five approved events", asyn
   expect(historyRequests[0]).toContain("direction=backward");
 });
 
-test("historical view stays selected until Open head", async ({ page }) => {
+test("historical view clears an incompatible proposal when opening head", async ({ page }) => {
   await installAtlasApi(page);
   await page.goto("/campaigns/campaign_atlas?revision=revision_one&proposal=proposal_editor&version=1");
   await expect(page.getByText(/Viewed revision 1/)).toBeVisible();
   await page.getByRole("link", { name: "Open head" }).click();
-  await expect(page).toHaveURL("/campaigns/campaign_atlas?revision=revision_two&proposal=proposal_editor&version=1");
+  await expect(page).toHaveURL("/campaigns/campaign_atlas?revision=revision_two");
   await expect(page.getByText(/Viewed revision 2/)).toBeVisible();
 });
 
