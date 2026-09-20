@@ -199,10 +199,7 @@ def document_digest(value: Mapping[str, Any]) -> str:
     projection["ownership"] = value.get("ownership", "campaign")
     projection["sections"] = sections
     return hashlib.sha256(json.dumps(
-        {key: value[key] for key in (
-            "record_id", "record_type", "displayed_name", "ownership", "status", "authority",
-            "visibility", "fields", "connections",
-        )} | {"sections": sections}, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        projection, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     ).encode("utf-8")).hexdigest()
 
 
