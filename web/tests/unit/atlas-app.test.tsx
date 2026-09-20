@@ -3,8 +3,8 @@ import { App } from "../../src/App";
 import type { AtlasApi } from "../../src/api/atlasClient";
 import { ApiError, type SliceApi } from "../../src/api/client";
 import type { GenerationView, ProposalView, ProviderReadiness } from "../../src/contracts/v2";
-import { WorkflowPanels } from "../../src/atlas/AtlasCompletion";
-import type { AtlasRoute } from "../../src/atlas/routing";
+import { openHeadHref, WorkflowPanels } from "../../src/atlas/AtlasCompletion";
+import { parseAtlasRoute, type AtlasRoute } from "../../src/atlas/routing";
 import { binding, campaigns, detail, fullHistory, generations, headRevision, neighborhood, newestFiveHistory, oldRevision, overview, proposals, readinessUnavailable, recordHistory, records, workflow } from "../fixtures/atlas";
 
 function fakeAtlas(overrides: Partial<AtlasApi> = {}): AtlasApi {
@@ -64,6 +64,18 @@ describe("Campaign Atlas browser experience", () => {
     expect(window.location.search).not.toContain("cursor=");
   });
 
+  it("keeps an open create proposal when searching records", async () => {
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records?revision=revision_two&proposal=proposal_create&version=1");
+    render(<App atlasApi={fakeAtlas()} providerReadiness={async () => readinessUnavailable} />);
+    const search = await screen.findByLabelText("Search campaign records");
+    await screen.findByText("2 matching records.");
+    fireEvent.change(search, { target: { value: "station" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(window.location.search).toContain("q=station"));
+    expect(window.location.search).toContain("proposal=proposal_create");
+    expect(window.location.search).toContain("version=1");
+  });
+
   it("renders safe Markdown, rejects unsafe links, and discloses exact source text", async () => {
     window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_two");
     const { container } = render(<App atlasApi={fakeAtlas()} providerReadiness={async () => readinessUnavailable} />);
@@ -111,6 +123,11 @@ describe("Campaign Atlas browser experience", () => {
     fireEvent.click(screen.getByRole("link", { name: "Open head" }));
     await waitFor(() => expect(window.location.search).toBe("?revision=revision_two"));
     expect(await screen.findByText(/Viewed revision 2/)).toBeVisible();
+  });
+
+  it("drops proposal bindings when Open head changes the viewed revision", () => {
+    expect(openHeadHref(parseAtlasRoute("/campaigns/campaign_atlas/records?revision=revision_one&proposal=create_proposal&version=1"), headRevision)).toBe("/campaigns/campaign_atlas/records?revision=revision_two");
+    expect(openHeadHref(parseAtlasRoute("/campaigns/campaign_atlas/records/record-one?revision=revision_one&proposal=edit_proposal&version=2"), headRevision)).toBe("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   });
 
   it("blocks the whole affected campaign view after an integrity failure", async () => {
@@ -318,7 +335,7 @@ describe("Campaign Atlas browser experience", () => {
   it("renders every publication-safe workflow status row with exact deep links", async () => {
     const generationItems = (["pending", "complete", "failed", "cancelled"] as const).map((status, index) => ({ generation_id: `generation_${status}`, action: index % 2 ? "check" as const : "ask" as const, context: { scope: "campaign" as const }, source_revision: headRevision, source_set_digest: `${index + 1}`.repeat(64), status, retryable: status === "failed" ? true : null, created_at: `2026-08-25T0${index}:00:00Z` }));
     const proposalItems = (["draft", "rejected", "conflict", "published", "quarantined"] as const).map((status, index) => ({ proposal_id: `proposal_${status}`, proposal_version: index + 1, generation_id: `generation_${status}`, action: "generate" as const, context: { scope: "record" as const, record_id: "record-one", content_digest: "c".repeat(64) }, subject_record_id: "record-one", subject_content_digest: "c".repeat(64), source_revision: headRevision, base_revision: status === "draft" ? oldRevision : headRevision, status, validation_status: "passed" as const, published_revision_id: status === "published" ? "revision_three" : null, created_at: `2026-08-25T1${index}:00:00Z` }));
-    const route: AtlasRoute = { kind: "overview", campaignId: campaigns.campaigns[0].campaign_id, revisionId: headRevision.revision_id, q: "", type: null, authority: null, status: null, cursor: null, relationshipCursor: null, generationCursor: null, proposalCursor: null };
+    const route: AtlasRoute = { kind: "overview", campaignId: campaigns.campaigns[0].campaign_id, revisionId: headRevision.revision_id, q: "", type: null, authority: null, status: null, cursor: null, relationshipCursor: null, generationCursor: null, proposalCursor: null, proposalId: null, proposalVersion: null };
     render(<WorkflowPanels api={fakeAtlas({ generations: vi.fn(async () => ({ ...generations, items: generationItems })), proposals: vi.fn(async () => ({ ...proposals, items: proposalItems })) })} campaign={campaigns.campaigns[0]} route={route} revision={headRevision} navigate={vi.fn()} block={vi.fn()} />);
     await expect(screen.findByText("In progress", { exact: false })).resolves.toBeVisible();
     for (const text of ["Draft ready, not canon", "Failed, no Draft published", "Cancelled, no Draft published", "Rejected, not published", "Conflict, not published", "Published to revision revision_three", "Quarantined, publication not confirmed", "Stale base"]) expect(screen.getAllByText(text, { exact: false })[0]).toBeVisible();
