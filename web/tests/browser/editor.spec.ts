@@ -195,6 +195,9 @@ test("approval conflicts close the dialog and focus the editor error", async ({ 
   const errorHeading = editor.getByRole("heading", { name: "Editor error" });
   await expect(errorHeading).toBeVisible();
   await expect(errorHeading).toBeFocused();
+  await expect(editor.locator(".editor-review").getByRole("button", { name: "Reject exact proposal" })).toBeDisabled();
+  await expect(editor.locator(".editor-review").getByRole("button", { name: "Approve and publish exact proposal" })).toBeDisabled();
+  await expect(editor.locator(".editor-review").getByRole("button", { name: "Create correction/rebase" })).toBeEnabled();
 });
 
 test("rejection transport errors close the dialog and focus the editor error", async ({ page }) => {
