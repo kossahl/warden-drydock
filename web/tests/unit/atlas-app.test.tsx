@@ -64,6 +64,18 @@ describe("Campaign Atlas browser experience", () => {
     expect(window.location.search).not.toContain("cursor=");
   });
 
+  it("keeps an open create proposal when searching records", async () => {
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records?revision=revision_two&proposal=proposal_create&version=1");
+    render(<App atlasApi={fakeAtlas()} providerReadiness={async () => readinessUnavailable} />);
+    const search = await screen.findByLabelText("Search campaign records");
+    await screen.findByText("2 matching records.");
+    fireEvent.change(search, { target: { value: "station" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(window.location.search).toContain("q=station"));
+    expect(window.location.search).toContain("proposal=proposal_create");
+    expect(window.location.search).toContain("version=1");
+  });
+
   it("renders safe Markdown, rejects unsafe links, and discloses exact source text", async () => {
     window.history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_two");
     const { container } = render(<App atlasApi={fakeAtlas()} providerReadiness={async () => readinessUnavailable} />);
