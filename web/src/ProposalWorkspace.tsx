@@ -112,6 +112,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
             setCampaign(loadedCampaign); setRecord(null); setRecordContentDigest(null);
             if (currentGeneration?.context.scope === "record" && currentGeneration.context.record_id === currentRecordId) { setGeneration(null); setStreamDraft(""); }
             if (currentProposal?.exact_diff[0]?.subject_id === currentRecordId) { setProposal(null); setCorrectedContent(""); }
+            return;
           }
           throw failure;
         }

@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { App } from "../../src/App";
 import { ProposalWorkspace } from "../../src/ProposalWorkspace";
 import type { AtlasApi } from "../../src/api/atlasClient";
-import type { SliceApi } from "../../src/api/client";
+import { ApiError, type SliceApi } from "../../src/api/client";
 import type { AtlasCampaignItem, CampaignRevisionView, GenerationEvent, GenerationView, ProposalApprovalResult, ProposalView, ProviderReadiness, RecordView } from "../../src/contracts/v2";
 
 const hex = (value: string) => value.repeat(64);
@@ -354,6 +354,35 @@ describe("proposal browser slice", () => {
     expect(screen.getByText("# Updated Campaign")).toBeVisible();
     expect(api.readRevision).toHaveBeenCalledWith("campaign_alpha", "revision_beta");
     expect(api.readRecord).toHaveBeenCalledWith("campaign_alpha", "revision_beta", "campaign-main");
+  });
+
+  it.each([
+    ["not_found", false],
+    ["record_not_found", false],
+    ["unexpected_failure", true],
+  ])("handles hidden refresh record failure %s", async (code, showsFailure) => {
+    const latestCampaign = { ...campaign, viewed_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1"), validation_status: "passed" as const }, head_revision: "revision_beta" };
+    const latestAtlasCampaign = { ...atlasCampaign, head_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1") }, projected_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1") } };
+    let mutated = false;
+    const atlasApi = { campaigns: vi.fn(async () => ({ contract_name: "atlas_campaign_collection" as const, contract_version: 2 as const, campaigns: [mutated ? latestAtlasCampaign : atlasCampaign] })) } as unknown as AtlasApi;
+    const api = fakeApi({
+      readRevision: vi.fn(async (_campaignId, revisionId) => revisionId === "revision_beta" ? latestCampaign : campaign),
+      readRecord: vi.fn(async (_campaignId, revisionId) => revisionId === "revision_beta" ? (() => { throw new ApiError(404, code); })() : record),
+    });
+    const view = render(<ProposalWorkspace api={api} atlasApi={atlasApi} />);
+    await screen.findByText("Provider: Ready");
+    fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
+    await screen.findByRole("heading", { name: "Synthetic Campaign" });
+
+    view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} active={false} />);
+    mutated = true;
+    window.dispatchEvent(new Event("drydock:campaign-mutated"));
+    view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} />);
+
+    await waitFor(() => expect(api.readRecord).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText("Opening persisted work")).not.toBeInTheDocument());
+    if (showsFailure) expect(screen.getByRole("alert")).toHaveTextContent(`Request failed (${code}).`);
+    else expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("ignores an older hidden refresh response after a newer mutation", async () => {
