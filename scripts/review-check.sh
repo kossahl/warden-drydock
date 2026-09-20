@@ -98,6 +98,12 @@ check_origin() {
   fi
 }
 
+is_allowed_eol_attribute() {
+  [ "$1" = "scripts/review-check.sh" ] \
+    && [ "$2" = "eol" ] \
+    && [ "$3" = "lf" ]
+}
+
 check_source_guards() {
   check_origin
 
@@ -213,9 +219,7 @@ done < <(
 while IFS= read -r -d '' attribute_path \
   && IFS= read -r -d '' attribute_name \
   && IFS= read -r -d '' attribute_value; do
-  if [ "$attribute_path" = "scripts/review-check.sh" ] \
-    && [ "$attribute_name" = "eol" ] \
-    && [ "$attribute_value" = "lf" ]; then
+  if is_allowed_eol_attribute "$attribute_path" "$attribute_name" "$attribute_value"; then
     continue
   fi
   if [ "$attribute_value" != unspecified ] && [ "$attribute_value" != unset ]; then
