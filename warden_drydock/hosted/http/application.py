@@ -1225,6 +1225,34 @@ class SliceApplication:
         except ReceiptConflict as exc:
             raise HTTPFailure(409, "idempotency_digest_conflict", "idempotency_digest_conflict", operation) from exc
 
+    @staticmethod
+    def _normalize_proposal_replay(response: dict) -> dict:
+        """Normalize legacy proposal views without rewriting their receipts."""
+        normalized = deepcopy(response)
+
+        def visit(value: object) -> None:
+            if isinstance(value, dict):
+                if value.get("contract_name") == "proposal_view":
+                    for change in value.get("exact_diff", ()):
+                        if isinstance(change, dict):
+                            for field in ("before_content", "after_content"):
+                                if isinstance(change.get(field), str):
+                                    change[field] = normalize_text(change[field])
+                for child in value.values():
+                    visit(child)
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child)
+
+        visit(normalized)
+        return normalized
+
+    def _proposal_replay(self, operation: str, key: str, digest: str):
+        replay = self._replay(operation, key, digest)
+        if replay is None:
+            return None
+        return replay[0], self._normalize_proposal_replay(replay[1])
+
     def _store(self, operation: str, key: str, digest: str, status: int, response: dict) -> None:
         try:
             self.receipts.store(operation, key, digest, status, response)
@@ -2837,7 +2865,7 @@ class SliceApplication:
         context = {"generation": generation, "record": record, "proposal": view,
                    "path_params": {"generation_id": generation_id}}
         self._semantic(payload, context=context, stage="proposal_create")
-        replay = self._replay("proposal_create", payload["idempotency_key"], payload["payload_digest"])
+        replay = self._proposal_replay("proposal_create", payload["idempotency_key"], payload["payload_digest"])
         if replay:
             return 200, replay[1]
         if self._abandoned("proposal_create", payload["idempotency_key"], payload["payload_digest"]):
@@ -2941,7 +2969,7 @@ class SliceApplication:
         current = self._proposal_item(proposal_id, version)
         current_view = self._proposal_view(current)
         self._semantic(payload, context={"proposal": current_view, "path_params": {"proposal_id": proposal_id, "proposal_version": version}}, stage="proposal_correct")
-        replay = self._replay("proposal_correct", operation["idempotency_key"], operation["payload_digest"])
+        replay = self._proposal_replay("proposal_correct", operation["idempotency_key"], operation["payload_digest"])
         if replay:
             return 200, replay[1]
         change = current.changes[0]
@@ -2991,7 +3019,7 @@ class SliceApplication:
         operation = payload["operation_request"]
         current = self._proposal_item(proposal_id, version)
         self._semantic(payload, context={"proposal": self._proposal_view(current), "path_params": {"proposal_id": proposal_id, "proposal_version": version}}, stage="proposal_reject")
-        replay = self._replay("proposal_reject", operation["idempotency_key"], operation["payload_digest"])
+        replay = self._proposal_replay("proposal_reject", operation["idempotency_key"], operation["payload_digest"])
         if replay:
             return 200, replay[1]
         if self._abandoned("proposal_reject", operation["idempotency_key"], operation["payload_digest"]) and current.status is ProposalStatus.REJECTED:
@@ -3020,7 +3048,7 @@ class SliceApplication:
         current = self._proposal_item(proposal_id, version)
         current_view = self._proposal_view(current)
         self._semantic(payload, context={"proposal": current_view, "path_params": {"proposal_id": proposal_id, "proposal_version": version}}, stage="proposal_approve")
-        replay = self._replay("proposal_approve", operation["idempotency_key"], operation["payload_digest"])
+        replay = self._proposal_replay("proposal_approve", operation["idempotency_key"], operation["payload_digest"])
         if replay:
             response = replay[1]
             response["exact_replay"] = True
