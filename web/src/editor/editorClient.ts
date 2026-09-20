@@ -8,10 +8,13 @@ export interface EditorSection { section_id: string; body: string; }
 export interface EditorConnection { connection_id: string; target_record_id: string; relationship: string; state: string; context: string; }
 export const nextConnectionId = (connections: EditorConnection[]) => {
   const used = new Set(connections.map((connection) => connection.connection_id));
-  let suffix = 1;
+  let suffix = 1n;
   for (const connectionId of used) {
     const match = /^connection_(\d+)$/.exec(connectionId);
-    if (match) suffix = Math.max(suffix, Number(match[1]) + 1);
+    if (match) {
+      const nextSuffix = BigInt(match[1]) + 1n;
+      if (nextSuffix > suffix) suffix = nextSuffix;
+    }
   }
   let candidate = `connection_${suffix}`;
   while (used.has(candidate)) candidate = `connection_${++suffix}`;

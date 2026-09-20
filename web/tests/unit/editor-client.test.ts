@@ -45,6 +45,16 @@ describe("record editor client bindings", () => {
     expect(next).toMatch(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/);
   });
 
+  it("allocates after adjacent suffixes beyond safe integer precision", () => {
+    const connections = [
+      { connection_id: "connection_9007199254740992", target_record_id: "one", relationship: "related-to", state: "current", context: "One" },
+      { connection_id: "connection_9007199254740993", target_record_id: "two", relationship: "related-to", state: "current", context: "Two" },
+    ];
+    const next = nextConnectionId(connections);
+    expect(next).toBe("connection_9007199254740994");
+    expect(next).toMatch(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/);
+  });
+
   it("sends a closed removal request and carries the CSRF token after the first response", async () => {
     const response = { contract_name: "editor_proposal_view", contract_version: 1 };
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => ({
