@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "../../src/App";
 import { ProposalWorkspace } from "../../src/ProposalWorkspace";
 import type { AtlasApi } from "../../src/api/atlasClient";
@@ -37,6 +37,7 @@ async function openRecord(api: SliceApi) {
   await screen.findByText("Provider: Ready");
   fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
   await screen.findByRole("heading", { level: 1, name: "Synthetic Campaign" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Submit Ask" })).toBeEnabled());
 }
 
 async function createDraftAndProposal(api: SliceApi) {
@@ -345,10 +346,12 @@ describe("proposal browser slice", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
     await screen.findByRole("heading", { name: "Synthetic Campaign" });
 
-    view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} active={false} />);
+    await act(async () => { view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} active={false} />); });
     mutated = true;
-    window.dispatchEvent(new Event("drydock:campaign-mutated"));
-    view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} />);
+    await act(async () => {
+      window.dispatchEvent(new Event("drydock:campaign-mutated"));
+      view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} />);
+    });
 
     expect(await screen.findByRole("heading", { name: "Updated Campaign" })).toBeVisible();
     expect(screen.getByText("# Updated Campaign")).toBeVisible();
@@ -374,10 +377,12 @@ describe("proposal browser slice", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
     await screen.findByRole("heading", { name: "Synthetic Campaign" });
 
-    view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} active={false} />);
+    await act(async () => { view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} active={false} />); });
     mutated = true;
-    window.dispatchEvent(new Event("drydock:campaign-mutated"));
-    view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} />);
+    await act(async () => {
+      window.dispatchEvent(new Event("drydock:campaign-mutated"));
+      view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} />);
+    });
 
     await waitFor(() => expect(api.readRecord).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByText("Opening persisted work")).not.toBeInTheDocument());
@@ -402,14 +407,18 @@ describe("proposal browser slice", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
     await screen.findByRole("heading", { name: "Synthetic Campaign" });
 
-    view.rerender(<ProposalWorkspace api={api} atlasApi={{ campaigns } as unknown as AtlasApi} active={false} />);
-    window.dispatchEvent(new Event("drydock:campaign-mutated"));
-    view.rerender(<ProposalWorkspace api={api} atlasApi={{ campaigns } as unknown as AtlasApi} />);
+    await act(async () => { view.rerender(<ProposalWorkspace api={api} atlasApi={{ campaigns } as unknown as AtlasApi} active={false} />); });
+    await act(async () => {
+      window.dispatchEvent(new Event("drydock:campaign-mutated"));
+      view.rerender(<ProposalWorkspace api={api} atlasApi={{ campaigns } as unknown as AtlasApi} />);
+    });
     await waitFor(() => expect(readRevision).toHaveBeenCalledTimes(1));
 
-    view.rerender(<ProposalWorkspace api={api} atlasApi={{ campaigns } as unknown as AtlasApi} active={false} />);
-    window.dispatchEvent(new Event("drydock:campaign-mutated"));
-    view.rerender(<ProposalWorkspace api={api} atlasApi={{ campaigns } as unknown as AtlasApi} />);
+    await act(async () => { view.rerender(<ProposalWorkspace api={api} atlasApi={{ campaigns } as unknown as AtlasApi} active={false} />); });
+    await act(async () => {
+      window.dispatchEvent(new Event("drydock:campaign-mutated"));
+      view.rerender(<ProposalWorkspace api={api} atlasApi={{ campaigns } as unknown as AtlasApi} />);
+    });
     await waitFor(() => expect(readRevision).toHaveBeenCalledTimes(2));
 
     newerRead.resolve(newerCampaign);
