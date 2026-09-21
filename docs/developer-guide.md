@@ -53,7 +53,7 @@ adapter.
 
 ## Local development
 
-Warden Drydock requires Python 3.11 or newer and has no runtime dependencies.
+Warden Drydock requires Python 3.14 or newer and has no runtime dependencies.
 
 ```bash
 python -m pip install -e ".[dev]"

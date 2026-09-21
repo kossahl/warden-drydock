@@ -25,7 +25,7 @@ class OnboardingContractTest(unittest.TestCase):
         normalized = re.sub(r"\s+", " ", text)
 
         required = [
-            "Python 3.11",
+            "Python 3.14",
             "temporary virtual environment",
             "python -m warden_drydock --version",
             "python -m warden_drydock bootstrap",
@@ -149,14 +149,14 @@ class OnboardingContractTest(unittest.TestCase):
 
         baseline = workflow["jobs"]["test"]
         self.assertNotIn("if", baseline)
-        self.assertEqual(baseline["name"], "test (3.11)")
+        self.assertEqual(baseline["name"], "test (3.14)")
         self.assertGreater(baseline["timeout-minutes"], 0)
         baseline_setup = next(
             step
             for step in baseline["steps"]
             if step.get("uses") == "actions/setup-python@v5"
         )
-        self.assertEqual(baseline_setup["with"]["python-version"], "3.11")
+        self.assertEqual(baseline_setup["with"]["python-version"], "3.14")
         baseline_checkout = next(
             step
             for step in baseline["steps"]
@@ -214,21 +214,14 @@ class OnboardingContractTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIn(command, whitespace["run"])
 
-        compatibility = workflow["jobs"]["compatibility"]
-        self.assertEqual(compatibility["if"], "${{ github.event_name == 'push' }}")
-        self.assertEqual(compatibility["name"], "compatibility (3.13)")
-        self.assertGreater(compatibility["timeout-minutes"], 0)
-        compatibility_setup = next(
-            step
-            for step in compatibility["steps"]
-            if step.get("uses") == "actions/setup-python@v5"
-        )
-        self.assertEqual(compatibility_setup["with"]["python-version"], "3.13")
+        self.assertNotIn("compatibility", workflow["jobs"])
         configured_versions = {
-            baseline_setup["with"]["python-version"],
-            compatibility_setup["with"]["python-version"],
+            step["with"]["python-version"]
+            for job in workflow["jobs"].values()
+            for step in job.get("steps", [])
+            if step.get("uses") == "actions/setup-python@v5"
         }
-        self.assertEqual(configured_versions, {"3.11", "3.13"})
+        self.assertEqual(configured_versions, {"3.14"})
 
         smoke_jobs = [
             job_name

@@ -22,7 +22,7 @@ Follow this procedure exactly:
 1. Record the absolute path of the current directory as the campaign target.
    Confirm that it is empty. If it is not empty, stop without changing anything;
    never look for or use an overwrite bypass.
-2. Before asking campaign questions, verify that Git and Python 3.11 or newer
+2. Before asking campaign questions, verify that Git and Python 3.14 or newer
    are available. If either prerequisite is missing, stop and tell me exactly
    what must be installed.
 3. Create a unique temporary virtual environment in the operating system's

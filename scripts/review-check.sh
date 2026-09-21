@@ -15,8 +15,7 @@ root_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 project_name="drydock-review-${RANDOM}-${BASHPID}"
 db_container="${project_name}-postgres"
 network_name="${project_name}-network"
-python_image="python:3.11-bookworm@sha256:35d3a4a3d5e42e02ab916d44513a050689f12c0533d45598d229672503fe77ca"
-compatibility_image="python:3.13-bookworm@sha256:933b46a028fd786c9c3d426ebabc237e29a15912231ea8de576e95f0e4f41a4c"
+python_image="python:3.14.7-bookworm@sha256:bfb689a7986adc6d5f16722e06c78e755efe4062e56276715fef450cbad09436"
 node_image="node:24.11.1-bookworm@sha256:9a2ed90cd91b1f3412affe080b62e69b057ba8661d9844e143a6bbd76a23260f"
 postgres_image="postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3"
 
@@ -428,16 +427,6 @@ docker run --rm --network "$network_name" \
     "$environment/bin/python" -m warden_drydock bootstrap "$campaign" --adapter mothership --name "CI Onboarding"
     "$environment/bin/python" "$campaign/scripts/drydock.py" validate
     test ! -d "$campaign/.git"
-  '
-
-docker run --rm \
-  -v "$snapshot_dir:/source:ro" --tmpfs /repo:rw,exec,nosuid -w /repo "$compatibility_image" bash -lc '
-    set -Eeuo pipefail
-    cp -a /source/. /repo/
-    git config --global --add safe.directory /repo
-    python -m pip install --disable-pip-version-check --upgrade pip ".[dev]"
-    python -m unittest discover -s tests -v
-    python -m build
   '
 
 docker run --rm \

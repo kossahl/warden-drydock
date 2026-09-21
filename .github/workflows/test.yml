@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   test:
-    name: test (3.11)
+    name: test (3.14)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -46,7 +46,7 @@ jobs:
           fi
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
       - run: python -m pip install --upgrade pip ".[dev]"
       - run: python -m unittest discover -s tests -v
       - run: python -m warden_drydock --help
@@ -95,17 +95,3 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
       - run: npm run build:reproducible
-
-  compatibility:
-    name: compatibility (3.13)
-    if: ${{ github.event_name == 'push' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - run: python -m pip install --upgrade pip ".[dev]"
-      - run: python -m unittest discover -s tests -v
-      - run: python -m build

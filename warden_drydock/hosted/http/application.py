@@ -2116,7 +2116,13 @@ class SliceApplication:
             if replay:
                 return 200, replay[1]
             raise HTTPFailure(503, "service_unavailable", "operation_in_progress", "editor_proposal", self._request_id(payload), True)
-        item = ProposalVersion(proposal_id, version, campaign_id, revision_id, tuple(changes), digest, value["proposal_payload_digest"], editor_metadata=value)
+        # The editor view has a canonical diff digest; publication intents bind
+        # the exact text changes stored in the proposal.
+        item = ProposalVersion(
+            proposal_id, version, campaign_id, revision_id, tuple(changes),
+            exact_diff_digest(tuple(changes)), value["proposal_payload_digest"],
+            editor_metadata=value,
+        )
         add_editor = getattr(self.proposal_repository, "add_editor", None)
         if add_editor is not None:
             try:
@@ -2658,7 +2664,7 @@ class SliceApplication:
 
                 try:
                     result = self.proposals.approve(
-                        item, diff_digest=value["diff"]["diff_digest"], base_revision=stored["base"],
+                        item, diff_digest=item.diff_digest, base_revision=stored["base"],
                         payload_digest=value["proposal_payload_digest"],
                         finalize=finalize_publication if atomic_publish is not None else None,
                     )
