@@ -18,7 +18,7 @@ from warden_drydock.hosted.http.contracts import canonical_digest, normalize_tex
 from warden_drydock.hosted.http.editor import document_digest
 from warden_drydock.hosted.proposals.service import ProposalStatus
 from warden_drydock.hosted.engine import Status
-from warden_drydock.hosted.operations.server import Handler
+from warden_drydock.hosted.operations.server import Handler, _editor_error_response
 from warden_drydock.hosted.http.repository import InMemoryHTTPRepository
 from warden_drydock.hosted.revisions import InMemoryWorkflowRepository
 
@@ -1399,6 +1399,21 @@ class SliceApplicationTests(unittest.TestCase):
             {"finding_id", "code", "severity", "location", "message", "recovery_action", "retryable"},
             set(removal_payload["error"]["findings"][0]),
         )
+
+    def test_editor_error_findings_are_type_sanitized(self) -> None:
+        payload = _editor_error_response({"error": {
+            "category": "proposal_validation_failure",
+            "code": "proposal_validation_failure",
+            "findings": [
+                {"finding_id": "valid", "code": "validation", "severity": "error",
+                 "location": "connections", "retryable": False, "message": "Review connections."},
+                {"finding_id": "invalid", "code": [], "severity": "error",
+                 "location": "connections", "retryable": False},
+            ],
+        }})
+        self.assertEqual([{"finding_id": "valid", "code": "validation", "severity": "error",
+                           "location": "connections", "retryable": False, "message": "Review connections."}],
+                         payload["error"]["findings"])
 
 
 if __name__ == "__main__":
