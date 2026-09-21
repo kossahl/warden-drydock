@@ -82,6 +82,8 @@ jobs:
           POSTGRES_DB: drydock
           POSTGRES_USER: drydock
           POSTGRES_PASSWORD: drydock
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd "pg_isready -U drydock -d drydock"
           --health-interval 5s
