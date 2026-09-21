@@ -213,7 +213,10 @@ class PostgresWorkflowRepository:
                 )
             except (AttributeError, KeyError, TypeError, ValueError):
                 raise PublicationIntentError("editor proposal change binding mismatch") from None
-            if change_digest != intent.change_digest:
+            # Editor proposals bind the intent to their editor diff digest,
+            # while older callers bind it to the exact engine diff digest.
+            # Accept either verified representation during recovery.
+            if proposal[5] != intent.change_digest and change_digest != intent.change_digest:
                 raise PublicationIntentError("editor proposal change binding mismatch")
             if (
                 not isinstance(editor_metadata, dict)

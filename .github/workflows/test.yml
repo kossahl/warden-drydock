@@ -71,6 +71,39 @@ jobs:
           "$ENVIRONMENT/bin/python" "$CAMPAIGN/scripts/drydock.py" validate
           test ! -d "$CAMPAIGN/.git"
 
+  postgres:
+    name: postgres (3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17.6-bookworm
+        env:
+          POSTGRES_DB: drydock
+          POSTGRES_USER: drydock
+          POSTGRES_PASSWORD: drydock
+        options: >-
+          --health-cmd "pg_isready -U drydock -d drydock"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://drydock:drydock@localhost:5432/drydock
+      DRYDOCK_TEST_DATABASE_URL: postgresql://drydock:drydock@localhost:5432/drydock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+      - run: python -m pip install --upgrade pip ".[dev,postgres]"
+      - name: Run database migrations
+        run: python -m warden_drydock.hosted.operations.migrate
+      - run: python -m unittest discover -s tests -v
+
   frontend:
     name: frontend (Node 24.11.1)
     runs-on: ubuntu-latest
