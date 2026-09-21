@@ -90,7 +90,7 @@ After changes, every agent must run the canonical local CI gate:
 ./scripts/review-check.sh
 ```
 
-It runs the pinned Python 3.11 and 3.13 lanes, CLI/help checks, package and
+It runs the pinned Python 3.14 lane, CLI/help checks, package and
 clean-onboarding smoke tests, frontend type/unit/browser/reproducible-build
 checks, live PostgreSQL checks, and whitespace checks. Focused tests may be
 used during iteration but do not replace this gate. It requires Docker and a

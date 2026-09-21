@@ -69,7 +69,7 @@ agents operate, update `AGENTS.md` in the same PR.
 
 ## Local environment
 
-Warden Drydock requires Python 3.11 or newer and has no runtime dependencies.
+Warden Drydock requires Python 3.14 or newer and has no runtime dependencies.
 
 ```bash
 python -m pip install -e ".[dev]"
@@ -78,7 +78,7 @@ python -m warden_drydock --help
 ```
 
 Before opening a PR, run `./scripts/review-check.sh`; Docker with a running
-daemon is required. It uses digest-pinned Python 3.11/3.13 containers, plus
+daemon is required. It uses a digest-pinned Python 3.14 container, plus
 version-pinned Node/npm tooling and PostgreSQL containers to mirror CI,
 including Chromium browser tests, the clean onboarding smoke test, live
 PostgreSQL checks, and whitespace validation. The mounted checkout may receive
@@ -93,13 +93,12 @@ invocation.
 
 ## Continuous integration scope
 
-Every pull request runs one canonical Python 3.11 lane. That lane checks the
+Every pull request runs one canonical Python 3.14 lane. That lane checks the
 committed change range for whitespace errors, runs the full unit suite and CLI
 help, builds the package, and installs the built wheel in a clean environment
 for the standalone onboarding smoke test. Pushes to `master` and version tags
-(`v*`) run the same canonical lane plus a Python 3.13 compatibility lane that
-exercises the unit and package-build boundaries. Feature-branch pushes do not
-start a second run alongside the pull-request run.
+(`v*`) run the same canonical lane. Feature-branch pushes do not start a
+second run alongside the pull-request run.
 
 CI establishes executable behavior and machine-checkable structure, schema,
 and references. Governance tests preserve those deterministic contracts, such

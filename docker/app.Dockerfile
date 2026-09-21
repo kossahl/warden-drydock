@@ -6,7 +6,7 @@ COPY web/ ./
 COPY warden_drydock/data/ /build/warden_drydock/data/
 RUN npm run build
 
-FROM python:3.13.7-slim-bookworm AS app
+FROM python:3.14.7-slim-bookworm AS app
 ARG APP_UID=10001
 ARG APP_GID=10001
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
