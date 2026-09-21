@@ -303,6 +303,26 @@ describe("proposal browser slice", () => {
     window.history.replaceState(null, "", "/");
   });
 
+  it("keeps a Draft deep link inside the campaign Drafts route", async () => {
+    window.history.replaceState(null, "", "/campaigns/campaign_alpha/drafts?revision=revision_alpha&generation=generation_alpha");
+    const api = fakeApi({ readGeneration: vi.fn(async () => ({ ...complete, generation_id: "generation_alpha", context: { scope: "campaign" as const } })) });
+    render(<App api={api} atlasApi={fakeAtlas([atlasCampaign])} />);
+    expect(await screen.findByRole("heading", { name: "Campaign Draft" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Back to Drafts" })).toHaveAttribute("href", "/campaigns/campaign_alpha/drafts?revision=revision_alpha");
+    expect(api.readGeneration).toHaveBeenCalledWith("generation_alpha");
+    expect(api.readRevision).toHaveBeenCalledWith("campaign_alpha", "revision_alpha");
+    cleanup(); window.history.replaceState(null, "", "/");
+  });
+
+  it("rejects a workflow item from a different campaign", async () => {
+    window.history.replaceState(null, "", "/campaigns/campaign_beta/drafts?revision=revision_alpha&generation=generation_alpha");
+    const api = fakeApi({ readGeneration: vi.fn(async () => ({ ...complete, generation_id: "generation_alpha", context: { scope: "campaign" as const } })) });
+    render(<App api={api} atlasApi={fakeAtlas([atlasCampaign])} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("requested campaign workflow item could not be opened");
+    expect(screen.queryByRole("heading", { name: "Campaign Draft" })).not.toBeInTheDocument();
+    cleanup(); window.history.replaceState(null, "", "/");
+  });
+
   it.each([
     ["Ask", { ...complete, action: "ask" as const }, false, false],
     ["Check", { ...complete, action: "check" as const }, false, false],

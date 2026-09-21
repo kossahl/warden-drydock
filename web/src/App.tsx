@@ -26,11 +26,13 @@ export function navigate(href: string, replace = false) {
 export function App({ api = httpSliceApi, atlasApi = httpAtlasApi, providerReadiness }: { api?: SliceApi; atlasApi?: AtlasApi; providerReadiness?: () => Promise<ProviderState> }) {
   const location = useSyncExternalStore(subscribeRoute, routeSnapshot, () => "/");
   const atlasActive = location.split("?", 1)[0].startsWith("/campaigns/");
+  const routeQuery = new URLSearchParams(location.split("?", 2)[1] ?? "");
+  const workflowItem = atlasActive && /^\/campaigns\/[^/]+\/(drafts|proposals)$/.test(location.split("?", 1)[0]) && (routeQuery.has("generation") || (routeQuery.has("proposal") && Number.isInteger(Number(routeQuery.get("version"))) && Number(routeQuery.get("version")) > 0));
 
   return (
     <>
-      <ProposalWorkspace api={api} atlasApi={atlasApi} active={!atlasActive} navigate={navigate} location={location} />
-      {atlasActive && <AtlasApp api={atlasApi} sliceApi={api} readiness={providerReadiness ?? api.readiness} location={location} navigate={navigate} />}
+      <ProposalWorkspace api={api} atlasApi={atlasApi} active={!atlasActive || workflowItem} navigate={navigate} location={location} />
+      {atlasActive && !workflowItem && <AtlasApp api={atlasApi} sliceApi={api} readiness={providerReadiness ?? api.readiness} location={location} navigate={navigate} />}
     </>
   );
 }

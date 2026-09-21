@@ -9,7 +9,9 @@ type BusyAction = "campaign" | "consent" | "ask" | "proposal" | "correct" | "rej
 
 const friendlyError = (error: unknown): string => {
   const code = error instanceof Error ? error.message : "request_failed";
-  return code === "explicit_consent_required" ? "Grounded AI needs your explicit consent." : `Request failed (${code}).`;
+  if (code === "explicit_consent_required") return "Grounded AI needs your explicit consent.";
+  if (code === "campaign_route_mismatch") return "The requested campaign workflow item could not be opened.";
+  return `Request failed (${code}).`;
 };
 
 async function exactRecordContext(record: RecordView): Promise<Extract<GenerationContext, { scope: "record" }>> {
@@ -42,6 +44,9 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const pendingCampaignRefresh = useRef(false);
   const campaignRefreshSequence = useRef(0);
   const hydratedLocation = useRef("");
+  const workflowRoute = new URL(location, "http://drydock.local").pathname.match(/^\/campaigns\/([^/]+)\/(drafts|proposals)$/);
+  const workflowCollection = workflowRoute?.[2] ?? null;
+  const workflowCampaignId = workflowRoute ? (() => { try { return decodeURIComponent(workflowRoute[1]); } catch { return ""; } })() : null;
   const uncertainGeneration = useRef<{ action: GenerationAction; prompt: string; generationId: string } | null>(null);
   const campaigns = useResource(active && !campaign ? () => atlasApi.campaigns() : null, [active, atlasApi, campaign]);
 
@@ -63,6 +68,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
       const loadedProposal = proposalId ? await api.readProposal(proposalId, version) : null;
       const loadedGeneration = await api.readGeneration(loadedProposal?.generation_id ?? generationId!);
       const loadedCampaign = await api.readRevision(loadedGeneration.campaign_id, loadedGeneration.source_revision);
+      if (workflowCollection && (!workflowCampaignId || loadedGeneration.campaign_id !== workflowCampaignId || loadedCampaign.campaign_id !== workflowCampaignId || (loadedProposal && loadedProposal.campaign_id !== workflowCampaignId))) throw new Error("campaign_route_mismatch");
       const subjectId = loadedProposal?.exact_diff[0].subject_id ?? (loadedGeneration.context.scope === "record" ? loadedGeneration.context.record_id : null);
       const loadedRecord = subjectId ? await api.readRecord(loadedGeneration.campaign_id, loadedGeneration.source_revision, subjectId) : null;
       const loadedDigest = loadedRecord ? (await exactRecordContext(loadedRecord)).content_digest : null;
@@ -229,6 +235,10 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
         : !readiness.consent_current
           ? "Consent required"
           : readiness.ai_available ? "Ready" : "Unavailable";
+  const workflowBackHref = workflowCollection && campaign
+    ? `/campaigns/${encodeURIComponent(campaign.campaign_id)}/${workflowCollection}?revision=${encodeURIComponent(campaign.viewed_revision.revision_id)}`
+    : null;
+  const workflowBackLabel = workflowCollection === "drafts" ? "Back to Drafts" : "Back to Proposals";
 
   return (
     <div className="app-shell" hidden={!active}>
@@ -269,7 +279,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
               <RevisionStatus viewed={campaign.viewed_revision} head={campaign.head_revision} />
               <AuthorityBadge authority={record.authority} />
             </aside>
-            <p><a href={`/campaigns/${encodeURIComponent(campaign.campaign_id)}?revision=${encodeURIComponent(campaign.viewed_revision.revision_id)}`} onClick={(event: MouseEvent<HTMLAnchorElement>) => { if (!navigate || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); navigate(event.currentTarget.getAttribute("href")!); }}>Browse Campaign Atlas</a></p>
+            <p><a href={workflowBackHref ?? `/campaigns/${encodeURIComponent(campaign.campaign_id)}?revision=${encodeURIComponent(campaign.viewed_revision.revision_id)}`} onClick={(event: MouseEvent<HTMLAnchorElement>) => { if (!navigate || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); navigate(event.currentTarget.getAttribute("href")!); }}>{workflowBackHref ? workflowBackLabel : "Browse Campaign Atlas"}</a></p>
             <p className="eyebrow">{campaign.campaign_name} · {record.record_type}</p>
             <h1>{record.name}</h1>
             <p className="revision-id">Source revision <code>{record.revision_id}</code></p>
@@ -310,7 +320,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
         ) : generation ? (
           <>
             <aside aria-label="Revision and authority" className="authority-strip"><RevisionStatus viewed={campaign.viewed_revision} head={campaign.head_revision} /><AuthorityBadge authority="draft" /></aside>
-            <p className="eyebrow">{campaign.campaign_name}</p><h1>Campaign Draft</h1><p>Campaign context · source revision <code>{generation.source_revision}</code></p>
+            <p><a href={workflowBackHref ?? `/campaigns/${encodeURIComponent(campaign.campaign_id)}?revision=${encodeURIComponent(campaign.viewed_revision.revision_id)}`} onClick={(event: MouseEvent<HTMLAnchorElement>) => { if (!navigate || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); navigate(event.currentTarget.getAttribute("href")!); }}>{workflowBackHref ? workflowBackLabel : "Browse Campaign Atlas"}</a></p><p className="eyebrow">{campaign.campaign_name}</p><h1>Campaign Draft</h1><p>Campaign context · source revision <code>{generation.source_revision}</code></p>
             <p className="stream-state" role="status">{generation.status === "complete" ? "Draft ready, not canon" : generation.status === "pending" ? "In progress" : `${generation.status}, no Draft published`}.</p>
             <section className="card sources" aria-labelledby="sources-heading"><h2 id="sources-heading">Sources</h2><p>Action <code>{generation.action}</code>. Context <code>campaign</code>.</p><p>Source set <code>{generation.source_set_digest}</code></p><ol>{generation.sources.map((source) => <li key={source.source_id}><code>{source.source_id}</code> <AuthorityBadge authority={source.authority} /> Revision <code>{source.revision_id}</code><details><summary>Inspect excerpt</summary><pre>{source.excerpt}</pre></details></li>)}</ol></section>
             {generation.terminal_content && <section className="card draft" aria-labelledby="draft-heading"><div className="section-title"><h2 id="draft-heading">Grounded Draft</h2><AuthorityBadge authority="draft" /></div><p>This text is not canon. Campaign Drafts cannot create record proposals.</p><pre>{generation.terminal_content}</pre></section>}
