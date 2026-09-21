@@ -288,7 +288,10 @@ test("editor action errors focus the editor error without reducing accessibility
       return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: editorRecord }) });
     }
     if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) {
-      return route.fulfill({ status: 422, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ error: { code: "proposal_validation_failure", category: "proposal_validation_failure" } }) });
+      return route.fulfill({ status: 422, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ error: { code: "proposal_validation_failure", category: "proposal_validation_failure", findings: [
+        { finding_id: "finding_relationship", code: "unsupported_connection_relationship", severity: "error", location: "connections.0.relationship", message: "This relationship type is not supported by the selected adapter.", recovery_action: "Choose a supported relationship.", retryable: false },
+        { finding_id: "finding_target", code: "unknown_connection_target", severity: "error", location: "connections.0.target_record_id", message: "The relationship target does not exist in this revision.", recovery_action: "Choose an existing record as the target.", retryable: false },
+      ] } }) });
     }
     return route.fallback();
   });
@@ -300,6 +303,9 @@ test("editor action errors focus the editor error without reducing accessibility
   const errorHeading = editor.getByRole("heading", { name: "Editor error" });
   await expect(errorHeading).toBeVisible();
   await expect(errorHeading).toBeFocused();
+  await expect(editor.getByRole("list", { name: "Validation findings" })).toContainText("connections.0.relationship");
+  await expect(editor.getByRole("list", { name: "Validation findings" })).toContainText("Choose a supported relationship.");
+  await expect(editor.getByRole("list", { name: "Validation findings" })).toContainText("connections.0.target_record_id");
   await expect(editor.getByLabel("Displayed name")).toBeEnabled();
 });
 
