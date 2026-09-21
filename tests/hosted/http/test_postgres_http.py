@@ -115,10 +115,11 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
             record_id = "record-editor"
             candidate = {
                 "record_id": record_id, "record_type": "npc",
+                "ownership": "campaign",
                 "displayed_name": "Editor PostgreSQL Record", "status": "draft",
                 "authority": "preparation",
                 "visibility": {"audience": "warden", "warden_only": True},
-                "fields": [{"field_id": "ownership", "value": "campaign"}],
+                "fields": [],
                 "sections": [{"section_id": "summary", "body": "Created through PostgreSQL."}],
                 "connections": [], "content_digest": "0" * 64,
             }
@@ -234,10 +235,11 @@ class PostgresHTTPReceiptIntegrationTests(unittest.TestCase):
             record_id = "record-editor-crash"
             candidate = {
                 "record_id": record_id, "record_type": "npc",
+                "ownership": "campaign",
                 "displayed_name": "Editor PostgreSQL Crash Record", "status": "draft",
                 "authority": "preparation",
                 "visibility": {"audience": "warden", "warden_only": True},
-                "fields": [{"field_id": "ownership", "value": "campaign"}],
+                "fields": [],
                 "sections": [{"section_id": "summary", "body": "Created through PostgreSQL crash recovery."}],
                 "connections": [], "content_digest": "0" * 64,
             }

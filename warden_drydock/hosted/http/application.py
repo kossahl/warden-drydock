@@ -27,6 +27,7 @@ from warden_drydock.hosted.engine import (
 )
 from warden_drydock.hosted.proposals.service import (
     InMemoryProposalRepository, ProposalService, ProposalStatus, ProposalVersion,
+    publication_digest,
 )
 from warden_drydock.hosted.projections import (
     ApprovedHistoryQuery, AtlasProjectionRebuilder, AtlasQueryService, Authority,
@@ -2927,8 +2928,7 @@ class SliceApplication:
 
     @staticmethod
     def _proposal_publication_digest(item: ProposalVersion) -> str:
-        """Return the proposal change digest bound into the publication intent."""
-        return item.diff_digest
+        return publication_digest(item)
 
     def _proposal_view(self, item: ProposalVersion) -> dict:
         change = item.changes[0]
@@ -3340,7 +3340,7 @@ class SliceApplication:
         _, tree_digest = canonicalize_tree(source)
         ordinal = campaign.revisions[item.base_revision].ordinal + 1
         revision_id = self._id("revision", item.proposal_id, item.version, item.diff_digest)
-        publication_digest = item.diff_digest
+        publication_digest = self._proposal_publication_digest(item)
         intent = PublicationIntent(
             self._id("intent", item.proposal_id, item.version),
             self._id("token", item.proposal_id, item.version),

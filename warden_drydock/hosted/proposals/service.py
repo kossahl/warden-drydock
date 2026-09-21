@@ -116,6 +116,16 @@ def _diff_digest(changes: tuple[ExactTextChange, ...]) -> str:
     return exact_diff_digest(changes)
 
 
+def publication_digest(version: ProposalVersion) -> str:
+    """Return the digest bound into the immutable publication intent."""
+    if (
+        isinstance(version.editor_metadata, dict)
+        and version.editor_metadata.get("contract_name") == "editor_proposal_view"
+    ):
+        return exact_diff_digest(version.changes)
+    return version.diff_digest
+
+
 class ProposalService:
     """Small immutable proposal state machine; authority remains with publisher."""
     def __init__(self, repository, *, head, stage, publish, verify_publication=None,
@@ -129,7 +139,7 @@ class ProposalService:
         if not isinstance(result, SnapshotManifest):
             raise ValueError("publication result is not a verified snapshot manifest")
         if (result.campaign_id, result.parent_revision, result.change_digest) != (
-            version.campaign_id, version.base_revision, version.diff_digest
+            version.campaign_id, version.base_revision, publication_digest(version)
         ):
             raise ValueError("publication result binding mismatch")
         return result
