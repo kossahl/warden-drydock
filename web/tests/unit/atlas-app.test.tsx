@@ -50,6 +50,9 @@ describe("Campaign Atlas browser experience", () => {
     expect(screen.getByRole("heading", { name: "Drafts" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Proposals" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Accepted (legacy) (1)" })).toBeVisible();
+    const aiPanel = screen.getByRole("heading", { name: "Grounded AI" }).closest("section")!;
+    const totals = screen.getByText("Records").closest("dl")!;
+    expect(aiPanel.compareDocumentPosition(totals) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("clears a cursor when search changes and keeps filters in the URL", async () => {
