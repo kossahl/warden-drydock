@@ -84,6 +84,7 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   expect(original.record.connections).toHaveLength(2);
 
   await page.goto(recordUrl("npc-source"));
+  await page.getByRole("button", { name: "Edit this record", exact: true }).click();
   await editor.getByLabel("summary", { exact: true }).fill("First\nsecond\nthird\nfourth\nfifth\nsixth\n");
   await editor.getByLabel("wants", { exact: true }).fill("Replacement second section.\n");
   const priorProposal = await submit("Save as proposal");
@@ -101,6 +102,7 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   expect((await read("npc-source", originalRevision)).record).toEqual(original.record);
 
   await page.goto(recordUrl("npc-target"));
+  await page.getByRole("button", { name: "Edit this record", exact: true }).click();
   await editor.getByRole("button", { name: "Load removal impact", exact: true }).click();
   await expect(editor.getByRole("button", { name: "Cancel removal", exact: true })).toBeVisible();
   await editor.getByRole("button", { name: "Cancel removal", exact: true }).click();

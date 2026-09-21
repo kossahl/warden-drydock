@@ -139,6 +139,9 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
 .relationship-list { padding-left: 1.5rem; }
 .wide-hidden { display: none; }
 .editor { min-width: 0; }
+.editor-surface { position: fixed; inset: clamp(.5rem, 3vw, 2rem); z-index: 20; overflow: auto; margin: 0; padding: 1rem; border: 2px solid #f4c95d; border-radius: .7rem; background: #0d1713; box-shadow: 0 1rem 4rem #000b; }
+.editor-surface-header { display: flex; justify-content: flex-end; margin-bottom: .5rem; }
+.editor-surface .editor { margin-top: 0; }
 .editor fieldset { min-width: 0; margin: 1rem 0; padding: 0; border: 0; }
 .editor legend { margin-bottom: .6rem; font-size: 1.15rem; font-weight: 800; }
 .editor details { margin: 1rem 0; padding: .8rem; border: 1px solid #365247; border-radius: .45rem; }

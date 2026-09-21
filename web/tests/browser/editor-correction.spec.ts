@@ -60,6 +60,7 @@ const removalProposal = (base: RevisionRef, version = 1, resolutions: Array<Reco
 });
 
 const editor = (page: Page) => page.locator(".editor").filter({ hasText: "Edit record" });
+const openRecordEditor = async (page: Page) => page.getByRole("button", { name: "Edit this record", exact: true }).click();
 
 type CorrectionRequest = {
   candidate?: { displayed_name?: string };
@@ -80,6 +81,7 @@ test("canceling a correction restores the draft and keeps the original proposal 
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const panel = editor(page);
   await panel.getByLabel("Displayed name").fill("Edited before proposal");
   await panel.getByRole("button", { name: "Save as proposal" }).click();
@@ -110,6 +112,7 @@ test("correction validation failure preserves entered content and blocks approva
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const panel = editor(page);
   await panel.getByLabel("Displayed name").fill("Edited before correction");
   await panel.getByRole("button", { name: "Save as proposal" }).click();
@@ -145,6 +148,7 @@ test("stale correction reads cannot overwrite a record after SPA navigation", as
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const panel = editor(page);
   await panel.getByLabel("Displayed name").fill("Edited before correction");
   await panel.getByRole("button", { name: "Save as proposal" }).click();
@@ -186,6 +190,7 @@ test("clears the old editor while a navigated record read is pending or fails", 
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const panel = editor(page);
   await expect(panel.getByLabel("Displayed name")).toHaveValue("Station Keeper");
   await page.getByRole("link", { name: "Legacy Ship" }).first().click();
@@ -222,6 +227,7 @@ test("stale proposal responses cannot install a proposal after SPA navigation", 
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const panel = editor(page);
   await panel.getByLabel("Displayed name").fill("Edited before navigation");
   const oldProposalResponse = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/records/record-one/proposals"));
@@ -257,6 +263,7 @@ test("stale decision responses cannot change a different SPA record", async ({ p
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const panel = editor(page);
   await panel.getByLabel("Displayed name").fill("Edited before approval");
   await panel.getByRole("button", { name: "Save as proposal" }).click();
@@ -301,6 +308,7 @@ test("stale removal-impact responses cannot switch the editor after SPA navigati
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const panel = editor(page);
   await panel.getByRole("button", { name: "Load removal impact" }).click();
   await impactRequestStarted;
@@ -399,6 +407,7 @@ test("removal redirects reject player-visible sources to Warden-only targets bef
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const panel = editor(page);
   await panel.getByRole("button", { name: "Load removal impact" }).click();
   await panel.getByLabel("Resolution for reference_1").selectOption("redirect");
@@ -469,6 +478,7 @@ test("stale correction responses cannot install a proposal after SPA navigation"
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const panel = editor(page);
   await panel.getByLabel("Displayed name").fill("Edited before correction");
   await panel.getByRole("button", { name: "Save as proposal" }).click();
@@ -541,6 +551,7 @@ test("connection context validation blocks empty and multiline proposals on the 
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const panel = editor(page);
   const context = panel.getByLabel("Context", { exact: true });
   await context.fill("   ");
@@ -621,6 +632,7 @@ test("stale correction binds to the loaded head even if a later head appears bef
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const panel = editor(page);
   await panel.getByLabel("Displayed name").fill("Edited before correction");
   await panel.getByRole("button", { name: "Save as proposal" }).click();

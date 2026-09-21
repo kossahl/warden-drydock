@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { installAtlasApi } from "./atlas-api";
 import { campaigns, headRevision, overview, workflow, newestFiveHistory } from "../fixtures/atlas";
 
@@ -9,6 +9,7 @@ const editorRecord = {
 };
 const secondEditorRecord = { ...editorRecord, record_id: "record-two", record_type: "ship", displayed_name: "Legacy Ship", content_digest: "d".repeat(64) };
 const editedRecord = { ...editorRecord, displayed_name: "Edited Station Keeper" };
+const openRecordEditor = async (page: Page) => page.getByRole("button", { name: "Edit this record", exact: true }).click();
 const proposal = {
   contract_name: "editor_proposal_view", contract_version: 1, proposal_id: "proposal_editor", proposal_version: 1, campaign_id: "campaign_atlas",
   source_revision: headRevision, base_revision: headRevision, expected_campaign_head: headRevision, editor_workflow_version: 2,
@@ -55,6 +56,7 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
     return route.fallback();
   });
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
   await expect(editor.getByRole("heading", { name: "Edit record" })).toBeVisible();
   await editor.getByLabel("Displayed name").fill("Edited keeper");
@@ -109,6 +111,7 @@ test("delayed editor reads cannot overwrite a different SPA record", async ({ pa
     return route.fallback();
   });
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   await oldReadStarted;
   const relatedRecord = page.getByRole("link", { name: "Legacy Ship" }).first();
   await expect(relatedRecord).toBeVisible();
@@ -151,6 +154,7 @@ test("rejection applies the returned workflow version to a fresh save", async ({
     return route.fallback();
   });
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const editor = page.locator(".editor");
   await editor.getByLabel("Displayed name").fill("Edited keeper");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
@@ -182,6 +186,7 @@ test("approval conflicts close the dialog and focus the editor error", async ({ 
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const editor = page.locator(".editor");
   await editor.getByLabel("Displayed name").fill("Edited before approval");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
@@ -214,6 +219,7 @@ test("rejection transport errors close the dialog and focus the editor error", a
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const editor = page.locator(".editor");
   await editor.getByLabel("Displayed name").fill("Edited before rejection");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
@@ -249,6 +255,7 @@ test("same-head workflow conflict reloads the editor before retrying", async ({ 
     return route.fallback();
   });
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const editor = page.locator(".editor");
   await editor.getByLabel("Displayed name").fill("Edited before reload");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
@@ -273,10 +280,10 @@ test("editor load errors do not steal Atlas record-heading focus", async ({ page
     return route.fallback();
   });
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
-  const heading = page.getByRole("heading", { level: 1, name: "Station Keeper" });
-  await expect(heading).toBeFocused();
+  await openRecordEditor(page);
+  await expect(page.getByRole("button", { name: "Close editor", exact: true })).toBeFocused();
   await expect(page.getByRole("alert").filter({ hasText: "Editor unavailable" })).toBeVisible();
-  await expect(heading).toBeFocused();
+  await expect(page.getByRole("button", { name: "Close editor", exact: true })).toBeFocused();
 });
 
 test("editor action errors focus the editor error without reducing accessibility", async ({ page }) => {
@@ -293,6 +300,7 @@ test("editor action errors focus the editor error without reducing accessibility
     return route.fallback();
   });
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
   await expect(editor.getByRole("heading", { name: "Edit record" })).toBeVisible();
   await editor.getByLabel("Displayed name").fill("Edited before failure");
@@ -440,6 +448,7 @@ test("player-visible connections reject Warden-only targets before posting", asy
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
   await editor.getByRole("button", { name: "Add typed connection" }).click();
   await editor.getByRole("button", { name: "Target for connection_1: choose existing record" }).click();
@@ -486,6 +495,7 @@ test("save does not post after target visibility completes on another route", as
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
   await editor.getByLabel("Displayed name").fill("Edited before visibility lookup");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
@@ -533,6 +543,7 @@ test("correction does not post after target visibility completes on another rout
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
   await editor.getByLabel("Displayed name").fill("Edited before correction");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
@@ -568,6 +579,7 @@ test("record editor fits the documented 320px layout", async ({ page }) => {
   });
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await openRecordEditor(page);
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
   await expect(editor.getByRole("heading", { name: "Edit record" })).toBeVisible();
   const dimensions = await editor.evaluate((element) => ({

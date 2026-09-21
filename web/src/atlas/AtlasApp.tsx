@@ -15,8 +15,37 @@ function ProviderStatus({ resource }: { resource: Resource<ProviderState> }) {
   return <span role="status">Provider: {label}</span>;
 }
 
+function RecordEditorSurface({ campaign, route, revision, navigate }: { campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate }) {
+  const historical = revision.revision_id !== campaign.head_revision.revision_id;
+  const isCreate = route.recordId === "__new__";
+  const [open, setOpen] = useState(!!route.proposalId || isCreate);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (route.proposalId) setOpen(true);
+  }, [route.proposalId]);
+  useEffect(() => {
+    if (open) closeButton.current?.focus();
+  }, [open]);
+  if (historical && !route.proposalId) return null;
+  const close = () => {
+    setOpen(false);
+    trigger.current?.focus();
+    if (route.proposalId) {
+      navigate(recordHref(campaign.campaign_id, route.recordId ?? "", { ...stateFromRoute(route, revision.revision_id), proposalId: null, proposalVersion: null }));
+    }
+  };
+  return <>
+    {!historical && !isCreate && <button ref={trigger} type="button" onClick={() => setOpen(true)} aria-expanded={open}>Edit this record</button>}
+    {open && <div className="editor-surface" aria-label={historical ? "Review record proposal" : "Edit record"}>
+      <div className="editor-surface-header"><button ref={closeButton} type="button" onClick={close}>Close editor</button></div>
+      <RecordEditor campaignId={campaign.campaign_id} revisionId={revision.revision_id} recordId={route.recordId ?? ""} proposalId={route.proposalId} proposalVersion={route.proposalVersion} navigate={navigate} />
+    </div>}
+  </>;
+}
+
 function RecordDetailView(props: { api: AtlasApi; sliceApi: SliceApi; provider: Resource<ProviderState>; campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate; block: (error: unknown) => void }) {
-  return <><RecordDetailContent {...props} /><RecordEditor campaignId={props.campaign.campaign_id} revisionId={props.revision.revision_id} recordId={props.route.recordId ?? ""} proposalId={props.route.proposalId} proposalVersion={props.route.proposalVersion} navigate={props.navigate} /></>;
+  return <><RecordDetailContent {...props} /><RecordEditorSurface campaign={props.campaign} route={props.route} revision={props.revision} navigate={props.navigate} /></>;
 }
 
 function Shell({ campaign, route, viewed, provider, navigate, children }: { campaign: AtlasCampaignItem; route: AtlasRoute; viewed: AtlasRevisionRef; provider: Resource<ProviderState>; navigate: Navigate; children: ReactNode }) {
