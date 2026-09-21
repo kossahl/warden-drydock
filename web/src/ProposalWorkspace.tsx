@@ -130,7 +130,8 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
       const created = await api.createCampaign(name, stableId("campaign", "campaign"), retryKey("campaign"));
       const first = created.records[0];
       const opened = await api.readRecord(created.campaign_id, created.viewed_revision.revision_id, first.record_id);
-      setCampaign(created); setRecord(opened); setRecordContentDigest((await exactRecordContext(opened)).content_digest); retries.current = {}; actionIds.current = {}; finishAction(`Opened ${opened.name} at revision ${opened.revision_id}.`);
+      const context = await exactRecordContext(opened);
+      setCampaign(created); setRecord(opened); setRecordContentDigest(context.content_digest); retries.current = {}; actionIds.current = {}; finishAction(`Opened ${opened.name} at revision ${opened.revision_id}.`);
     } catch (failure) { failAction(failure); }
   }
 
@@ -168,7 +169,9 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
     if (!exactRetry) { delete actionIds.current.proposal; delete retries.current.proposal; }
     uncertainGeneration.current = { action: rootAction, prompt, generationId };
     try {
-      const context = await exactRecordContext(record);
+      const context: Extract<GenerationContext, { scope: "record" }> = recordContentDigest
+        ? { scope: "record", record_id: record.record_id, content_digest: recordContentDigest }
+        : await exactRecordContext(record);
       setRecordContentDigest(context.content_digest);
       const started = await api.startGeneration(campaign.campaign_id, record.revision_id, rootAction, prompt, generationId, context);
       uncertainGeneration.current = null;
