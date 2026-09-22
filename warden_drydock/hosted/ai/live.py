@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from datetime import datetime, timezone
 
 from .models import Capture, CaptureType, LiveEndBarrier, LiveSession, live_operation_digest
 
@@ -185,6 +186,7 @@ class LiveSessionService:
             accepted_ops = set(current_ops)
             ready_for_proposal = required_set <= accepted_ops
             session.mode = "ended_review_pending"
+            session.ended_at = datetime.now(timezone.utc)
             session.receipts[(device_id, operation_id)] = digest
             session.workflow_version += 1
             session.end_barrier = LiveEndBarrier(

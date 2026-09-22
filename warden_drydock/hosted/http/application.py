@@ -10,6 +10,7 @@ import re
 import tempfile
 import threading
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from warden_drydock import __version__
 from warden_drydock.hosted.ai.models import Action, CaptureType, GenerationRecord, ProviderConsent
@@ -48,7 +49,13 @@ from .contracts import (
     HTTPContractSemanticError, append_draft, canonical_digest, normalize_text,
     text_digest, validate_http_semantics,
 )
-from .repository import InMemoryHTTPRepository, ReceiptConflict
+from .repository import (
+    CampaignPlayer,
+    CampaignProfile,
+    InMemoryCampaignProfileRepository,
+    InMemoryHTTPRepository,
+    ReceiptConflict,
+)
 from .editor import (
     adapter_editor_contract,
     adapter_editor_definition,
@@ -159,7 +166,8 @@ class SliceApplication:
     def __init__(self, root: Path | None = None, *, snapshot_root: Path | None = None,
                  provider=None, receipts=None,
                  proposal_repository=None, workflow_repository=None,
-                 ai_repository=None, atlas_repository=None) -> None:
+                 ai_repository=None, atlas_repository=None,
+                 campaign_profile_repository=None) -> None:
         self._temporary = None
         if root is None:
             self._temporary = tempfile.TemporaryDirectory()
@@ -191,6 +199,7 @@ class SliceApplication:
         )
         self.atlas = AtlasQueryService(self.atlas_repository)
         self.ai_repository = ai_repository or InMemoryAIRepository()
+        self.campaign_profiles = campaign_profile_repository or InMemoryCampaignProfileRepository()
         self.live = LiveSessionService(self.ai_repository)
         self.provider = provider or OpenAIResponsesAdapter()
         loader = EngineSourceLoader(self.engine, self._workspace_for_revision)
@@ -217,6 +226,17 @@ class SliceApplication:
         for operation, key, digest in self._abandoned_claims:
             if operation.startswith("editor_"):
                 self.receipts.claim(operation, key, digest)
+
+    @staticmethod
+    def _campaign_profile(data: dict, *, created_at: datetime | None = None) -> CampaignProfile:
+        players = tuple(
+            CampaignPlayer(item["player_id"], item["name"], item.get("status", "active"))
+            for item in data.get("players", [])
+        )
+        return CampaignProfile(
+            data["campaign_id"], created_at or datetime.now(timezone.utc),
+            data.get("display_timezone", "UTC"), players,
+        )
 
     @staticmethod
     def _id(prefix: str, *parts: object) -> str:
@@ -253,6 +273,10 @@ class SliceApplication:
                         break
             if not isinstance(campaign_name, str) or not campaign_name:
                 raise RuntimeError("http_campaign_metadata_missing")
+            if self.campaign_profiles.get(campaign_id) is None:
+                self.campaign_profiles.create(
+                    CampaignProfile(campaign_id, datetime.now(timezone.utc))
+                )
             revisions: dict[str, SnapshotManifest] = {}
             workspaces: dict[str, WorkspaceHandle] = {}
             for manifest in sorted(manifests, key=lambda item: item.ordinal):
@@ -269,6 +293,7 @@ class SliceApplication:
                 revisions[manifest.revision_id] = manifest
                 workspaces[manifest.revision_id] = handle
             recovered[campaign_id] = CampaignState(campaign_id, campaign_name, "mothership", revisions, workspaces)
+        self.campaign_profiles.prune_orphans(set(recovered))
         self.campaigns = recovered
 
     @property
@@ -664,6 +689,68 @@ class SliceApplication:
             raise HTTPFailure(409, "snapshot_integrity_failure", "head_projection_unavailable", "atlas_read") from exc
         return viewed, head
 
+    def _overview_context(self, campaign_id: str, viewed) -> dict[str, object]:
+        profile = self.campaign_profiles.get(campaign_id)
+        if profile is None:
+            raise HTTPFailure(409, "snapshot_lineage_failure", "campaign_profile_unavailable", "atlas_read")
+        sessions = self.ai_repository.campaign_sessions(campaign_id)
+        qualifying = []
+        for session in sessions:
+            if session.mode == "active" or session.ended_at is None:
+                continue
+            facts = tuple(
+                item for item in session.captures
+                if item.capture_type is CaptureType.CONFIRMED_FACT
+            )
+            if not facts:
+                continue
+            try:
+                base = self.atlas_repository.get(campaign_id, session.base_revision)
+            except (KeyError, ValueError):
+                continue
+            if base.ordinal <= viewed.ordinal:
+                qualifying.append((session, base, facts))
+        qualifying.sort(key=lambda item: item[0].session_seq, reverse=True)
+        latest = qualifying[0] if qualifying else None
+        last_played = max(
+            qualifying,
+            key=lambda item: (item[0].ended_at, item[0].session_seq),
+            default=None,
+        )
+        generation_rows = self.ai_repository.generation_rows(campaign_id, viewed.revision_id)
+        conversation_state = "resumable" if generation_rows else "new"
+        conversation_id = self._id("conversation", campaign_id)
+        active = next((item for item in sessions if item.mode == "active"), None)
+        if active is not None:
+            next_action = {"kind": "resume_session", "label": "Resume live session"}
+        elif conversation_state == "resumable":
+            next_action = {"kind": "resume_conversation", "label": "Resume campaign conversation"}
+        elif latest is not None:
+            next_action = {"kind": "continue_campaign", "label": "Continue campaign"}
+        else:
+            next_action = {"kind": "start_session", "label": "Start the first session"}
+        story = None
+        if latest is not None:
+            session, base, facts = latest
+            story = {
+                "session_id": session.session_id,
+                "title": f"Session {session.session_seq}",
+                "summary": " ".join(item.text.strip() for item in facts)[:4000],
+                "summary_authority": "table_fact",
+                "played_at": self._rfc3339(session.ended_at),
+                "source_revision": self._revision_contract(base),
+            }
+        return {
+            "campaign_created_at": self._rfc3339(profile.created_at),
+            "display_timezone": profile.display_timezone,
+            "player_count": profile.active_player_count,
+            "player_count_policy": "active_non_archived",
+            "last_played_at": self._rfc3339(last_played[0].ended_at) if last_played else None,
+            "latest_story": story,
+            "next_action": next_action,
+            "conversation": {"conversation_id": conversation_id, "state": conversation_state},
+        }
+
     def campaign_collection(self) -> tuple[int, dict]:
         items = []
         for campaign_id in sorted(self.campaigns):
@@ -680,7 +767,9 @@ class SliceApplication:
     def atlas_overview(self, campaign_id: str, revision_id: str, ordinal: int, tree_digest: str) -> tuple[int, dict]:
         viewed, head = self._atlas_binding(campaign_id, revision_id, ordinal, tree_digest)
         return 200, overview_contract(
-            viewed, head, approved_revision_count=len(self.atlas_repository.list(campaign_id))
+            viewed, head,
+            approved_revision_count=len(self.atlas_repository.list(campaign_id)),
+            context=self._overview_context(campaign_id, viewed),
         )
 
     def atlas_record_library(self, campaign_id: str, revision_id: str, ordinal: int,
@@ -1061,7 +1150,13 @@ class SliceApplication:
                 raise HTTPFailure(422, "unsafe_binding", "invalid_operation_shape", stage, self._request_id(payload))
         if expected == "provider_consent_request" and (not isinstance(payload["input"], dict) or set(payload["input"]) != {"explicit", "consent_identity_digest"}):
             raise HTTPFailure(422, "unsafe_binding", "invalid_request_shape", stage, self._request_id(payload))
-        if expected == "campaign_create_request" and (not isinstance(payload["input"], dict) or set(payload["input"]) != {"campaign_id", "campaign_name", "adapter_id"}):
+        if expected == "campaign_create_request" and (
+            not isinstance(payload["input"], dict)
+            or not set(payload["input"]).issubset(
+                {"campaign_id", "campaign_name", "adapter_id", "players", "display_timezone"}
+            )
+            or not {"campaign_id", "campaign_name", "adapter_id"}.issubset(payload["input"])
+        ):
             raise HTTPFailure(422, "unsafe_binding", "invalid_request_shape", stage, self._request_id(payload))
         self._validate_request_values(payload, expected, stage)
 
@@ -1100,12 +1195,38 @@ class SliceApplication:
             valid = payload["input"].get("explicit") is True and digest(payload["input"].get("consent_identity_digest"))
         elif expected == "campaign_create_request":
             value = payload["input"]
+            players = value.get("players", [])
+            valid_players = (
+                isinstance(players, list)
+                and len(players) <= 64
+                and len({item.get("player_id") for item in players if isinstance(item, dict)}) == len(players)
+                and all(
+                    isinstance(item, dict)
+                    and set(item) == {"player_id", "name", "status"}
+                    and domain(item.get("player_id"))
+                    and isinstance(item.get("name"), str)
+                    and 1 <= len(item["name"]) <= 120
+                    and item.get("status") in {"active", "inactive", "archived"}
+                    for item in players
+                )
+            )
+            display_timezone = value.get("display_timezone", "UTC")
             valid = (
                 public(value.get("campaign_id"))
                 and isinstance(value.get("campaign_name"), str)
                 and 1 <= len(value["campaign_name"]) <= 120
                 and value.get("adapter_id") == "mothership"
+                and valid_players
+                and isinstance(display_timezone, str)
+                and 1 <= len(display_timezone) <= 64
+                and "\r" not in display_timezone
+                and "\n" not in display_timezone
             )
+            if valid:
+                try:
+                    ZoneInfo(display_timezone)
+                except ZoneInfoNotFoundError:
+                    valid = False
         elif expected == "generation_start_request":
             context = payload.get("context")
             valid_context = isinstance(context, dict) and (
@@ -1348,10 +1469,13 @@ class SliceApplication:
             raise HTTPFailure(503, "service_unavailable", "operation_in_progress", "campaign_create", operation["request_id"], True)
         handle: WorkspaceHandle | None = None
         published = False
+        profile: CampaignProfile | None = None
         try:
             with self._lock:
                 if data["campaign_id"] in self.campaigns:
                     raise HTTPFailure(409, "idempotency_digest_conflict", "campaign_id_conflict", "campaign_create", operation["request_id"])
+                profile = self._campaign_profile(data)
+                self.campaign_profiles.create(profile)
                 handle = self.registry.allocate()
                 initialized = self.engine.initialize(InitializeRequest(
                     self._id("command", operation["request_id"], "initialize"), handle,
@@ -1402,12 +1526,16 @@ class SliceApplication:
         except HTTPFailure as exc:
             if handle is not None and not published:
                 self.registry.discard(handle)
+            if profile is not None and not published:
+                self.campaign_profiles.delete(profile.campaign_id)
             if not published:
                 self._store("campaign_create", operation["idempotency_key"], operation["payload_digest"], exc.status, exc.payload)
             raise
         except Exception as exc:
             if handle is not None and not published:
                 self.registry.discard(handle)
+            if profile is not None and not published:
+                self.campaign_profiles.delete(profile.campaign_id)
             failure = HTTPFailure(503, "service_unavailable", "campaign_creation_failed", "campaign_create", operation["request_id"], True)
             if not published:
                 self._release("campaign_create", operation["idempotency_key"], operation["payload_digest"])
