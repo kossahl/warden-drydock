@@ -20,7 +20,7 @@ async function exactRecordContext(record: RecordView): Promise<Extract<Generatio
   return context;
 }
 
-export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi, active = true, navigate, location = "/" }: { api?: SliceApi; atlasApi?: AtlasApi; active?: boolean; navigate?: (href: string) => void; location?: string }) {
+export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi, active: routeActive = true, navigate, location = "/" }: { api?: SliceApi; atlasApi?: AtlasApi; active?: boolean; navigate?: (href: string) => void; location?: string }) {
   const [readiness, setReadiness] = useState<ProviderReadiness | null>(null);
   const [campaign, setCampaign] = useState<CampaignRevisionView | null>(null);
   const [record, setRecord] = useState<RecordView | null>(null);
@@ -36,6 +36,12 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const [announcement, setAnnouncement] = useState("");
   const [hydrating, setHydrating] = useState(false);
   const [rootAction, setRootAction] = useState<GenerationAction>("ask");
+  const workflowRoute = new URL(location, "http://drydock.local").pathname.match(/^\/campaigns\/([^/]+)\/(drafts|proposals)$/);
+  const workflowCollection = workflowRoute?.[2] ?? null;
+  const workflowCampaignId = workflowRoute ? (() => { try { return decodeURIComponent(workflowRoute[1]); } catch { return ""; } })() : null;
+  const workflowParams = new URL(location, "http://drydock.local").searchParams;
+  const workflowItem = workflowCollection && (workflowParams.has("generation") || (workflowParams.has("proposal") && Number.isInteger(Number(workflowParams.get("version"))) && Number(workflowParams.get("version")) > 0));
+  const active = routeActive || Boolean(workflowItem);
   const retries = useRef<Record<string, string>>({});
   const actionIds = useRef<Record<string, string>>({});
   const observedSequence = useRef(0);
@@ -44,9 +50,6 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const pendingCampaignRefresh = useRef(false);
   const campaignRefreshSequence = useRef(0);
   const hydratedLocation = useRef("");
-  const workflowRoute = new URL(location, "http://drydock.local").pathname.match(/^\/campaigns\/([^/]+)\/(drafts|proposals)$/);
-  const workflowCollection = workflowRoute?.[2] ?? null;
-  const workflowCampaignId = workflowRoute ? (() => { try { return decodeURIComponent(workflowRoute[1]); } catch { return ""; } })() : null;
   const uncertainGeneration = useRef<{ action: GenerationAction; prompt: string; generationId: string } | null>(null);
   const campaigns = useResource(active && !campaign ? () => atlasApi.campaigns() : null, [active, atlasApi, campaign]);
 
