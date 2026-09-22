@@ -546,13 +546,13 @@ test("external proposal URL clearing closes the editor surface", async ({ page }
 
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two&proposal=proposal_correction&version=1");
   await expect(page.locator(".editor-surface")).toBeVisible();
-  await expect(page.locator(".app-shell")).toHaveAttribute("inert", "");
+  await expect(page.locator(".atlas-shell")).toHaveAttribute("inert", "");
   await page.evaluate(() => {
     history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_two");
     window.dispatchEvent(new Event("drydock:navigate"));
   });
   await expect(page.locator(".editor-surface")).toHaveCount(0);
-  await expect(page.locator(".app-shell")).not.toHaveAttribute("inert", "");
+  await expect(page.locator(".atlas-shell")).not.toHaveAttribute("inert", "");
 });
 
 test("connection context validation blocks empty and multiline proposals on the connection row", async ({ page }) => {
