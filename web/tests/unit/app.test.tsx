@@ -328,6 +328,24 @@ describe("proposal browser slice", () => {
     cleanup(); window.history.replaceState(null, "", "/");
   });
 
+  it("rejects a Draft route that resolves to a proposal", async () => {
+    window.history.replaceState(null, "", "/campaigns/campaign_alpha/drafts?revision=revision_alpha&proposal=proposal_alpha&version=1");
+    const api = fakeApi();
+    render(<App api={api} atlasApi={fakeAtlas([atlasCampaign])} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("requested campaign workflow item could not be opened");
+    expect(screen.queryByRole("heading", { name: "Proposal version 1" })).not.toBeInTheDocument();
+    cleanup(); window.history.replaceState(null, "", "/");
+  });
+
+  it("rejects a workflow route whose revision does not match the loaded generation", async () => {
+    window.history.replaceState(null, "", "/campaigns/campaign_alpha/drafts?revision=revision_beta&generation=generation_alpha");
+    const api = fakeApi({ readGeneration: vi.fn(async () => ({ ...complete, generation_id: "generation_alpha", context: { scope: "campaign" as const } })) });
+    render(<App api={api} atlasApi={fakeAtlas([{ ...atlasCampaign, projected_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("b") } }])} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("requested campaign workflow item could not be opened");
+    expect(screen.queryByRole("heading", { name: "Campaign Draft" })).not.toBeInTheDocument();
+    cleanup(); window.history.replaceState(null, "", "/");
+  });
+
   it.each([
     ["Ask", { ...complete, action: "ask" as const }, false, false],
     ["Check", { ...complete, action: "check" as const }, false, false],

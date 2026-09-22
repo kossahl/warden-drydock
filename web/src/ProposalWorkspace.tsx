@@ -64,6 +64,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
     const params = new URL(location, "http://drydock.local").searchParams;
     const generationId = params.get("generation");
     const proposalId = params.get("proposal");
+    const routeRevision = params.get("revision");
     const version = Number(params.get("version"));
     if (!generationId && !(proposalId && Number.isInteger(version) && version > 0)) return;
     hydratedLocation.current = location; setHydrating(true); setError(null);
@@ -71,7 +72,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
       const loadedProposal = proposalId ? await api.readProposal(proposalId, version) : null;
       const loadedGeneration = await api.readGeneration(loadedProposal?.generation_id ?? generationId!);
       const loadedCampaign = await api.readRevision(loadedGeneration.campaign_id, loadedGeneration.source_revision);
-      if (workflowCollection && (!workflowCampaignId || loadedGeneration.campaign_id !== workflowCampaignId || loadedCampaign.campaign_id !== workflowCampaignId || (loadedProposal && loadedProposal.campaign_id !== workflowCampaignId))) throw new Error("campaign_route_mismatch");
+      if (workflowCollection && (!workflowCampaignId || loadedGeneration.campaign_id !== workflowCampaignId || loadedCampaign.campaign_id !== workflowCampaignId || (loadedProposal && loadedProposal.campaign_id !== workflowCampaignId) || (routeRevision && routeRevision !== loadedGeneration.source_revision) || (workflowCollection === "drafts" ? loadedProposal !== null : loadedProposal === null))) throw new Error("campaign_route_mismatch");
       const subjectId = loadedProposal?.exact_diff[0].subject_id ?? (loadedGeneration.context.scope === "record" ? loadedGeneration.context.record_id : null);
       const loadedRecord = subjectId ? await api.readRecord(loadedGeneration.campaign_id, loadedGeneration.source_revision, subjectId) : null;
       const loadedDigest = loadedRecord ? (await exactRecordContext(loadedRecord)).content_digest : null;
