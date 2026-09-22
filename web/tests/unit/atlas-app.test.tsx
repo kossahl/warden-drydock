@@ -74,6 +74,42 @@ describe("Campaign Atlas browser experience", () => {
     expect(window.location.search).not.toContain("cursor=");
   });
 
+  it("filters while typing and renders server-provided match evidence", async () => {
+    const filtered = {
+      ...records,
+      normalized_query: "station",
+      total: 1,
+      next_cursor: null,
+      items: [{ ...records.items[0], matches: [{ field: "summary", label: "Summary", parts: [{ text: "Keeps the ", matched: false }, { text: "station", matched: true }, { text: ".", matched: false }] }] }],
+    };
+    const api = fakeAtlas({ records: vi.fn(async (_campaign, query) => query.q ? filtered : records) });
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records?revision=revision_two");
+    render(<App atlasApi={api} providerReadiness={async () => readinessUnavailable} />);
+    const search = await screen.findByLabelText("Search campaign records");
+    fireEvent.change(search, { target: { value: "station" } });
+    await waitFor(() => expect(window.location.search).toContain("q=station"));
+    expect(await screen.findByText("station")).toBeVisible();
+    expect(screen.getByText("Summary:")).toBeVisible();
+    expect(api.records).toHaveBeenCalledWith("campaign_atlas", expect.objectContaining({ q: "station" }));
+  });
+
+  it("does not replace a newer typed search with an older response", async () => {
+    const older = deferred<typeof records>();
+    const newer = deferred<typeof records>();
+    const api = fakeAtlas({ records: vi.fn(async (_campaign, query) => query.q === "old" ? older.promise : query.q === "new" ? newer.promise : records) });
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records?revision=revision_two");
+    render(<App atlasApi={api} providerReadiness={async () => readinessUnavailable} />);
+    const search = await screen.findByLabelText("Search campaign records");
+    fireEvent.change(search, { target: { value: "old" } });
+    await waitFor(() => expect(api.records).toHaveBeenCalledWith("campaign_atlas", expect.objectContaining({ q: "old" })));
+    fireEvent.change(search, { target: { value: "new" } });
+    await waitFor(() => expect(api.records).toHaveBeenCalledWith("campaign_atlas", expect.objectContaining({ q: "new" })));
+    await act(async () => older.resolve({ ...records, total: 1, items: [{ ...records.items[0], name: "Old result" }] }));
+    expect(screen.queryByRole("link", { name: "Old result" })).not.toBeInTheDocument();
+    await act(async () => newer.resolve({ ...records, total: 1, items: [{ ...records.items[0], name: "New result" }] }));
+    expect(await screen.findByRole("link", { name: "New result" })).toBeVisible();
+  });
+
   it("renders records as an accessible table with revision-bound links", async () => {
     window.history.replaceState(null, "", "/campaigns/campaign_atlas/records?revision=revision_one");
     render(<App atlasApi={fakeAtlas()} providerReadiness={async () => readinessUnavailable} />);

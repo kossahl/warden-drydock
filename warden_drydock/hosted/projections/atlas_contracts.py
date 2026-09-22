@@ -8,6 +8,7 @@ from .atlas_models import (
     AtlasRecord,
     RecordLibraryResult,
     facet_counts,
+    record_match_evidence,
 )
 
 
@@ -46,6 +47,22 @@ def record_summary(record: AtlasRecord) -> dict[str, object]:
         "summary": record.summary,
         "content_digest": record.content_digest,
     }
+
+
+def record_library_item(record: AtlasRecord, query: str) -> dict[str, object]:
+    payload = record_summary(record)
+    payload["matches"] = [
+        {
+            "field": match.field,
+            "label": match.label,
+            "parts": [
+                {"text": part.text, "matched": part.matched}
+                for part in match.parts
+            ],
+        }
+        for match in record_match_evidence(record, query)
+    ]
+    return payload
 
 
 def facets_payload(result: RecordLibraryResult) -> dict[str, object]:
@@ -177,7 +194,7 @@ def record_library_contract(
         "limit": query.limit,
         "sort": "record_id",
         "total": result.total,
-        "items": [record_summary(item) for item in result.items],
+        "items": [record_library_item(item, query.query) for item in result.items],
         "facets": facets_payload(result),
         "next_cursor": result.next_cursor,
         "previous_cursor": result.previous_cursor,

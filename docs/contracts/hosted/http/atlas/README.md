@@ -65,6 +65,11 @@ audit events, Drafts, table facts, and proposal lifecycle changes do not enter
 approved history. Nullable proposal identifiers are enrichment from an exact
 published-revision lookup and disappear during snapshot-only recovery.
 
+Record-library results keep search evidence revision-bound. Each returned item
+contains at most five labeled matches, each rendered as bounded plain-text
+parts so the browser can highlight the query without interpreting campaign
+Markdown or HTML.
+
 ## Rebuild, rollback, and empty-system recovery
 
 Build and validate a complete revision bundle before opening its replacement
