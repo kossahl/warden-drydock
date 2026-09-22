@@ -10,6 +10,21 @@ const editorRecord = {
 const secondEditorRecord = { ...editorRecord, record_id: "record-two", record_type: "ship", displayed_name: "Legacy Ship", content_digest: "d".repeat(64) };
 const editedRecord = { ...editorRecord, displayed_name: "Edited Station Keeper" };
 const openRecordEditor = async (page: Page) => page.getByRole("button", { name: "Edit this record", exact: true }).click();
+const connectedEditorRecord = { ...editorRecord, connections: [{ connection_id: "connection_1", target_record_id: "record-two", relationship: "connected-to", state: "current", context: "The keeper knows the ship." }] };
+const installValidationFailure = async (page: Page, record: typeof editorRecord | typeof connectedEditorRecord, findings: Array<Record<string, unknown>>) => {
+  await installAtlasApi(page);
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
+      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record }) });
+    }
+    if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) {
+      return route.fulfill({ status: 422, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ error: { code: "proposal_validation_failure", category: "proposal_validation_failure", findings } }) });
+    }
+    return route.fallback();
+  });
+};
 const navigateToLegacyShip = async (page: Page) => page.getByRole("link", { name: "Legacy Ship" }).first().evaluate((link) => (link as HTMLAnchorElement).click());
 const proposal = {
   contract_name: "editor_proposal_view", contract_version: 1, proposal_id: "proposal_editor", proposal_version: 1, campaign_id: "campaign_atlas",
@@ -288,21 +303,13 @@ test("editor load errors do not steal Atlas record-heading focus", async ({ page
 });
 
 test("editor action errors focus the editor error without reducing accessibility", async ({ page }) => {
-  await installAtlasApi(page);
-  await page.route("**/api/v1/**", async (route) => {
-    const request = route.request();
-    const path = new URL(request.url()).pathname;
-    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) {
-      return route.fulfill({ status: 200, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas", viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1, historical: false, editable: true, record: editorRecord }) });
-    }
-    if (request.method() === "POST" && path.endsWith("/records/record-one/proposals")) {
-      return route.fulfill({ status: 422, headers: { "X-CSRF-Token": "browser-csrf" }, contentType: "application/json", body: JSON.stringify({ error: { code: "proposal_validation_failure", category: "proposal_validation_failure", findings: [
-        { finding_id: "finding_relationship", code: "unsupported_connection_relationship", severity: "error", location: "connections.0.relationship", message: "This relationship type is not supported by the selected adapter.", recovery_action: "Choose a supported relationship.", retryable: false },
-        { finding_id: "finding_target", code: "unknown_connection_target", severity: "error", location: "connections.0.target_record_id", message: "The relationship target does not exist in this revision.", recovery_action: "Choose an existing record as the target.", retryable: false },
-      ] } }) });
-    }
-    return route.fallback();
-  });
+  await installValidationFailure(page, connectedEditorRecord, [
+    { finding_id: "finding_relationship", code: "unsupported_connection_relationship", severity: "error", location: "connections.0.relationship", message: "This relationship type is not supported by the selected adapter.", recovery_action: "Choose a supported relationship.", retryable: false },
+    { finding_id: "finding_target", code: "unknown_connection_target", severity: "error", location: "connections.0.target_record_id", message: "The relationship target does not exist in this revision.", recovery_action: "Choose an existing record as the target.", retryable: false },
+    { finding_id: "finding_context", code: "invalid_connection_context", severity: "error", location: "connections.0.context", message: "Connection context is invalid.", recovery_action: "Rewrite the context.", retryable: false },
+    { finding_id: "finding_section", code: "invalid_section", severity: "error", location: "sections.0.body", message: "This section is invalid.", recovery_action: "Rewrite the section.", retryable: false },
+    { finding_id: "finding_unknown", code: "unknown_server_location", severity: "error", location: "candidate.unknown", message: "This finding has no editor control.", recovery_action: "Review the validation summary.", retryable: false },
+  ]);
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   await openRecordEditor(page);
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
@@ -315,6 +322,18 @@ test("editor action errors focus the editor error without reducing accessibility
   await expect(editor.getByRole("list", { name: "Validation findings" })).toContainText("connections.0.relationship");
   await expect(editor.getByRole("list", { name: "Validation findings" })).toContainText("Choose a supported relationship.");
   await expect(editor.getByRole("list", { name: "Validation findings" })).toContainText("connections.0.target_record_id");
+  await expect(editor.getByRole("list", { name: "Validation findings" })).toContainText("Review the validation summary.");
+  await expect(editor.locator("#connection-relationship-connection_1")).toHaveAttribute("aria-invalid", "true");
+  await expect(editor.locator("#connection-relationship-connection_1")).toHaveAttribute("aria-describedby", /editor-validation-finding_relationship/);
+  await expect(editor.locator("#connection-target-connection_1")).toHaveAttribute("aria-invalid", "true");
+  await expect(editor.locator("#connection-target-connection_1")).toHaveAttribute("aria-describedby", /editor-validation-finding_target/);
+  await expect(editor.locator("#connection-context-connection_1")).toHaveAttribute("aria-invalid", "true");
+  await expect(editor.locator("#connection-context-connection_1")).toHaveAttribute("aria-describedby", /editor-validation-finding_context/);
+  await expect(editor.locator("#editor-section-summary")).toHaveAttribute("aria-invalid", "true");
+  await expect(editor.locator("#editor-section-summary")).toHaveAttribute("aria-describedby", /editor-validation-finding_section/);
+  await expect(editor.locator("#editor-validation-finding_unknown")).toHaveCount(0);
+  await expect(editor.locator("#connection-relationship-connection_1")).toHaveValue("connected-to");
+  await expect(editor.locator("#connection-context-connection_1")).toHaveValue("The keeper knows the ship.");
   await expect(editor.getByLabel("Displayed name")).toBeEnabled();
 });
 

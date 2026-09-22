@@ -55,6 +55,8 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
 .diff h4 { margin: 0; }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .7rem; margin-top: 1rem; }
 .conflict, .error { margin: 1rem 0; padding: 1rem; border: 2px solid #e29b96; border-radius: .5rem; color: #ffd5d1; background: #351b19; }
+.validation-finding-messages { display: grid; gap: .35rem; }
+.validation-finding { display: block; margin: .3rem 0 .9rem; padding: .6rem; }
 .warning { margin: 1rem 0; padding: 1rem; border: 3px solid #f4c95d; border-radius: .5rem; color: #fff1b8; background: #3b2b0b; }
 .conflict h3, .error p { margin: 0; }
 .stream-state { color: #bfd4ca; }
