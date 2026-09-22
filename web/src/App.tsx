@@ -33,6 +33,7 @@ export function App({ api = httpSliceApi, atlasApi = httpAtlasApi, providerReadi
     <>
       <ProposalWorkspace api={api} atlasApi={atlasApi} active={!atlasActive || workflowItem} navigate={navigate} location={location} />
       {atlasActive && !workflowItem && <AtlasApp api={atlasApi} sliceApi={api} readiness={providerReadiness ?? api.readiness} location={location} navigate={navigate} />}
+      <footer className="app-footer">Warden Drydock v{__DRYDOCK_VERSION__}</footer>
     </>
   );
 }

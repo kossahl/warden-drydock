@@ -50,6 +50,11 @@ async function createDraftAndProposal(api: SliceApi) {
 }
 
 describe("proposal browser slice", () => {
+  it("shows the authoritative Drydock version in the shared footer", async () => {
+    render(<App api={fakeApi()} atlasApi={fakeAtlas()} />);
+    expect(await screen.findByRole("contentinfo")).toHaveTextContent("Warden Drydock v0.2.0");
+  });
+
   it("lists ongoing campaigns before the create form and opens the exact head", async () => {
     render(<App api={fakeApi()} atlasApi={fakeAtlas([atlasCampaign, { ...atlasCampaign, campaign_id: "campaign_blocked", campaign_name: "Blocked Campaign", recovery_state: "integrity_blocked" }])} />);
     expect(await screen.findByRole("heading", { level: 1, name: "Campaigns" })).toBeVisible();
