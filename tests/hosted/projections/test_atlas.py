@@ -362,6 +362,45 @@ class AtlasProjectionTests(AtlasFixture):
              {"text": ".", "matched": False}],
             evidence_payload["items"][0]["matches"][0]["parts"],
         )
+        markdown_content = (
+            "# Record\n\n"
+            "## " + "Long heading " + ("x" * 90) + "\n\n"
+            "Needle\n\n"
+            "2 < 3 and 5 > 4\n\n"
+            "> Quoted text.\n"
+        )
+        markdown_record = replace(
+            bundle.records[0],
+            content=markdown_content,
+            content_digest=content_digest(markdown_content),
+        )
+        markdown_bundle = replace(bundle, records=(markdown_record, *bundle.records[1:]))
+        markdown_projections = InMemoryAtlasProjectionRepository()
+        markdown_projections.replace(markdown_bundle)
+        markdown_service = AtlasQueryService(markdown_projections)
+        markdown_query = replace(query, query="< 3")
+        self.assertEqual(
+            ("record-001",),
+            tuple(item.record_id for item in markdown_service.record_library(markdown_query).items),
+        )
+        self.assertEqual(
+            (),
+            tuple(
+                item.record_id
+                for item in markdown_service.record_library(replace(query, query="> Quoted")).items
+            ),
+        )
+        markdown_evidence = markdown_service.record_library(replace(query, query="Needle"))
+        markdown_payload = record_library_contract(markdown_evidence, markdown_bundle, markdown_bundle)
+        self.assertLessEqual(len(markdown_payload["items"][0]["matches"][0]["label"]), 80)
+        self.assertEqual(
+            "Needle",
+            "".join(
+                part["text"]
+                for part in markdown_payload["items"][0]["matches"][0]["parts"]
+                if part["matched"]
+            ),
+        )
         type_only_record = replace(bundle.records[0], record_type="type-only")
         type_only_bundle = replace(
             bundle, records=(type_only_record, *bundle.records[1:])

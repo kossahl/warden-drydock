@@ -135,15 +135,25 @@ class RecordMatch:
 
 _SEARCH_CONTEXT_CHARS = 72
 _SEARCH_EXCERPT_CHARS = 180
+_SEARCH_LABEL_CHARS = 80
 _SEARCH_MATCHES_PER_RECORD = 5
 
 
 def _plain_search_text(value: str) -> str:
     value = re.sub(r"!?(?:\[\[([^\]|]+)(?:\|([^\]]+))?\]\]|\[([^\]]+)\]\([^)]*\))", lambda match: match.group(2) or match.group(3) or match.group(1), value)
-    value = re.sub(r"<[^>]*>", " ", value)
-    value = re.sub(r"[`*_~]", "", value)
+    value = re.sub(r"<!--.*?-->|</?[A-Za-z][^>]*>", " ", value, flags=re.DOTALL)
+    value = re.sub(r"`([^`\n]+)`", r"\1", value)
+    value = re.sub(r"(?<!\w)(\*\*|__|~~|\*|_)(?=\S)(.+?\S)\1(?!\w)", r"\2", value)
+    value = re.sub(r"^\s{0,3}(?:>\s?)+", "", value, flags=re.MULTILINE)
     value = re.sub(r"^\s{0,3}(?:[-+*]|\d+\.)\s+", "", value, flags=re.MULTILINE)
+    value = re.sub(r"^\s{0,3}([-*_])(?:\s*\1){2,}\s*$", "", value, flags=re.MULTILINE)
     return " ".join(value.split())
+
+
+def _bounded_search_label(value: str) -> str:
+    if len(value) <= _SEARCH_LABEL_CHARS:
+        return value
+    return value[:_SEARCH_LABEL_CHARS - 1] + "…"
 
 
 def _content_search_fields(content: str) -> tuple[tuple[str, str, str], ...]:
@@ -154,20 +164,22 @@ def _content_search_fields(content: str) -> tuple[tuple[str, str, str], ...]:
         except ValueError:
             pass
     fields: list[tuple[str, str, str]] = []
-    label = "Record content"
+    search_label = "Record content"
+    display_label = "Record content"
     body: list[str] = []
     heading = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
 
     def add_field() -> None:
         text = _plain_search_text("\n".join(body))
         if text:
-            fields.append(("section", label, f"{label}: {text}"))
+            fields.append(("section", display_label, f"{search_label}: {text}"))
 
     for line in lines:
         match = heading.match(line)
         if match:
             add_field()
-            label = _plain_search_text(match.group(1)) or "Record content"
+            search_label = _plain_search_text(match.group(1)) or "Record content"
+            display_label = _bounded_search_label(search_label)
             body = []
         else:
             body.append(line)

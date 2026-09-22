@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { AtlasApi } from "../api/atlasClient";
 import { httpSliceApi, type SliceApi } from "../api/client";
 import type { AtlasCampaignItem, AtlasFacets, AtlasHistoryCollection, AtlasHistoryEntry, AtlasNeighborhood, AtlasOverview, AtlasRecordLibraryResult, AtlasRecordMatch, AtlasRevisionRef, ProviderReadiness, RawStatus } from "../contracts/v2";
@@ -9,26 +10,43 @@ import { RecordEditor } from "../editor/RecordEditor";
 
 export type ProviderState = ProviderReadiness;
 
+type BackgroundRef = { current: HTMLElement | null };
+const AtlasBackgroundContext = createContext<BackgroundRef | null>(null);
+
 function ProviderStatus({ resource }: { resource: Resource<ProviderState> }) {
   const value = resource.value;
   const label = resource.pending && !value ? "Checking" : !value ? "Unavailable" : !value.provider_configured ? "Setup required" : !value.provider_available ? "Unavailable" : !value.consent_current ? "Consent required" : value.ai_available ? "Ready" : "Unavailable";
   return <span role="status">Provider: {label}</span>;
 }
 
-function RecordEditorSurface({ campaign, route, revision, navigate, backgroundRef }: { campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate; backgroundRef: { current: HTMLElement | null } }) {
+function RecordEditorSurface({ campaign, route, revision, navigate }: { campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate }) {
+  const backgroundRef = useContext(AtlasBackgroundContext);
   const historical = revision.revision_id !== campaign.head_revision.revision_id;
   const isCreate = route.recordId === "__new__";
   const [open, setOpen] = useState(!!route.proposalId || isCreate);
   const trigger = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const surface = useRef<HTMLDivElement>(null);
+  const restoreFocus = useRef(false);
+  const preserveOpenOnProposalClear = useRef(false);
+  const previousRoute = useRef({ recordId: route.recordId, revisionId: revision.revision_id, proposalId: route.proposalId });
   useEffect(() => {
     if (route.proposalId) setOpen(true);
-  }, [route.proposalId]);
+    else if (
+      previousRoute.current.proposalId
+      && previousRoute.current.recordId === route.recordId
+      && !preserveOpenOnProposalClear.current
+    ) {
+      setOpen(false);
+      restoreFocus.current = true;
+    }
+    preserveOpenOnProposalClear.current = false;
+    previousRoute.current = { recordId: route.recordId, revisionId: revision.revision_id, proposalId: route.proposalId };
+  }, [revision.revision_id, route.proposalId, route.recordId]);
   useEffect(() => {
     if (!open || !surface.current) return;
     const surfaceElement = surface.current;
-    const backgroundElement = backgroundRef.current;
+    const backgroundElement = backgroundRef?.current;
     backgroundElement?.toggleAttribute("inert", true);
     const focusable = () => Array.from(surfaceElement.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex='-1'])"));
     const containFocus = (event: KeyboardEvent) => {
@@ -48,43 +66,59 @@ function RecordEditorSurface({ campaign, route, revision, navigate, backgroundRe
         first.focus();
       }
     };
-    const restoreFocus = (event: FocusEvent) => {
+    const redirectFocus = (event: FocusEvent) => {
       if (!surfaceElement.contains(event.target as Node)) closeButton.current?.focus();
     };
     document.addEventListener("keydown", containFocus);
-    document.addEventListener("focusin", restoreFocus);
+    document.addEventListener("focusin", redirectFocus);
     closeButton.current?.focus();
     return () => {
       document.removeEventListener("keydown", containFocus);
-      document.removeEventListener("focusin", restoreFocus);
+      document.removeEventListener("focusin", redirectFocus);
       backgroundElement?.removeAttribute("inert");
+      if (restoreFocus.current) {
+        restoreFocus.current = false;
+        trigger.current?.focus();
+      }
     };
   }, [backgroundRef, open]);
   if (historical && !route.proposalId) return null;
   const close = () => {
     setOpen(false);
-    trigger.current?.focus();
+    restoreFocus.current = true;
     if (route.proposalId) {
       navigate(recordHref(campaign.campaign_id, route.recordId ?? "", { ...stateFromRoute(route, revision.revision_id), proposalId: null, proposalVersion: null }));
     }
   };
+  const editorNavigate: Navigate = (href, replace) => {
+    const nextRoute = parseAtlasRoute(href);
+    if (
+      route.proposalId
+      && !nextRoute.proposalId
+      && nextRoute.recordId === route.recordId
+      && nextRoute.revisionId === revision.revision_id
+    ) {
+      preserveOpenOnProposalClear.current = true;
+    }
+    navigate(href, replace);
+  };
   return <>
     {!historical && !isCreate && <button ref={trigger} type="button" onClick={() => setOpen(true)} aria-expanded={open}>Edit this record</button>}
-    {open && <div ref={surface} className="editor-surface" role="dialog" aria-modal="true" aria-label={historical ? "Review record proposal" : "Edit record"}>
+    {open && createPortal(<div ref={surface} className="editor-surface" role="dialog" aria-modal="true" aria-label={historical ? "Review record proposal" : "Edit record"}>
       <div className="editor-surface-header"><button ref={closeButton} type="button" onClick={close}>Close editor</button></div>
-      <RecordEditor campaignId={campaign.campaign_id} revisionId={revision.revision_id} recordId={route.recordId ?? ""} proposalId={route.proposalId} proposalVersion={route.proposalVersion} navigate={navigate} />
-    </div>}
+      <RecordEditor campaignId={campaign.campaign_id} revisionId={revision.revision_id} recordId={route.recordId ?? ""} proposalId={route.proposalId} proposalVersion={route.proposalVersion} navigate={editorNavigate} />
+    </div>, document.body)}
   </>;
 }
 
 function RecordDetailView(props: { api: AtlasApi; sliceApi: SliceApi; provider: Resource<ProviderState>; campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate; block: (error: unknown) => void }) {
-  const backgroundRef = useRef<HTMLDivElement>(null);
-  return <><div ref={backgroundRef}><RecordDetailContent {...props} /></div><RecordEditorSurface campaign={props.campaign} route={props.route} revision={props.revision} navigate={props.navigate} backgroundRef={backgroundRef} /></>;
+  return <><RecordDetailContent {...props} /><RecordEditorSurface campaign={props.campaign} route={props.route} revision={props.revision} navigate={props.navigate} /></>;
 }
 
 function Shell({ campaign, route, viewed, provider, navigate, children }: { campaign: AtlasCampaignItem; route: AtlasRoute; viewed: AtlasRevisionRef; provider: Resource<ProviderState>; navigate: Navigate; children: ReactNode }) {
   const state = stateFromRoute(route, viewed.revision_id); const navigationState = { ...state, cursor: null, relationshipCursor: null, generationCursor: null, proposalCursor: null, generationId: null, proposalId: null, proposalVersion: null }; const historical = viewed.revision_id !== campaign.head_revision.revision_id;
-  return <div className="app-shell atlas-shell"><a className="skip-link" href="#atlas-content">Skip to main content</a><header className="banner"><div><p className="eyebrow">Local Warden workspace</p><Link href="/" navigate={navigate} className="brand-link">Warden Drydock proposal workspace</Link></div><ProviderStatus resource={provider} /></header><div className="atlas-layout"><aside className="atlas-rail"><p className="atlas-campaign-name">{campaign.campaign_name}</p><nav aria-label="Campaign Atlas"><Link href={atlasHref(campaign.campaign_id, "overview", navigationState)} navigate={navigate} current={route.kind === "overview"}>Overview</Link><Link href={atlasHref(campaign.campaign_id, "records", navigationState)} navigate={navigate} current={route.kind === "records" || route.kind === "record"}>Records</Link><Link href={atlasHref(campaign.campaign_id, "drafts", navigationState)} navigate={navigate} current={route.kind === "drafts"}>Drafts</Link><Link href={atlasHref(campaign.campaign_id, "proposals", navigationState)} navigate={navigate} current={route.kind === "proposals"}>Proposals</Link><Link href={atlasHref(campaign.campaign_id, "revisions", navigationState)} navigate={navigate} current={route.kind === "revisions"}>Revisions</Link></nav></aside><div className="atlas-main-wrap"><aside className="revision-banner" aria-label="Viewed revision"><span>Viewed revision {viewed.ordinal} · <code>{viewed.revision_id}</code> · {historical ? "Historical" : "Head"}</span>{historical && <Link href={openHeadHref(route, campaign.head_revision)} navigate={navigate} className="button-link">Open head</Link>}</aside><main id="atlas-content" className="atlas-main" tabIndex={-1}>{children}</main></div></div></div>;
+  const backgroundRef = useRef<HTMLDivElement>(null);
+  return <AtlasBackgroundContext.Provider value={backgroundRef}><div ref={backgroundRef} className="app-shell atlas-shell"><a className="skip-link" href="#atlas-content">Skip to main content</a><header className="banner"><div><p className="eyebrow">Local Warden workspace</p><Link href="/" navigate={navigate} className="brand-link">Warden Drydock proposal workspace</Link></div><ProviderStatus resource={provider} /></header><div className="atlas-layout"><aside className="atlas-rail"><p className="atlas-campaign-name">{campaign.campaign_name}</p><nav aria-label="Campaign Atlas"><Link href={atlasHref(campaign.campaign_id, "overview", navigationState)} navigate={navigate} current={route.kind === "overview"}>Overview</Link><Link href={atlasHref(campaign.campaign_id, "records", navigationState)} navigate={navigate} current={route.kind === "records" || route.kind === "record"}>Records</Link><Link href={atlasHref(campaign.campaign_id, "drafts", navigationState)} navigate={navigate} current={route.kind === "drafts"}>Drafts</Link><Link href={atlasHref(campaign.campaign_id, "proposals", navigationState)} navigate={navigate} current={route.kind === "proposals"}>Proposals</Link><Link href={atlasHref(campaign.campaign_id, "revisions", navigationState)} navigate={navigate} current={route.kind === "revisions"}>Revisions</Link></nav></aside><div className="atlas-main-wrap"><aside className="revision-banner" aria-label="Viewed revision"><span>Viewed revision {viewed.ordinal} · <code>{viewed.revision_id}</code> · {historical ? "Historical" : "Head"}</span>{historical && <Link href={openHeadHref(route, campaign.head_revision)} navigate={navigate} className="button-link">Open head</Link>}</aside><main id="atlas-content" className="atlas-main" tabIndex={-1}>{children}</main></div></div></div></AtlasBackgroundContext.Provider>;
 }
 
 function Heading({ children, focusKey }: { children: ReactNode; focusKey?: string | null }) {
