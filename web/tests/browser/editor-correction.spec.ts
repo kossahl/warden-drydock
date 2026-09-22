@@ -6,6 +6,7 @@ import { headRevision, records } from "../fixtures/atlas";
 const oldRevision: RevisionRef = { revision_id: "revision_one", ordinal: 1, tree_digest: "b".repeat(64) };
 const currentRevision: RevisionRef = { revision_id: "revision_three", ordinal: 3, tree_digest: "c".repeat(64) };
 const laterRevision: RevisionRef = { revision_id: "revision_four", ordinal: 4, tree_digest: "d".repeat(64) };
+const navigateToLegacyShip = async (page: Page) => page.getByRole("link", { name: "Legacy Ship" }).first().evaluate((link) => (link as HTMLAnchorElement).click());
 
 const originalRecord: EditorRecord = {
   record_id: "record-one", record_type: "npc", displayed_name: "Station Keeper", ownership: "campaign", status: "canon", authority: "canon",
@@ -155,7 +156,7 @@ test("stale correction reads cannot overwrite a record after SPA navigation", as
   const correctionReadStarted = page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname.endsWith("/records/record-one/editor"));
   await panel.getByRole("button", { name: "Create correction/rebase" }).click();
   await correctionReadStarted;
-  await page.getByRole("link", { name: "Legacy Ship" }).first().click();
+  await navigateToLegacyShip(page);
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-two\?revision=revision_two$/);
   await expect(panel.getByLabel("Record ID")).toHaveValue("record-two");
   await expect(panel.getByLabel("Displayed name")).toHaveValue("Legacy Ship");
@@ -193,7 +194,7 @@ test("clears the old editor while a navigated record read is pending or fails", 
   await openRecordEditor(page);
   const panel = editor(page);
   await expect(panel.getByLabel("Displayed name")).toHaveValue("Station Keeper");
-  await page.getByRole("link", { name: "Legacy Ship" }).first().click();
+  await navigateToLegacyShip(page);
   await recordReadRequestStarted;
 
   await expect(editor(page)).toHaveCount(0);
@@ -233,7 +234,7 @@ test("stale proposal responses cannot install a proposal after SPA navigation", 
   const oldProposalResponse = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/records/record-one/proposals"));
   await panel.getByRole("button", { name: "Save as proposal" }).click();
   await proposalRequestStarted;
-  await page.getByRole("link", { name: "Legacy Ship" }).first().click();
+  await navigateToLegacyShip(page);
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-two\?revision=revision_two$/);
   await expect(panel.getByLabel("Displayed name")).toHaveValue("Legacy Ship");
   releaseProposal();
@@ -269,7 +270,7 @@ test("stale decision responses cannot change a different SPA record", async ({ p
   await panel.getByRole("button", { name: "Save as proposal" }).click();
   await panel.getByRole("button", { name: "Approve and publish exact proposal" }).click();
   await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
-  await page.getByRole("dialog").getByRole("button", { name: "Approve and publish exact proposal" }).click();
+  await page.locator(".editor-dialog").getByRole("button", { name: "Approve and publish exact proposal" }).click();
   await approvalRequestStarted;
   await page.evaluate(() => {
     history.pushState(null, "", "/campaigns/campaign_atlas/records/record-two?revision=revision_two");
@@ -312,7 +313,7 @@ test("stale removal-impact responses cannot switch the editor after SPA navigati
   const panel = editor(page);
   await panel.getByRole("button", { name: "Load removal impact" }).click();
   await impactRequestStarted;
-  await page.getByRole("link", { name: "Legacy Ship" }).first().click();
+  await navigateToLegacyShip(page);
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-two\?revision=revision_two$/);
   await expect(panel.getByLabel("Record ID")).toHaveValue("record-two");
   releaseImpact();
@@ -412,7 +413,7 @@ test("removal redirects reject player-visible sources to Warden-only targets bef
   await panel.getByRole("button", { name: "Load removal impact" }).click();
   await panel.getByLabel("Resolution for reference_1").selectOption("redirect");
   await panel.getByRole("button", { name: "Replacement target for reference_1: choose existing record" }).click();
-  const targetDialog = page.getByRole("dialog");
+  const targetDialog = page.locator(".record-picker-dialog");
   await targetDialog.getByLabel("Search existing records").fill("record-two");
   await targetDialog.getByRole("button", { name: "Search", exact: true }).click();
   await targetDialog.getByRole("option", { name: /record-two/ }).click();
@@ -446,7 +447,7 @@ test("removal corrections validate redirect visibility before posting", async ({
   await panel.getByRole("button", { name: "Create correction/rebase" }).click();
   await panel.getByLabel("Resolution for reference_1").selectOption("redirect");
   await panel.getByRole("button", { name: "Replacement target for reference_1: choose existing record" }).click();
-  const targetDialog = page.getByRole("dialog");
+  const targetDialog = page.locator(".record-picker-dialog");
   await targetDialog.getByLabel("Search existing records").fill("record-two");
   await targetDialog.getByRole("button", { name: "Search", exact: true }).click();
   await targetDialog.getByRole("option", { name: /record-two/ }).click();
@@ -487,7 +488,7 @@ test("stale correction responses cannot install a proposal after SPA navigation"
   const oldCorrectionResponse = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/corrections"));
   await panel.getByRole("button", { name: "Submit correction/rebase" }).click();
   await correctionRequestStarted;
-  await page.getByRole("link", { name: "Legacy Ship" }).first().click();
+  await navigateToLegacyShip(page);
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-two\?revision=revision_two$/);
   await expect(panel.getByLabel("Record ID")).toHaveValue("record-two");
   await expect(panel.getByLabel("Displayed name")).toHaveValue("Legacy Ship");

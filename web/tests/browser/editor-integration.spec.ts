@@ -64,7 +64,7 @@ test("editor publishes reviewed section corrections and resolves multiple refere
     const connection = editor.locator(".editor-connection").nth(index);
     const pickerButton = connection.getByRole("button", { name: new RegExp(`Target for connection_${index + 1}: choose existing record`) });
     await pickerButton.click();
-    const targetDialog = page.getByRole("dialog");
+    const targetDialog = page.locator(".record-picker-dialog");
     await expect(targetDialog.getByLabel("Search existing records")).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(targetDialog).toBeHidden();
@@ -129,7 +129,7 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   expect(removal.record_bindings.map((binding) => binding.record_id).sort()).toEqual(["npc-source", "npc-target"]);
   for (const resolution of await resolutions.all()) await expect(resolution).toBeDisabled();
   await editor.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
-  const removalApproval = page.getByRole("dialog");
+  const removalApproval = page.locator(".editor-dialog");
   await expect(removalApproval).toContainText("This record disappears only from the new approved revision");
   await expect(removalApproval).toContainText("Historical revisions retain it");
   await expect(removalApproval).toContainText("npc-source");
@@ -138,7 +138,7 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   await expect(resolutions.first()).toBeEnabled();
   await resolutions.first().selectOption("redirect");
   await editor.getByRole("button", { name: /^Replacement target for .*choose existing record$/ }).click();
-  const replacementDialog = page.getByRole("dialog");
+  const replacementDialog = page.locator(".record-picker-dialog");
   await replacementDialog.getByLabel("Search existing records").fill("npc-source");
   await replacementDialog.getByRole("button", { name: "Search", exact: true }).click();
   await replacementDialog.getByRole("option", { name: /npc-source/ }).click();

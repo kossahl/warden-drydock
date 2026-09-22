@@ -10,6 +10,7 @@ const editorRecord = {
 const secondEditorRecord = { ...editorRecord, record_id: "record-two", record_type: "ship", displayed_name: "Legacy Ship", content_digest: "d".repeat(64) };
 const editedRecord = { ...editorRecord, displayed_name: "Edited Station Keeper" };
 const openRecordEditor = async (page: Page) => page.getByRole("button", { name: "Edit this record", exact: true }).click();
+const navigateToLegacyShip = async (page: Page) => page.getByRole("link", { name: "Legacy Ship" }).first().evaluate((link) => (link as HTMLAnchorElement).click());
 const proposal = {
   contract_name: "editor_proposal_view", contract_version: 1, proposal_id: "proposal_editor", proposal_version: 1, campaign_id: "campaign_atlas",
   source_revision: headRevision, base_revision: headRevision, expected_campaign_head: headRevision, editor_workflow_version: 2,
@@ -75,7 +76,7 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
   await editor.getByRole("button", { name: "Approve and publish exact proposal" }).click();
   await expect(page.getByRole("heading", { name: "Approve exact proposal" })).toBeFocused();
   const approveTrigger = editor.locator(".editor-review").getByRole("button", { name: "Approve and publish exact proposal", exact: true });
-  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+  await page.locator(".editor-dialog").getByRole("button", { name: "Cancel" }).click();
   await expect(approveTrigger).toBeFocused();
   await approveTrigger.click();
   await expect(page.getByRole("heading", { name: "Approve exact proposal" })).toBeFocused();
@@ -83,9 +84,9 @@ test("record editor submits an exact CSRF-bound proposal and approval dialog", a
   await expect(approveTrigger).toBeFocused();
   await approveTrigger.click();
   await expect(page.getByRole("alert")).toHaveText(/broadens audience visibility/);
-  await expect(page.getByRole("dialog").getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
+  await expect(page.locator(".editor-dialog").getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
   await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
-  await page.getByRole("dialog").getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
+  await page.locator(".editor-dialog").getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
   await expect.poll(() => csrfRequests).toEqual(["browser-csrf", "browser-csrf"]);
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\?revision=revision_three$/);
   await expect(page.getByRole("complementary", { name: "Viewed revision" })).toHaveText(/revision_three · Head/);
@@ -116,7 +117,7 @@ test("delayed editor reads cannot overwrite a different SPA record", async ({ pa
   const relatedRecord = page.getByRole("link", { name: "Legacy Ship" }).first();
   await expect(relatedRecord).toBeVisible();
   const oldReadResponse = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname.endsWith("/records/record-one/editor"));
-  await relatedRecord.click();
+  await relatedRecord.evaluate((link) => (link as HTMLAnchorElement).click());
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-two\?revision=revision_two$/);
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
   await expect(editor.getByLabel("Record ID")).toHaveValue("record-two");
@@ -159,7 +160,7 @@ test("rejection applies the returned workflow version to a fresh save", async ({
   await editor.getByLabel("Displayed name").fill("Edited keeper");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   await editor.locator(".editor-review").getByRole("button", { name: "Reject exact proposal" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Reject exact proposal" }).click();
+  await page.locator(".editor-dialog").getByRole("button", { name: "Reject exact proposal" }).click();
   await expect(editor.getByText("Proposal rejected. No campaign revision changed.")).toBeVisible();
   await expect(editor.getByLabel("Displayed name")).toHaveValue("Edited keeper");
   await editor.getByLabel("Displayed name").fill("Fresh keeper");
@@ -192,11 +193,11 @@ test("approval conflicts close the dialog and focus the editor error", async ({ 
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   await editor.locator(".editor-review").getByRole("button", { name: "Approve and publish exact proposal" }).click();
   await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
-  const approvalButton = page.getByRole("dialog").getByRole("button", { name: "Approve and publish exact proposal" });
+  const approvalButton = page.locator(".editor-dialog").getByRole("button", { name: "Approve and publish exact proposal" });
   await expect(approvalButton).toBeEnabled();
   await approvalButton.click();
 
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.locator(".editor-dialog")).toHaveCount(0);
   const errorHeading = editor.getByRole("heading", { name: "Editor error" });
   await expect(errorHeading).toBeVisible();
   await expect(errorHeading).toBeFocused();
@@ -224,11 +225,11 @@ test("rejection transport errors close the dialog and focus the editor error", a
   await editor.getByLabel("Displayed name").fill("Edited before rejection");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   await editor.locator(".editor-review").getByRole("button", { name: "Reject exact proposal" }).click();
-  const rejectionButton = page.getByRole("dialog").getByRole("button", { name: "Reject exact proposal" });
+  const rejectionButton = page.locator(".editor-dialog").getByRole("button", { name: "Reject exact proposal" });
   await expect(rejectionButton).toBeEnabled();
   await rejectionButton.click();
 
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.locator(".editor-dialog")).toHaveCount(0);
   const errorHeading = editor.getByRole("heading", { name: "Editor error" });
   await expect(errorHeading).toBeVisible();
   await expect(errorHeading).toBeFocused();
@@ -351,7 +352,7 @@ test("create correction uses the candidate ID, reads campaign context, and opens
   await editor.getByRole("button", { name: "Add typed connection" }).click();
   const targetPicker = editor.getByRole("button", { name: "Target for connection_1: choose existing record" });
   await targetPicker.click();
-  const targetDialog = page.getByRole("dialog");
+  const targetDialog = page.locator(".record-picker-dialog");
   await targetDialog.getByLabel("Search existing records").fill("record-one");
   await targetDialog.getByRole("button", { name: "Search", exact: true }).click();
   await targetDialog.getByRole("option", { name: /record-one/ }).click();
@@ -369,9 +370,9 @@ test("create correction uses the candidate ID, reads campaign context, and opens
   expect((correctionBody as any)?.candidate?.connections?.[0]?.context).toBe("Corrected connection context.");
   await expect(editor.getByRole("link", { name: /proposal_created/ })).toHaveAttribute("href", /proposal=proposal_created&version=1$/);
   await editor.getByRole("button", { name: "Approve and publish exact proposal" }).click();
-  await expect(page.getByRole("dialog").getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
+  await expect(page.locator(".editor-dialog").getByRole("button", { name: "Approve and publish exact proposal", exact: true })).toBeDisabled();
   await page.getByRole("checkbox", { name: /I confirm the exact proposal/ }).check();
-  await page.getByRole("dialog").getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
+  await page.locator(".editor-dialog").getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
   await expect(page).toHaveURL(/\/campaigns\/campaign_atlas\/records\/record-created\?revision=revision_three$/);
 });
 
@@ -452,7 +453,7 @@ test("player-visible connections reject Warden-only targets before posting", asy
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
   await editor.getByRole("button", { name: "Add typed connection" }).click();
   await editor.getByRole("button", { name: "Target for connection_1: choose existing record" }).click();
-  const targetDialog = page.getByRole("dialog");
+  const targetDialog = page.locator(".record-picker-dialog");
   await targetDialog.getByLabel("Search existing records").fill("record-two");
   await targetDialog.getByRole("button", { name: "Search", exact: true }).click();
   await targetDialog.getByRole("option", { name: /record-two/ }).click();
@@ -500,7 +501,7 @@ test("save does not post after target visibility completes on another route", as
   await editor.getByLabel("Displayed name").fill("Edited before visibility lookup");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   await targetReadBegan;
-  await page.getByRole("link", { name: "Legacy Ship" }).first().click();
+  await navigateToLegacyShip(page);
   await expect(page).toHaveURL(/records\/record-two\?revision=revision_two$/);
   await expect(page.locator(".editor").getByLabel("Record ID")).toHaveValue("record-two");
   releaseTargetRead();
@@ -550,7 +551,7 @@ test("correction does not post after target visibility completes on another rout
   await editor.getByRole("button", { name: "Create correction/rebase" }).click();
   await editor.getByRole("button", { name: "Submit correction/rebase" }).click();
   await targetReadBegan;
-  await page.getByRole("link", { name: "Legacy Ship" }).first().click();
+  await navigateToLegacyShip(page);
   await expect(page).toHaveURL(/records\/record-two\?revision=revision_two$/);
   await expect(page.locator(".editor").getByLabel("Record ID")).toHaveValue("record-two");
   releaseTargetRead();

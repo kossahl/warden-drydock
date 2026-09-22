@@ -132,6 +132,12 @@ test("record pages stay read-only until the editor is opened", async ({ page }) 
   await expect(page.getByRole("button", { name: "Edit this record", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Edit this record", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Edit record" })).toBeVisible();
+  const surface = page.locator(".editor-surface");
+  await expect(surface).toHaveAttribute("role", "dialog");
+  await expect(surface).toHaveAttribute("aria-modal", "true");
+  await expect(surface.getByRole("button", { name: "Close editor", exact: true })).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect.poll(() => page.evaluate(() => document.activeElement?.closest(".editor-surface") !== null)).toBeTruthy();
   await expect.poll(() => editorReads).toBe(1);
   await page.getByRole("button", { name: "Close editor", exact: true }).click();
   await expect(page).toHaveURL("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
