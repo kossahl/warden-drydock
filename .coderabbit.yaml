@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+
+tone_instructions: >
+  Write one inline comment per independent finding. Anchor it to the relevant
+  changed line. Use a short title and 2-4 sentences covering impact and fix.
+  Do not combine findings or include tool output, doc checks, or AI prompts.
+
+reviews:
+  profile: chill
+
+  enable_prompt_for_ai_agents: false
+  review_details: false
+  review_status: false
+
+  high_level_summary: true
+  high_level_summary_in_walkthrough: false
+  high_level_summary_instructions: |
+    Use the summary only for findings that cannot be attached to a changed line.
+    Do not repeat inline findings.
+    Keep it to one short verdict and a list of unanchored findings.
+
+  collapse_walkthrough: false
+  changed_files_summary: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  poem: false
+  in_progress_fortune: false
+
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+    title:
+      mode: "off"
+    description:
+      mode: "off"
+    issue_assessment:
+      mode: "off"
+    custom_checks: []
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
