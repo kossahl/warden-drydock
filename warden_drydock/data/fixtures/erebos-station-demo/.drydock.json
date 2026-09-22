@@ -1,0 +1,8 @@
+{
+  "framework": "warden-drydock",
+  "framework_version": "0.2.0",
+  "adapter": "mothership",
+  "adapter_version": "0.2.0",
+  "ownership_model": 1,
+  "campaign_name": "Erebos Station Demo"
+}
