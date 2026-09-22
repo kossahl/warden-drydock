@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { digest, recomputeRecordDigest, type EditorProposal, type EditorRecord, type EditorRecordView } from "../../src/editor/editorClient";
+import type { EditorProposal, EditorRecord, EditorRecordView } from "../../src/editor/editorClient";
 
 // Exercise the shipped client against the real HTTP/engine/revision services.
 // Mock responses cannot catch incompatible connection IDs or publication drift.
@@ -179,28 +179,15 @@ test("live editor preserves context after backend relationship validation failur
   await targetDialog.getByRole("option", { name: /campaign-main/ }).click();
   await connection.getByLabel("Context", { exact: true }).fill("A valid target before the boundary test.");
 
-  let realProposalRequests = 0;
-  await page.route("**/api/v1/**", async (route) => {
-    const request = route.request();
-    const path = new URL(request.url()).pathname;
-    if (request.method() !== "POST" || !path.endsWith("/editor/records/proposals")) return route.fallback();
-    realProposalRequests += 1;
-    const body = request.postDataJSON() as { binding: Record<string, unknown>; candidate: EditorRecord; operation_request: Record<string, unknown> };
-    const candidate: EditorRecord = {
-      ...body.candidate,
-      connections: body.candidate.connections.map((item, index) => index === 0 ? { ...item, target_record_id: "missing-target" } : item),
-    };
-    candidate.content_digest = await recomputeRecordDigest(candidate);
-    const operation_request = {
-      ...body.operation_request,
-      payload_digest: await digest({ binding: body.binding, candidate }),
-    };
-    await route.continue({ postData: JSON.stringify({ ...body, candidate, operation_request }) });
-  });
+  const hideTarget = await page.request.post(`/__test_hide_atlas_record__?campaign_id=${campaign.campaign_id}&revision_id=${revision.revision_id}&record_id=campaign-main`);
+  expect(hideTarget.status()).toBe(204);
 
+  const proposalRequest = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith("/editor/records/proposals"));
   const failedProposal = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/editor/records/proposals"));
   await editor.getByRole("button", { name: "Submit create proposal", exact: true }).click();
+  const request = await proposalRequest;
   const response = await failedProposal;
+  expect(request.postDataJSON().candidate.connections[0].target_record_id).toBe("campaign-main");
   expect(response.status(), await response.text()).toBe(422);
   const payload = await response.json() as { error: { category: string; code: string; findings: Array<Record<string, unknown>> } };
   expect(payload.error.category).toBe("proposal_validation_failure");
@@ -215,7 +202,6 @@ test("live editor preserves context after backend relationship validation failur
     }),
   ]);
   expect(JSON.stringify(payload)).not.toContain("missing-target");
-  expect(realProposalRequests).toBe(1);
 
   await expect(editor.getByRole("heading", { name: "Editor error" })).toBeFocused();
   const findings = editor.getByRole("list", { name: "Validation findings" });
@@ -224,7 +210,10 @@ test("live editor preserves context after backend relationship validation failur
   await expect(findings).toContainText("Choose an existing record as the target.");
   await expect(editor.getByLabel("Record ID", { exact: true })).toHaveValue("npc-live-validation");
   await expect(editor.getByLabel("Displayed name", { exact: true })).toHaveValue("Live validation record");
+  await expect(editor.getByLabel("Status", { exact: true })).toHaveValue("draft");
+  await expect(editor.getByLabel("summary", { exact: true })).toHaveValue("The editor keeps this value after the server rejects the proposal.\n");
   await expect(connection).toContainText("campaign-main");
+  await expect(connection.getByLabel("Context", { exact: true })).toHaveValue("A valid target before the boundary test.");
 
   const campaigns = await page.request.get("/api/v1/campaigns");
   expect(campaigns.status()).toBe(200);
