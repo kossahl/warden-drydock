@@ -64,7 +64,7 @@ test("editor publishes reviewed section corrections and resolves multiple refere
     const connection = editor.locator(".editor-connection").nth(index);
     const pickerButton = connection.getByRole("button", { name: new RegExp(`Target for connection_${index + 1}: choose existing record`) });
     await pickerButton.click();
-    const targetDialog = page.getByRole("dialog");
+    const targetDialog = page.locator(".record-picker-dialog");
     await expect(targetDialog.getByLabel("Search existing records")).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(targetDialog).toBeHidden();
@@ -84,6 +84,7 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   expect(original.record.connections).toHaveLength(2);
 
   await page.goto(recordUrl("npc-source"));
+  await page.getByRole("button", { name: "Edit this record", exact: true }).click();
   await editor.getByLabel("summary", { exact: true }).fill("First\nsecond\nthird\nfourth\nfifth\nsixth\n");
   await editor.getByLabel("wants", { exact: true }).fill("Replacement second section.\n");
   const priorProposal = await submit("Save as proposal");
@@ -101,6 +102,7 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   expect((await read("npc-source", originalRevision)).record).toEqual(original.record);
 
   await page.goto(recordUrl("npc-target"));
+  await page.getByRole("button", { name: "Edit this record", exact: true }).click();
   await editor.getByRole("button", { name: "Load removal impact", exact: true }).click();
   await expect(editor.getByRole("button", { name: "Cancel removal", exact: true })).toBeVisible();
   await editor.getByRole("button", { name: "Cancel removal", exact: true }).click();
@@ -127,7 +129,7 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   expect(removal.record_bindings.map((binding) => binding.record_id).sort()).toEqual(["npc-source", "npc-target"]);
   for (const resolution of await resolutions.all()) await expect(resolution).toBeDisabled();
   await editor.getByRole("button", { name: "Approve and publish exact proposal", exact: true }).click();
-  const removalApproval = page.getByRole("dialog");
+  const removalApproval = page.locator(".editor-dialog");
   await expect(removalApproval).toContainText("This record disappears only from the new approved revision");
   await expect(removalApproval).toContainText("Historical revisions retain it");
   await expect(removalApproval).toContainText("npc-source");
@@ -136,7 +138,7 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   await expect(resolutions.first()).toBeEnabled();
   await resolutions.first().selectOption("redirect");
   await editor.getByRole("button", { name: /^Replacement target for .*choose existing record$/ }).click();
-  const replacementDialog = page.getByRole("dialog");
+  const replacementDialog = page.locator(".record-picker-dialog");
   await replacementDialog.getByLabel("Search existing records").fill("npc-source");
   await replacementDialog.getByRole("button", { name: "Search", exact: true }).click();
   await replacementDialog.getByRole("option", { name: /npc-source/ }).click();

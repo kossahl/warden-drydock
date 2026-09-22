@@ -91,6 +91,14 @@ test("historical record lists do not offer create", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Create typed record", exact: true })).toHaveCount(0);
 });
 
+test("historical record pages do not offer editing", async ({ page }) => {
+  await installAtlasApi(page);
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_one");
+  await expect(page.getByRole("heading", { level: 1, name: "Station Keeper" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit this record", exact: true })).toHaveCount(0);
+  await expect(page.locator(".editor")).toHaveCount(0);
+});
+
 test("Record content replaces Connections syntax with readable revision-pinned links", async ({ page }) => {
   await installAtlasApi(page);
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
@@ -105,6 +113,35 @@ test("Record content replaces Connections syntax with readable revision-pinned l
   await expect(recordContent.locator("pre")).toContainText("- `knows` → [[record-two|Legacy Ship]] (`current`) — The keeper relies on Legacy Ship.");
   await expect(page.getByRole("heading", { name: "Relationships" })).toBeVisible();
   await expect(page.getByRole("group", { name: "Relationship view" })).toBeVisible();
+});
+
+test("record pages stay read-only until the editor is opened", async ({ page }) => {
+  await installAtlasApi(page);
+  let editorReads = 0;
+  await page.route("**/api/v1/**/records/record-one/editor", async (route) => {
+    editorReads += 1;
+    return route.fulfill({ json: {
+      contract_name: "editor_record_view", contract_version: 1, campaign_id: "campaign_atlas",
+      viewed_revision: headRevision, head_revision: headRevision, editor_workflow_version: 1,
+      historical: false, editable: true,
+      record: { record_id: "record-one", record_type: "npc", displayed_name: "Station Keeper", status: "canon", authority: "canon", visibility: { audience: "warden", warden_only: true }, fields: [], sections: [], connections: [], content_digest: "c".repeat(64) },
+    } });
+  });
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await expect(page.locator(".editor")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Edit this record", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Edit this record", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Edit record" })).toBeVisible();
+  const surface = page.locator(".editor-surface");
+  await expect(surface).toHaveAttribute("role", "dialog");
+  await expect(surface).toHaveAttribute("aria-modal", "true");
+  await expect(surface.getByRole("button", { name: "Close editor", exact: true })).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect.poll(() => page.evaluate(() => document.activeElement?.closest(".editor-surface") !== null)).toBeTruthy();
+  await expect.poll(() => editorReads).toBe(1);
+  await page.getByRole("button", { name: "Close editor", exact: true }).click();
+  await expect(page).toHaveURL("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+  await expect(page.locator(".editor")).toHaveCount(0);
 });
 
 test("Atlas navigation and filters work by keyboard at 320 by 720 without page overflow", async ({ page }) => {

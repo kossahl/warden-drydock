@@ -15,8 +15,71 @@ function ProviderStatus({ resource }: { resource: Resource<ProviderState> }) {
   return <span role="status">Provider: {label}</span>;
 }
 
+function RecordEditorSurface({ campaign, route, revision, navigate, backgroundRef }: { campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate; backgroundRef: { current: HTMLElement | null } }) {
+  const historical = revision.revision_id !== campaign.head_revision.revision_id;
+  const isCreate = route.recordId === "__new__";
+  const [open, setOpen] = useState(!!route.proposalId || isCreate);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const surface = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (route.proposalId) setOpen(true);
+  }, [route.proposalId]);
+  useEffect(() => {
+    if (!open || !surface.current) return;
+    const surfaceElement = surface.current;
+    const backgroundElement = backgroundRef.current;
+    backgroundElement?.toggleAttribute("inert", true);
+    const focusable = () => Array.from(surfaceElement.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex='-1'])"));
+    const containFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const elements = focusable();
+      if (!elements.length) return;
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (!surfaceElement.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    const restoreFocus = (event: FocusEvent) => {
+      if (!surfaceElement.contains(event.target as Node)) closeButton.current?.focus();
+    };
+    document.addEventListener("keydown", containFocus);
+    document.addEventListener("focusin", restoreFocus);
+    closeButton.current?.focus();
+    return () => {
+      document.removeEventListener("keydown", containFocus);
+      document.removeEventListener("focusin", restoreFocus);
+      backgroundElement?.removeAttribute("inert");
+    };
+  }, [backgroundRef, open]);
+  if (historical && !route.proposalId) return null;
+  const close = () => {
+    setOpen(false);
+    trigger.current?.focus();
+    if (route.proposalId) {
+      navigate(recordHref(campaign.campaign_id, route.recordId ?? "", { ...stateFromRoute(route, revision.revision_id), proposalId: null, proposalVersion: null }));
+    }
+  };
+  return <>
+    {!historical && !isCreate && <button ref={trigger} type="button" onClick={() => setOpen(true)} aria-expanded={open}>Edit this record</button>}
+    {open && <div ref={surface} className="editor-surface" role="dialog" aria-modal="true" aria-label={historical ? "Review record proposal" : "Edit record"}>
+      <div className="editor-surface-header"><button ref={closeButton} type="button" onClick={close}>Close editor</button></div>
+      <RecordEditor campaignId={campaign.campaign_id} revisionId={revision.revision_id} recordId={route.recordId ?? ""} proposalId={route.proposalId} proposalVersion={route.proposalVersion} navigate={navigate} />
+    </div>}
+  </>;
+}
+
 function RecordDetailView(props: { api: AtlasApi; sliceApi: SliceApi; provider: Resource<ProviderState>; campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate; block: (error: unknown) => void }) {
-  return <><RecordDetailContent {...props} /><RecordEditor campaignId={props.campaign.campaign_id} revisionId={props.revision.revision_id} recordId={props.route.recordId ?? ""} proposalId={props.route.proposalId} proposalVersion={props.route.proposalVersion} navigate={props.navigate} /></>;
+  const backgroundRef = useRef<HTMLDivElement>(null);
+  return <><div ref={backgroundRef}><RecordDetailContent {...props} /></div><RecordEditorSurface campaign={props.campaign} route={props.route} revision={props.revision} navigate={props.navigate} backgroundRef={backgroundRef} /></>;
 }
 
 function Shell({ campaign, route, viewed, provider, navigate, children }: { campaign: AtlasCampaignItem; route: AtlasRoute; viewed: AtlasRevisionRef; provider: Resource<ProviderState>; navigate: Navigate; children: ReactNode }) {
