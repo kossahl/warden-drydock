@@ -64,6 +64,15 @@ describe("Campaign Atlas browser experience", () => {
     expect(window.location.search).not.toContain("cursor=");
   });
 
+  it("renders records as an accessible table with revision-bound links", async () => {
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records?revision=revision_one");
+    render(<App atlasApi={fakeAtlas()} providerReadiness={async () => readinessUnavailable} />);
+    const table = await screen.findByRole("table", { name: "Campaign records" });
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+    expect(within(table).getByRole("link", { name: "Station Keeper" })).toHaveAttribute("href", expect.stringContaining("revision=revision_one"));
+    expect(within(table).getByRole("columnheader", { name: "Summary" })).toBeVisible();
+  });
+
   it("keeps an open create proposal when searching records", async () => {
     window.history.replaceState(null, "", "/campaigns/campaign_atlas/records?revision=revision_two&proposal=proposal_create&version=1");
     render(<App atlasApi={fakeAtlas()} providerReadiness={async () => readinessUnavailable} />);
