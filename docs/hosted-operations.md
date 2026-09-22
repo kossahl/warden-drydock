@@ -24,6 +24,14 @@ docker compose up --build --wait
 ./docker/manage-provider-secret.ps1 -Action Verify
 ```
 
+The local Compose default also seeds the repository's Erebos Station Demo
+fixture before the application server starts. The fixture contains the
+selected Revision 2 content; on a completely empty database it is published
+as the initial seed revision because Revision 1 is intentionally not shipped.
+It publishes only when the fixture campaign ID is absent; an existing
+campaign is never overwritten or deleted. To start an empty local MVP instead, set
+`DRYDOCK_SEED_FIXTURES=0` for that Compose invocation.
+
 The initialization step copies the database credential into a project-scoped
 Docker volume as `root:20000` with mode `0440`. Both runtime users receive only
 that supplemental read group. This avoids Docker Desktop's Windows file-secret

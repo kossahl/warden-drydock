@@ -1,0 +1,287 @@
+{
+  "schema_version": 1,
+  "framework_version": "0.2.0",
+  "adapter_version": "0.2.0",
+  "files": {
+    ".gitignore": {
+      "ownership": "framework",
+      "sha256": "3c00ad003cd74bb2c9f30ba310a0ce3f151b4296a911f3462cc3f6a13c598a4a"
+    },
+    "00-drydock/adapter.json": {
+      "ownership": "adapter",
+      "sha256": "8344ca62a2127c47e0dbbd183bc476ab3a6339f35a946e345cb9464fd98e2d16"
+    },
+    "00-drydock/ai-context.md": {
+      "ownership": "generated",
+      "sha256": "5f85a8f846c6673ffe353e653eb17c1def10f33680f60b8a5494fc382ff9b527"
+    },
+    "00-drydock/canon-policy.md": {
+      "ownership": "framework",
+      "sha256": "59773993823024e98dacd04a5f2bee92ad7b9d85d58b283f4178161c39bedd79"
+    },
+    "00-drydock/connection-index.md": {
+      "ownership": "generated",
+      "sha256": "d7a801486a9d14e3c4e94d5c4474ced8add5f54d022dff6789f6fb264da9b645"
+    },
+    "00-drydock/current-state.md": {
+      "ownership": "campaign",
+      "sha256": "eb27c7d73c85f644612cb109bdd2fb321889bf4c078925d0d700e334e043a3cf"
+    },
+    "00-drydock/entity-index.md": {
+      "ownership": "generated",
+      "sha256": "3ae5558847ad010214f710433df86de6dc3edcedc8e2e89d146c0e0546e1309a"
+    },
+    "00-drydock/system-principles.md": {
+      "ownership": "adapter",
+      "sha256": "22fd0cef7f2f3669b86d5fbfa567564ce60c1f622539a922f90a4f1d8c620829"
+    },
+    "01-campaign/campaign-overview.md": {
+      "ownership": "campaign",
+      "sha256": "bec995aa1c5abfcc8fa5fad53847b6939465bc5f0a73be2e1f2743c56c568a29"
+    },
+    "02-players/characters/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "03-world/locations/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "03-world/systems/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "04-factions/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "05-npcs/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "06-creatures/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "07-ships/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "08-items/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "09-mysteries/clues/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "09-mysteries/false-beliefs/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "09-mysteries/revelations/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "10-adventures/abandoned/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "10-adventures/active/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "10-adventures/available/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "10-adventures/completed/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "11-campaign-engine/clocks/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "11-campaign-engine/consequences/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "11-campaign-engine/faction-turns/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "12-sessions/debriefs/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "12-sessions/logs/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "12-sessions/preparation/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "13-handouts/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "14-random-tables/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "15-design-sandbox/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "16-inbox/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "99-archive/.gitkeep": {
+      "ownership": "framework",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "AGENTS.md": {
+      "ownership": "framework",
+      "sha256": "a09403be0aec3526b9677974e5becb4292ac131e78751fbb1365396b0c15ea36"
+    },
+    "CHANGELOG.md": {
+      "ownership": "framework",
+      "sha256": "accc062ae3c1854f37ecd03f7c537e20d28a603bd314f843698e9e1f9966e05e"
+    },
+    "CLAUDE.md": {
+      "ownership": "framework",
+      "sha256": "403d189f868c7e579922951086f9b40dc6ecf94550ac5421fb402a4af9d6bb82"
+    },
+    "README.md": {
+      "ownership": "framework",
+      "sha256": "4e2774195c03c6a97b4fae19be7e068eca49613439df61e3fcbd47bfd7cc9f50"
+    },
+    "docs/campaign-inception.md": {
+      "ownership": "adapter",
+      "sha256": "203e06b9ed70902c7bccdfb93f90de7cf2bd448a84ae5a33fb08fe7953181de1"
+    },
+    "docs/canon-and-revelation.md": {
+      "ownership": "adapter",
+      "sha256": "67bb84c212c2a970c282d81f81702f70eb85ff286660313142fbc3fbef2ecf59"
+    },
+    "docs/debrief-workflow.md": {
+      "ownership": "adapter",
+      "sha256": "ddc0fb14e808285a85b0a999f0c3af517205632d9c2666eb48c0b678b8414178"
+    },
+    "docs/faction-turn-workflow.md": {
+      "ownership": "adapter",
+      "sha256": "691700031bcd6b950993a903242e13a5dd831189e83e80950a23d0422d07e497"
+    },
+    "docs/handout-safety.md": {
+      "ownership": "adapter",
+      "sha256": "bb6e5415cb00922fd7ce1dd7610514967c59e556306ff19a4e326a09dffc428a"
+    },
+    "docs/mothership-adapter.md": {
+      "ownership": "adapter",
+      "sha256": "57460f245abd8024c93290010d428d1b0bd92e2694fdc75d35a0b96b0aeb81cf"
+    },
+    "docs/mystery-design.md": {
+      "ownership": "adapter",
+      "sha256": "6ef02b2d98897f8deaaa102e64faa6fa49957c7e29fdd91f4265ebca86533a90"
+    },
+    "docs/session-preparation.md": {
+      "ownership": "adapter",
+      "sha256": "071a376ddf8f0f5a8273342f817c7674beca1e411ec2607222a9905e5294277a"
+    },
+    "docs/situation-design.md": {
+      "ownership": "adapter",
+      "sha256": "1cd8b50c03609df2e8af72c711be18b12ef47728d01f902e18b4d952b46e2484"
+    },
+    "docs/world-state.md": {
+      "ownership": "adapter",
+      "sha256": "6992055c98ee7803c094a7dddbb48e51894f005331f4b142e61b64afbe52fbe9"
+    },
+    "scripts/drydock.py": {
+      "ownership": "framework",
+      "sha256": "76305d8f27c707da7acd8d77669eb8ce0e0eff9acf36c5666a54d8d9f9dca13e"
+    },
+    "templates/adventure.md": {
+      "ownership": "shared",
+      "sha256": "94af740f83c6e3830eb9d81097dc4e76d6d22b2ba9ae7a6f8c648b8e0b0b9319"
+    },
+    "templates/character.md": {
+      "ownership": "shared",
+      "sha256": "16d3581c706c922a067f6a43134171a70e5b3a56790ce5c504e593597f4646a8"
+    },
+    "templates/clock.md": {
+      "ownership": "shared",
+      "sha256": "6e6db5a322e5395ce6c2addb3526c5613ef3657e20779b5c4e5372dcd1ab0fc2"
+    },
+    "templates/clue.md": {
+      "ownership": "shared",
+      "sha256": "fbd6ed1a1390fe18c8959b89c15d94358b8bf1fe036c4ab1f577e5f6ab98a059"
+    },
+    "templates/consequence.md": {
+      "ownership": "shared",
+      "sha256": "97b408318f8a1fe0f7afb709af44004e480c14059e7aba2e946712451dc08f40"
+    },
+    "templates/creature.md": {
+      "ownership": "shared",
+      "sha256": "e4b80857104dcee22f621d73d0900b93e98f56daddcb2a0b0967c55e69fc8aef"
+    },
+    "templates/debrief.md": {
+      "ownership": "shared",
+      "sha256": "e0f2cc0959c9f232ed8c6dbb2ca7e4bc500aebdfe44ac1fe378c63ae74f62c53"
+    },
+    "templates/faction-turn.md": {
+      "ownership": "shared",
+      "sha256": "3f637b67938ff80140013f62273e1e97b660cb7e8ea6fd5d5fac46aebd6a6bdc"
+    },
+    "templates/faction.md": {
+      "ownership": "shared",
+      "sha256": "097ac874beb0967f4093c1e5cc19551090c7d17ca58c0c903b696b6a09d7ebc7"
+    },
+    "templates/false-belief.md": {
+      "ownership": "shared",
+      "sha256": "39957c56e76ca83ac571df5517210fe77225673ac517d4398d392071bc6f1a7c"
+    },
+    "templates/handout.md": {
+      "ownership": "shared",
+      "sha256": "b222b16a6aecdbc0b941cd8d7a5e779f1792d08233852f74e19e4ceb045b04a2"
+    },
+    "templates/item.md": {
+      "ownership": "shared",
+      "sha256": "35cbbf208cb201ae42f7251d635af7c73e95b248d6069cde906f5ed09dd4682e"
+    },
+    "templates/location.md": {
+      "ownership": "shared",
+      "sha256": "6171b4c50f5a0611e9a668f63c985b6ac362e143c6a8119d9fcbecaa24c5bda6"
+    },
+    "templates/npc.md": {
+      "ownership": "shared",
+      "sha256": "50feb9ed0ef77beac005a21ee0542428585667c6e16a5a116809e1d2085c35e7"
+    },
+    "templates/random-table.md": {
+      "ownership": "shared",
+      "sha256": "316ccefdb6f8f2d60087e9ed21b827cac756021a2570baca918ccb5edea77f3c"
+    },
+    "templates/revelation.md": {
+      "ownership": "shared",
+      "sha256": "8de80fd15c4c3d1ed451c291a635c2dbb9cc2d151945040c271c100432185693"
+    },
+    "templates/session-log.md": {
+      "ownership": "shared",
+      "sha256": "56c02aa6acdf1b495be062aefd2f64db96c2dd620b565569e0b4bf10325ab876"
+    },
+    "templates/session-prep.md": {
+      "ownership": "shared",
+      "sha256": "c05b06f7b86d21d19cdc1d4fd6fc903d6ecb2e753fce4818250bdb49c0d0cbb0"
+    },
+    "templates/ship.md": {
+      "ownership": "shared",
+      "sha256": "e2d3e4fda5cbd9ca80af459d36d3424d1fb2f823aecfbf56e1be287a5c101130"
+    },
+    "templates/system.md": {
+      "ownership": "shared",
+      "sha256": "d23cacdbe4ffecb61ca6ab0ad98ba89a8d5c1ec111eb5ac1cae2a265e258f702"
+    }
+  }
+}
