@@ -658,7 +658,7 @@ def create_entity(root: Path, kind: str, entity_id: str, name: str | None) -> Pa
                 r"(?m)^name:\s*.*$", lambda _match: f"name: {escaped_name}", text, count=1
             )
         text = re.sub(
-            r"(?m)^# (Name|Adventure|Session)$",
+            r"(?m)^# (Name|Adventure|Session|Session Preparation|Session Debrief)$",
             lambda _match: f"# {name}",
             text,
             count=1,

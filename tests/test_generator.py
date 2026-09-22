@@ -421,6 +421,8 @@ class GeneratorTest(unittest.TestCase):
                     text=created.read_text(encoding='utf-8')
                     for check in checks:
                         check(text)
+                    if kind in {'session-prep', 'debrief'}:
+                        self.assertIn(f'# {name}', text)
             self.assertEqual(validate_campaign(root),0)
 
     def test_player_handout_enforces_adapter_secrecy_contract(self):

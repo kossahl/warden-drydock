@@ -14,6 +14,7 @@ from warden_drydock.hosted.projections import (
 from warden_drydock.hosted.projections.atlas_models import canonical_digest
 from warden_drydock.hosted.revisions import (
     FileSnapshotStore,
+    IntentStatus,
     PostgresWorkflowRepository,
     PublicationIntent,
     PublicationKind,
@@ -42,6 +43,41 @@ EREBOS_STATION_DEMO = CampaignFixture(
 )
 
 
+def _seed_identity(
+    fixture: CampaignFixture,
+    tree_digest: str,
+    store: FileSnapshotStore,
+    workflow,
+) -> tuple[str, str, str]:
+    """Choose a deterministic identity that is not poisoned by a quarantine."""
+    attempt = 0
+    while True:
+        suffix = (
+            tree_digest[:20]
+            if attempt == 0
+            else canonical_digest(
+                {"attempt": attempt, "tree_digest": tree_digest}
+            )[:20]
+        )
+        revision_id = f"revision_fixture_{suffix}"
+        intent_id = f"intent_fixture_{fixture.campaign_id}_{suffix}"
+        intent_token = f"token_fixture_{suffix}"
+        matches = workflow.matching_intents(intent_token)
+        quarantined = (
+            store.quarantine
+            / tree_digest
+            / fixture.campaign_id
+            / revision_id
+        ).exists()
+        if not matches and not quarantined:
+            return revision_id, intent_id, intent_token
+        if matches and not all(
+            item.status is IntentStatus.QUARANTINED for item in matches
+        ):
+            raise RuntimeError("fixture seed identity is already in use")
+        attempt += 1
+
+
 def seed_campaign(
     fixture: CampaignFixture,
     source: Path,
@@ -66,11 +102,11 @@ def seed_campaign(
     ):
         raise RuntimeError("fixture metadata does not match its seed definition")
 
+    store = FileSnapshotStore(snapshot_root)
     _, tree_digest = canonicalize_tree(source)
-    suffix = tree_digest[:20]
-    revision_id = f"revision_fixture_{suffix}"
-    intent_id = f"intent_fixture_{fixture.campaign_id}_{suffix}"
-    intent_token = f"token_fixture_{suffix}"
+    revision_id, intent_id, intent_token = _seed_identity(
+        fixture, tree_digest, store, workflow
+    )
     change_digest = canonical_digest(
         {
             "adapter_id": fixture.adapter_id,
@@ -92,7 +128,6 @@ def seed_campaign(
         change_digest,
     )
 
-    store = FileSnapshotStore(snapshot_root)
     revisions = RevisionService(store, workflow)
     rebuilder = AtlasProjectionRebuilder(store, atlas, workflow)
     return revisions.publish(

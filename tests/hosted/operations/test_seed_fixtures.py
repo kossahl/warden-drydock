@@ -121,6 +121,55 @@ class FixtureSeedTests(unittest.TestCase):
             self.assertIsNone(result)
             self.assertEqual((), FileSnapshotStore(root / "snapshots").inventory())
 
+    def test_quarantined_seed_gets_a_new_attempt_identity(self) -> None:
+        fixture = CampaignFixture(
+            "campaign_fixture",
+            "Fixture Campaign",
+            "mothership",
+            "test-fixture",
+        )
+
+        class FailingOnceAtlas(InMemoryAtlasProjectionRepository):
+            failed = False
+
+            def replace(self, bundle):
+                if not self.failed:
+                    self.failed = True
+                    raise RuntimeError("synthetic projection failure")
+                super().replace(bundle)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = self.source(root / "source")
+            snapshots = root / "snapshots"
+            workflow = InMemoryWorkflowRepository()
+            atlas = FailingOnceAtlas()
+
+            with self.assertRaises(RuntimeError):
+                seed_campaign(
+                    fixture,
+                    source,
+                    snapshots,
+                    workflow,
+                    atlas,
+                    validation_contract_digest="f" * 64,
+                )
+
+            first_revision = next(iter(workflow.intents.values())).revision_id
+            retry = seed_campaign(
+                fixture,
+                source,
+                snapshots,
+                workflow,
+                atlas,
+                validation_contract_digest="f" * 64,
+            )
+
+            self.assertIsNotNone(retry)
+            self.assertNotEqual(first_revision, retry.revision_id)
+            self.assertEqual(retry.revision_id, workflow.head(fixture.campaign_id))
+            self.assertEqual(1, len(atlas.list(fixture.campaign_id)))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,7 +13,7 @@
     },
     "00-drydock/ai-context.md": {
       "ownership": "generated",
-      "sha256": "5f85a8f846c6673ffe353e653eb17c1def10f33680f60b8a5494fc382ff9b527"
+      "sha256": "8e7a2f8ca7aa6599cba4a9e71dd475ef284f8b41ec2d67a6a938e045e8326b21"
     },
     "00-drydock/canon-policy.md": {
       "ownership": "framework",
@@ -21,15 +21,15 @@
     },
     "00-drydock/connection-index.md": {
       "ownership": "generated",
-      "sha256": "d7a801486a9d14e3c4e94d5c4474ced8add5f54d022dff6789f6fb264da9b645"
+      "sha256": "916f798806d7f6074ece2f12fad049218ffb07ff008a7be04961c6709b86d537"
     },
     "00-drydock/current-state.md": {
       "ownership": "campaign",
-      "sha256": "eb27c7d73c85f644612cb109bdd2fb321889bf4c078925d0d700e334e043a3cf"
+      "sha256": "4c6a4978ae15dbc144756ba00471ed8081623f51a13e137e07311489cbf32b61"
     },
     "00-drydock/entity-index.md": {
       "ownership": "generated",
-      "sha256": "3ae5558847ad010214f710433df86de6dc3edcedc8e2e89d146c0e0546e1309a"
+      "sha256": "da91ec4d5283419f385d9ef673024634c540282cbac1d2f9b241c409fb909617"
     },
     "00-drydock/system-principles.md": {
       "ownership": "adapter",
@@ -201,7 +201,7 @@
     },
     "scripts/drydock.py": {
       "ownership": "framework",
-      "sha256": "76305d8f27c707da7acd8d77669eb8ce0e0eff9acf36c5666a54d8d9f9dca13e"
+      "sha256": "bdac4e6871dafaeebc7c57756c2d1b8ebc2b6ee706f642910e2328acdfe12b1c"
     },
     "templates/adventure.md": {
       "ownership": "shared",

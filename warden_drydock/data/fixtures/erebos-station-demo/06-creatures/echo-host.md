@@ -23,9 +23,7 @@ Ein menschlicher Körper mit schwarzem Staub in Mund und Ohren. Wiederholt Sätz
 
 Sucht Funkquellen und isolierte Personen. Greift erst an, wenn eine Übertragung unterbrochen wird.
 
-## Spielwerte
-
-Instinct 45, Combat 35, Speed 30, Hits 2. Schaden 1d10 durch Werkzeuge oder Sturz. Bei Panik wiederholt es den schlimmsten Gedanken des Opfers.
+Bei Panik wiederholt es den schlimmsten Gedanken des Opfers.
 
 ## Schwäche
 
