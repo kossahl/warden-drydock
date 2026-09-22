@@ -100,14 +100,34 @@ def _editor_error_response(payload: dict) -> dict:
     error.update({"category": category, "code": code, "stage": stage,
                   "request_id": request_id, "retryable": retryable})
     if category in {"validation_finding", "proposal_validation_failure"}:
-        error["findings"] = [{
-            "finding_id": "finding_editor_validation",
-            "code": code if _EDITOR_ERROR_CODE.fullmatch(code) else "editor_error",
-            "severity": "error",
-            "location": "record",
-            "message": "The proposed editor change failed deterministic validation.",
-            "recovery_action": "Review the editor fields and submit a valid change.",
-            "retryable": retryable,
+        findings = error.get("findings")
+        if not isinstance(findings, list) or not findings:
+            findings = [{
+                "finding_id": "finding_editor_validation",
+                "code": code if _EDITOR_ERROR_CODE.fullmatch(code) else "editor_error",
+                "severity": "error",
+                "location": "record",
+                "message": "The proposed editor change failed deterministic validation.",
+                "recovery_action": "Review the editor fields and submit a valid change.",
+                "retryable": retryable,
+            }]
+        allowed_optional = {"message", "recovery_action", "subject_id"}
+        safe_findings = []
+        for finding in findings:
+            if not isinstance(finding, dict) or any(
+                not isinstance(finding.get(key), str)
+                for key in ("finding_id", "code", "location")
+            ) or finding.get("severity") not in {"error", "warning"} or not isinstance(finding.get("retryable"), bool):
+                continue
+            if any(key in finding and not isinstance(finding[key], str) for key in allowed_optional):
+                continue
+            safe_findings.append({key: value for key, value in finding.items() if key in {
+                "finding_id", "code", "severity", "location", "message", "recovery_action", "retryable", "subject_id",
+            }})
+        error["findings"] = safe_findings or [{
+            "finding_id": "finding_editor_validation", "code": "editor_error", "severity": "error",
+            "location": "record", "message": "The proposed editor change failed deterministic validation.",
+            "recovery_action": "Review the editor fields and submit a valid change.", "retryable": retryable,
         }]
     return {"contract_name": "error_response", "contract_version": 3, "error": error}
 

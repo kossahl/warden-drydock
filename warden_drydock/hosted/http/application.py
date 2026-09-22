@@ -93,13 +93,15 @@ def _slice_diff_digest(changes: tuple[ExactTextChange, ...]) -> str:
 
 
 class HTTPFailure(RuntimeError):
-    def __init__(self, status: int, category: str, code: str, stage: str, request_id: str = "request_http", retryable: bool = False) -> None:
+    def __init__(self, status: int, category: str, code: str, stage: str, request_id: str = "request_http", retryable: bool = False, findings: list[dict] | None = None) -> None:
         self.status = status
         self.payload = {
             "contract_name": "error_response", "contract_version": 2,
             "error": {"category": category, "code": code, "stage": stage,
                       "request_id": request_id, "retryable": retryable},
         }
+        if findings:
+            self.payload["error"]["findings"] = findings
         super().__init__(code)
 
 
@@ -1554,7 +1556,8 @@ class SliceApplication:
         try:
             document = _document(candidate)
         except (KeyError, TypeError, ValueError) as exc:
-            raise HTTPFailure(422, "proposal_validation_failure", str(exc), "editor_proposal") from exc
+            code = str(exc)
+            raise HTTPFailure(422, "proposal_validation_failure", code, "editor_proposal", findings=[self._editor_finding(code)]) from exc
         if expected_record_id is not None and document["record_id"] != expected_record_id:
             raise HTTPFailure(422, "unsafe_binding", "record_id_mismatch", "editor_proposal")
         if before is not None and document["record_type"] != before["record_type"]:
@@ -1562,14 +1565,32 @@ class SliceApplication:
         try:
             validate_adapter_document(document, self._editor_definition(campaign_id, revision_id), before)
         except ValueError as exc:
-            raise HTTPFailure(422, "proposal_validation_failure", str(exc), "editor_proposal") from exc
+            code = str(exc)
+            raise HTTPFailure(422, "proposal_validation_failure", code, "editor_proposal", findings=[self._editor_finding(code)]) from exc
         record_ids = self._editor_record_ids(campaign_id, revision_id)
         if document["record_id"] in record_ids and expected_record_id is None:
             raise HTTPFailure(409, "proposal_approval_conflict", "record_already_exists", "editor_proposal")
         for connection in document["connections"]:
             if connection["target_record_id"] not in record_ids:
-                raise HTTPFailure(422, "proposal_validation_failure", "unknown_connection_target", "editor_proposal")
+                raise HTTPFailure(422, "proposal_validation_failure", "unknown_connection_target", "editor_proposal", findings=[self._editor_finding("unknown_connection_target")])
         return document
+
+    @staticmethod
+    def _editor_finding(code: str, *, subject_id: str = "record") -> dict:
+        details = {
+            "unsupported_connection_relationship": ("connections.relationship", "This relationship type is not supported by the selected adapter.", "Choose a supported relationship."),
+            "unsupported_connection_state": ("connections.state", "This relationship state is not supported by the selected adapter.", "Choose a supported relationship state."),
+            "unknown_connection_target": ("connections.target_record_id", "The relationship target does not exist in this revision.", "Choose an existing record as the target."),
+            "invalid_connections": ("connections", "The relationship entries are not valid.", "Review each relationship and submit the corrected values."),
+            "empty_required_adapter_field": ("fields", "A required field is empty.", "Enter a value for every required field."),
+            "missing_required_adapter_field": ("fields", "A required field is missing.", "Restore the required field before submitting."),
+        }
+        location, message, recovery_action = details.get(
+            code, ("record", "The proposed record failed deterministic validation.", "Review the highlighted record values and try again."),
+        )
+        return {"finding_id": f"finding_editor_{code}", "code": code, "severity": "error",
+                "location": location, "message": message, "recovery_action": recovery_action,
+                "retryable": False, "subject_id": subject_id}
 
     def _editor_validate_changes(
         self, campaign_id: str, revision_id: str, changes: list[ExactTextChange],
@@ -1625,9 +1646,11 @@ class SliceApplication:
         code = next((finding.code for finding in result.findings if finding.severity.value == "error"), None)
         if code is None and any(change.change_kind is ChangeKind.CREATE for change in changes):
             code = "record_type_unknown"
+        findings = [self._editor_finding(finding.code, subject_id=finding.subject_id)
+                    for finding in result.findings if finding.severity.value == "error"]
         raise HTTPFailure(
             422, "proposal_validation_failure", code or "proposal_validation_failure",
-            "editor_proposal", request_id,
+            "editor_proposal", request_id, findings=findings or [self._editor_finding("proposal_validation_failure")],
         )
 
     @staticmethod
