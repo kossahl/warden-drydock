@@ -14,7 +14,7 @@ reviews:
   review_status: false
 
   high_level_summary: true
-  high_level_summary_in_walkthrough: true
+  high_level_summary_in_walkthrough: false
   high_level_summary_instructions: |
     Use the summary only for findings that cannot be attached to a changed line.
     Do not repeat inline findings.
