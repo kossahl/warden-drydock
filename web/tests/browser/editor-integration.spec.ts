@@ -162,6 +162,9 @@ test("live editor preserves context after backend relationship validation failur
   expect(created.status(), await created.text()).toBe(201);
   const campaign = await created.json() as { campaign_id: string; viewed_revision: { revision_id: string; ordinal: number; tree_digest: string } };
   const revision = campaign.viewed_revision;
+  const creationContext = await page.request.get(`/api/v1/campaigns/${campaign.campaign_id}/revisions/${revision.revision_id}/editor/creation-context`);
+  expect(creationContext.status()).toBe(200);
+  const initialEditorWorkflow = (await creationContext.json() as { editor_workflow_version: number }).editor_workflow_version;
 
   await page.goto(`/campaigns/${campaign.campaign_id}/records/__new__?revision=${revision.revision_id}`);
   const editor = page.locator(".editor");
@@ -219,6 +222,10 @@ test("live editor preserves context after backend relationship validation failur
   expect(campaigns.status()).toBe(200);
   const current = (await campaigns.json() as { campaigns: Array<{ campaign_id: string; head_revision: { revision_id: string } }> }).campaigns.find((item) => item.campaign_id === campaign.campaign_id);
   expect(current?.head_revision.revision_id).toBe(revision.revision_id);
+
+  const afterFailureContext = await page.request.get(`/api/v1/campaigns/${campaign.campaign_id}/revisions/${revision.revision_id}/editor/creation-context`);
+  expect(afterFailureContext.status()).toBe(200);
+  expect((await afterFailureContext.json() as { editor_workflow_version: number }).editor_workflow_version).toBe(initialEditorWorkflow);
 
   const query = new URLSearchParams({ revision_id: revision.revision_id, revision_ordinal: String(revision.ordinal), tree_digest: revision.tree_digest, limit: "50" });
   const proposals = await page.request.get(`/api/v1/campaigns/${campaign.campaign_id}/atlas/proposals?${query}`);
