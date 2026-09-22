@@ -78,14 +78,14 @@ export interface AtlasUrlState {
 
 export function atlasHref(campaignId: string, destination: "overview" | "records" | "drafts" | "proposals" | "revisions", state: AtlasUrlState) {
   const path = destination === "overview" ? `/campaigns/${encodeURIComponent(campaignId)}` : `/campaigns/${encodeURIComponent(campaignId)}/${destination}`;
-  return addState(path, state, destination === "records");
+  return addState(path, state, destination === "records", destination === "records" || destination === "revisions");
 }
 
 export function recordHref(campaignId: string, recordId: string, state: AtlasUrlState) {
   return addState(`/campaigns/${encodeURIComponent(campaignId)}/records/${encodeURIComponent(recordId)}`, state, true);
 }
 
-function addState(path: string, state: AtlasUrlState, includeLibrary: boolean) {
+function addState(path: string, state: AtlasUrlState, includeLibrary: boolean, includeCursor = includeLibrary) {
   const params = new URLSearchParams();
   params.set("revision", state.revisionId);
   if (includeLibrary) {
@@ -93,8 +93,8 @@ function addState(path: string, state: AtlasUrlState, includeLibrary: boolean) {
     if (state.type) params.set("type", state.type);
     if (state.authority) params.set("authority", state.authority);
     if (state.status) params.set("status", state.status);
-    if (state.cursor) params.set("cursor", state.cursor);
   }
+  if (includeCursor && state.cursor) params.set("cursor", state.cursor);
   if (state.relationshipCursor) params.set("relationship_cursor", state.relationshipCursor);
   if (state.generationCursor) params.set("generation_cursor", state.generationCursor);
   if (state.proposalCursor) params.set("proposal_cursor", state.proposalCursor);

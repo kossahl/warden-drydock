@@ -4,7 +4,7 @@ import type { AtlasApi } from "../../src/api/atlasClient";
 import { ApiError, type SliceApi } from "../../src/api/client";
 import type { GenerationView, ProposalView, ProviderReadiness } from "../../src/contracts/v2";
 import { openHeadHref, WorkflowPanels } from "../../src/atlas/AtlasCompletion";
-import { parseAtlasRoute, type AtlasRoute } from "../../src/atlas/routing";
+import { atlasHref, parseAtlasRoute, type AtlasRoute } from "../../src/atlas/routing";
 import { binding, campaigns, detail, fullHistory, generations, headRevision, neighborhood, newestFiveHistory, oldRevision, overview, proposals, readinessUnavailable, recordHistory, records, workflow } from "../fixtures/atlas";
 
 function fakeAtlas(overrides: Partial<AtlasApi> = {}): AtlasApi {
@@ -53,6 +53,10 @@ describe("Campaign Atlas browser experience", () => {
     expect(screen.queryByRole("heading", { name: "Drafts" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Proposals" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Accepted (legacy) (1)" })).toBeVisible();
+  });
+
+  it("preserves revision pagination cursors without record-library filters", () => {
+    expect(atlasHref("campaign_atlas", "revisions", { revisionId: "revision_two", cursor: "older_page", q: "station", type: "npc" })).toBe("/campaigns/campaign_atlas/revisions?revision=revision_two&cursor=older_page");
   });
 
   it("labels the effective overview timezone and falls back to UTC", async () => {
