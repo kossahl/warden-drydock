@@ -5,6 +5,7 @@ from enum import Enum
 import hashlib
 import json
 import re
+from datetime import datetime
 
 
 def canonical_digest(value: object) -> str:
@@ -155,6 +156,8 @@ class LiveSession:
     # every session from the first supported deployment (the ordering migration fails
     # closed if rows existed before it), so the ordering is always unambiguous.
     session_seq: int = 0
+    created_at: datetime | None = None
+    ended_at: datetime | None = None
 
 
 def live_operation_digest(

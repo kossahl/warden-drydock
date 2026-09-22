@@ -1,12 +1,120 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import threading
 
 
 class ReceiptConflict(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class CampaignPlayer:
+    player_id: str
+    name: str
+    status: str = "active"
+
+
+@dataclass(frozen=True)
+class CampaignProfile:
+    campaign_id: str
+    created_at: datetime
+    display_timezone: str = "UTC"
+    players: tuple[CampaignPlayer, ...] = ()
+
+    @property
+    def active_player_count(self) -> int:
+        return sum(item.status not in {"inactive", "archived"} for item in self.players)
+
+
+class InMemoryCampaignProfileRepository:
+    def __init__(self) -> None:
+        self.profiles: dict[str, CampaignProfile] = {}
+
+    def create(self, profile: CampaignProfile) -> None:
+        existing = self.profiles.get(profile.campaign_id)
+        if existing is not None:
+            if (
+                existing.display_timezone != profile.display_timezone
+                or existing.players != profile.players
+            ):
+                raise ValueError("campaign_profile_conflict")
+            return
+        self.profiles[profile.campaign_id] = profile
+
+    def get(self, campaign_id: str) -> CampaignProfile | None:
+        return self.profiles.get(campaign_id)
+
+    def delete(self, campaign_id: str) -> None:
+        self.profiles.pop(campaign_id, None)
+
+    def prune_orphans(self, campaign_ids: set[str]) -> None:
+        for campaign_id in tuple(self.profiles):
+            if campaign_id not in campaign_ids:
+                del self.profiles[campaign_id]
+
+
+class PostgresCampaignProfileRepository:
+    def __init__(self, connect) -> None:
+        self._connect = connect
+
+    def create(self, profile: CampaignProfile) -> None:
+        encoded_players = json.dumps(
+            [item.__dict__ for item in profile.players],
+            separators=(",", ":"), sort_keys=True,
+        )
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO hosted_campaign_profile(campaign_id,created_at,display_timezone,players) "
+                "VALUES(%s,%s,%s,%s::jsonb) ON CONFLICT(campaign_id) DO NOTHING",
+                (profile.campaign_id, profile.created_at, profile.display_timezone, encoded_players),
+            )
+            cursor.execute(
+                "SELECT created_at,display_timezone,players FROM hosted_campaign_profile WHERE campaign_id=%s",
+                (profile.campaign_id,),
+            )
+            row = cursor.fetchone()
+        if row is None:
+            raise ValueError("campaign_profile_unavailable")
+        existing = self._decode(profile.campaign_id, row)
+        if (
+            existing.display_timezone != profile.display_timezone
+            or existing.players != profile.players
+        ):
+            raise ValueError("campaign_profile_conflict")
+
+    def get(self, campaign_id: str) -> CampaignProfile | None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT created_at,display_timezone,players FROM hosted_campaign_profile WHERE campaign_id=%s",
+                (campaign_id,),
+            )
+            row = cursor.fetchone()
+        return self._decode(campaign_id, row) if row is not None else None
+
+    def delete(self, campaign_id: str) -> None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("DELETE FROM hosted_campaign_profile WHERE campaign_id=%s", (campaign_id,))
+
+    def prune_orphans(self, campaign_ids: set[str]) -> None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM hosted_campaign_profile WHERE campaign_id <> ALL(%s)",
+                (list(campaign_ids),),
+            )
+
+    @staticmethod
+    def _decode(campaign_id: str, row) -> CampaignProfile:
+        players = json.loads(row[2]) if isinstance(row[2], str) else row[2]
+        return CampaignProfile(
+            campaign_id,
+            row[0].astimezone(timezone.utc),
+            row[1],
+            tuple(CampaignPlayer(item["player_id"], item["name"], item["status"]) for item in players),
+        )
 
 
 class InMemoryHTTPRepository:

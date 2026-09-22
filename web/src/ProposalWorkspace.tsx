@@ -135,9 +135,12 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
 
   async function createCampaign(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy("campaign"); setError(null);
-    const name = new FormData(event.currentTarget).get("campaign-name")?.toString().trim() ?? "";
+    const form = new FormData(event.currentTarget);
+    const name = form.get("campaign-name")?.toString().trim() ?? "";
+    const parsedPlayerCount = Number(form.get("player-count") ?? 0);
+    const playerCount = Number.isFinite(parsedPlayerCount) ? Math.max(0, Math.min(32, Math.floor(parsedPlayerCount))) : 0;
     try {
-      const created = await api.createCampaign(name, stableId("campaign", "campaign"), retryKey("campaign"));
+      const created = await api.createCampaign(name, stableId("campaign", "campaign"), retryKey("campaign"), playerCount);
       const first = created.records[0];
       const opened = await api.readRecord(created.campaign_id, created.viewed_revision.revision_id, first.record_id);
       const context = await exactRecordContext(opened);
@@ -273,6 +276,8 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
               <form onSubmit={createCampaign}>
                 <label htmlFor="campaign-name">Campaign name</label>
                 <input id="campaign-name" name="campaign-name" required maxLength={120} defaultValue="Synthetic Campaign" />
+                <label htmlFor="player-count">Players</label>
+                <input id="player-count" name="player-count" type="number" min="0" max="32" defaultValue="0" />
                 <button disabled={disabled} type="submit">{busy === "campaign" ? "Creating…" : "Create campaign"}</button>
               </form>
             </section>

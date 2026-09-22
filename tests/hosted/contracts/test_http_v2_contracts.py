@@ -105,13 +105,13 @@ class HostedHttpV2ContractTests(unittest.TestCase):
 
     def test_unrelated_payloads_copy_v1_semantics(self) -> None:
         v1_schema = json.loads((V1_ROOT / "http.schema.json").read_text(encoding="utf-8"))
-        excluded = {"ask_start_request", "generation_view", "generation_context"}
+        excluded = {"ask_start_request", "generation_view", "generation_context", "campaign_create_request"}
         v1_definitions = {
             key: value for key, value in v1_schema["$defs"].items() if key not in excluded
         }
         v2_definitions = {
             key: value for key, value in self.schema["$defs"].items()
-            if key not in {"generation_start_request", "generation_view", "generation_context"}
+            if key not in {"generation_start_request", "generation_view", "generation_context", "campaign_create_request"}
         }
         self.assertEqual(_without_versions(v1_definitions), _without_versions(v2_definitions))
 

@@ -29,6 +29,27 @@ Workflow HTTP is summary-only in this package. `atlas_workflow_summary` returns
 persisted counts and the active session binding. It never returns proposal,
 Draft, table-fact, or unresolved-question content.
 
+## Campaign overview context
+
+Atlas v2 overview context is additive to the aggregate counts. Campaign
+metadata comes from a durable campaign profile: creation time is stored in UTC,
+the configured display timezone defaults to UTC, and player count means active
+players that are not archived. The overview exposes the persisted instant and
+timezone so clients can render it accessibly without changing the authority.
+
+Played context is read-only and deterministic. A session qualifies only after it
+has an end instant and a confirmed table fact. The latest story selects the
+highest persisted `session_seq`; `last_played_at` selects the latest end time,
+with `session_seq` as the tie-break. Confirmed table facts are the summary
+authority. Generated AI content remains Draft and does not enter the story.
+Both values are bounded by the viewed revision for historical reads.
+
+The next action is campaign-scoped and provider-independent: resume an active
+session, resume an existing campaign AI interaction when one exists, continue
+after a qualifying session, or start the first session. The response reports
+whether the conversation is new or resumable; it does not invent a provider
+conversation when the provider is unavailable.
+
 ## Projection and authority boundary
 
 Immutable verified snapshots remain authoritative. Migration `0006` adds
