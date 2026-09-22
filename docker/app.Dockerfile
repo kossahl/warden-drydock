@@ -3,6 +3,7 @@ WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+COPY warden_drydock/__init__.py /build/warden_drydock/__init__.py
 COPY warden_drydock/data/ /build/warden_drydock/data/
 RUN npm run build
 
