@@ -177,9 +177,9 @@ test("Atlas navigation and filters work by keyboard at 320 by 720 without page o
   await page.setViewportSize({ width: 320, height: 720 });
   await page.goto("/campaigns/campaign_atlas/records?revision=revision_two");
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  await tabTo(page, page.getByRole("link", { name: "Approved history" }));
+  await tabTo(page, page.getByRole("link", { name: "Revisions" }));
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("heading", { level: 1, name: "Approved history" })).toBeFocused();
+  await expect(page.getByRole("heading", { level: 1, name: "Revisions" })).toBeFocused();
   const widths = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
   expect(widths.scroll).toBeLessThanOrEqual(widths.client);
 });
@@ -245,12 +245,15 @@ test("workflow panels expose publication-safe states and exact deep links", asyn
   const generationItems = (["pending", "complete", "failed", "cancelled"] as const).map((status, index) => ({ generation_id: `generation_${status}`, action: index % 2 ? "check" as const : "ask" as const, context: { scope: "campaign" as const }, source_revision: headRevision, source_set_digest: `${index + 1}`.repeat(64), status, retryable: status === "failed" ? true : null, created_at: `2026-08-25T0${index}:00:00Z` }));
   const proposalItems = (["draft", "rejected", "conflict", "published", "quarantined"] as const).map((status, index) => ({ proposal_id: `proposal_${status}`, proposal_version: index + 1, generation_id: `generation_${status}`, action: "generate" as const, context: { scope: "record" as const, record_id: "record-one", content_digest: "c".repeat(64) }, subject_record_id: "record-one", subject_content_digest: "c".repeat(64), source_revision: headRevision, base_revision: status === "draft" ? oldRevision : headRevision, status, validation_status: "passed" as const, published_revision_id: status === "published" ? "revision_three" : null, created_at: `2026-08-25T1${index}:00:00Z` }));
   await installAtlasApi(page, { generations: { ...generations, items: generationItems }, proposals: { ...proposals, items: proposalItems } });
-  await page.goto("/campaigns/campaign_atlas?revision=revision_two");
-  // The full nine-label status matrix is asserted in unit coverage; the browser keeps a representative slice plus the routing links.
-  for (const text of ["In progress", "Published to revision revision_three", "Stale base"]) await expect(page.getByText(text, { exact: false }).first()).toBeVisible();
-  await expect(page.getByRole("link", { name: "Open Draft" }).first()).toHaveAttribute("href", "/?generation=generation_pending");
-  await expect(page.getByRole("link", { name: "Review proposal" }).first()).toHaveAttribute("href", "/?proposal=proposal_draft&version=1");
+  await page.goto("/campaigns/campaign_atlas/drafts?revision=revision_two");
+  for (const text of ["In progress", "Failed, no Draft published", "Cancelled, no Draft published"]) await expect(page.getByText(text, { exact: false }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open Draft" }).first()).toHaveAttribute("href", "/campaigns/campaign_atlas/drafts?revision=revision_two&generation=generation_pending");
   await expect(page.getByText(/Provider reported this failure as retryable/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Proposals" })).toHaveCount(0);
+  await page.goto("/campaigns/campaign_atlas/proposals?revision=revision_two");
+  for (const text of ["Published to revision revision_three", "Stale base", "Rejected, not published"]) await expect(page.getByText(text, { exact: false }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Review proposal" }).first()).toHaveAttribute("href", "/campaigns/campaign_atlas/proposals?revision=revision_two&proposal=proposal_draft&version=1");
+  await expect(page.getByRole("heading", { name: "Drafts" })).toHaveCount(0);
 });
 
 test("Campaign Ask, Check, and Generate send explicit exact contexts", async ({ page }) => {

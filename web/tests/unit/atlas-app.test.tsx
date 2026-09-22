@@ -47,8 +47,11 @@ describe("Campaign Atlas browser experience", () => {
     expect(within(recent).getAllByRole("heading", { level: 3 }).map((node) => node.textContent)).toEqual(["Revision 6", "Revision 5", "Revision 4", "Revision 3", "Revision 2"]);
     expect(api.history).toHaveBeenCalledWith("campaign_atlas", expect.objectContaining({ limit: 5, direction: "backward" }));
     expect(screen.getByRole("button", { name: "Submit Ask" })).toBeDisabled();
-    expect(screen.getByRole("heading", { name: "Drafts" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Proposals" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Drafts" })).toHaveAttribute("href", "/campaigns/campaign_atlas/drafts?revision=revision_two");
+    expect(screen.getByRole("link", { name: "Proposals" })).toHaveAttribute("href", "/campaigns/campaign_atlas/proposals?revision=revision_two");
+    expect(screen.getByRole("link", { name: "Revisions" })).toHaveAttribute("href", "/campaigns/campaign_atlas/revisions?revision=revision_two");
+    expect(screen.queryByRole("heading", { name: "Drafts" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Proposals" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Accepted (legacy) (1)" })).toBeVisible();
   });
 
@@ -331,25 +334,33 @@ describe("Campaign Atlas browser experience", () => {
   it("shows persisted workflow bindings and publication-safe status links", async () => {
     const generationRows = { ...generations, items: [{ generation_id: "generation_one", action: "check" as const, context: { scope: "campaign" as const }, source_revision: headRevision, source_set_digest: "4".repeat(64), status: "complete" as const, retryable: null, created_at: "2026-08-25T08:00:00Z" }, { generation_id: "generation_failed", action: "ask" as const, context: { scope: "campaign" as const }, source_revision: headRevision, source_set_digest: "5".repeat(64), status: "failed" as const, retryable: true, created_at: "2026-08-25T07:00:00Z" }] };
     const proposalRows = { ...proposals, items: [{ proposal_id: "proposal_one", proposal_version: 2, generation_id: "generation_two", action: "generate" as const, context: { scope: "record" as const, record_id: "record-one", content_digest: detail.record.content_digest }, subject_record_id: "record-one", subject_content_digest: detail.record.content_digest, source_revision: headRevision, base_revision: oldRevision, status: "conflict" as const, validation_status: "passed" as const, published_revision_id: null, created_at: "2026-08-25T08:01:00Z" }] };
-    window.history.replaceState(null, "", "/campaigns/campaign_atlas?revision=revision_two");
-    render(<App atlasApi={fakeAtlas({ generations: vi.fn(async () => generationRows), proposals: vi.fn(async () => proposalRows) })} providerReadiness={async () => readinessUnavailable} />);
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/drafts?revision=revision_two");
+    const draftsView = render(<App atlasApi={fakeAtlas({ generations: vi.fn(async () => generationRows), proposals: vi.fn(async () => proposalRows) })} providerReadiness={async () => readinessUnavailable} />);
     expect(await screen.findByText("Draft ready, not canon")).toBeVisible();
-    expect(screen.getByText("Conflict, not published")).toBeVisible();
-    expect(screen.getAllByRole("link", { name: "Open Draft" })[0]).toHaveAttribute("href", "/?generation=generation_one");
-    expect(screen.getByRole("link", { name: "Review proposal" })).toHaveAttribute("href", "/?proposal=proposal_one&version=2");
+    expect(screen.getByRole("heading", { name: "Drafts" })).toBeVisible();
+    expect(screen.queryByText("Conflict, not published")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Open Draft" })[0]).toHaveAttribute("href", "/campaigns/campaign_atlas/drafts?revision=revision_two&generation=generation_one");
     expect(screen.getByText("Provider reported this failure as retryable. Starting another inference requires a new explicit request.")).toBeVisible();
     expect(screen.queryByRole("button", { name: /Retry (Draft|generation)/ })).not.toBeInTheDocument();
+
+    draftsView.unmount();
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/proposals?revision=revision_two");
+    render(<App atlasApi={fakeAtlas({ generations: vi.fn(async () => generationRows), proposals: vi.fn(async () => proposalRows) })} providerReadiness={async () => readinessUnavailable} />);
+    expect(await screen.findByText("Conflict, not published")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Proposals" })).toBeVisible();
+    expect(screen.queryByText("Draft ready, not canon")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Review proposal" })).toHaveAttribute("href", "/campaigns/campaign_atlas/proposals?revision=revision_two&proposal=proposal_one&version=2");
   });
 
   it("renders every publication-safe workflow status row with exact deep links", async () => {
     const generationItems = (["pending", "complete", "failed", "cancelled"] as const).map((status, index) => ({ generation_id: `generation_${status}`, action: index % 2 ? "check" as const : "ask" as const, context: { scope: "campaign" as const }, source_revision: headRevision, source_set_digest: `${index + 1}`.repeat(64), status, retryable: status === "failed" ? true : null, created_at: `2026-08-25T0${index}:00:00Z` }));
     const proposalItems = (["draft", "rejected", "conflict", "published", "quarantined"] as const).map((status, index) => ({ proposal_id: `proposal_${status}`, proposal_version: index + 1, generation_id: `generation_${status}`, action: "generate" as const, context: { scope: "record" as const, record_id: "record-one", content_digest: "c".repeat(64) }, subject_record_id: "record-one", subject_content_digest: "c".repeat(64), source_revision: headRevision, base_revision: status === "draft" ? oldRevision : headRevision, status, validation_status: "passed" as const, published_revision_id: status === "published" ? "revision_three" : null, created_at: `2026-08-25T1${index}:00:00Z` }));
-    const route: AtlasRoute = { kind: "overview", campaignId: campaigns.campaigns[0].campaign_id, revisionId: headRevision.revision_id, q: "", type: null, authority: null, status: null, cursor: null, relationshipCursor: null, generationCursor: null, proposalCursor: null, proposalId: null, proposalVersion: null };
+    const route: AtlasRoute = { kind: "overview", campaignId: campaigns.campaigns[0].campaign_id, revisionId: headRevision.revision_id, q: "", type: null, authority: null, status: null, cursor: null, relationshipCursor: null, generationCursor: null, proposalCursor: null, generationId: null, proposalId: null, proposalVersion: null };
     render(<WorkflowPanels api={fakeAtlas({ generations: vi.fn(async () => ({ ...generations, items: generationItems })), proposals: vi.fn(async () => ({ ...proposals, items: proposalItems })) })} campaign={campaigns.campaigns[0]} route={route} revision={headRevision} navigate={vi.fn()} block={vi.fn()} />);
     await expect(screen.findByText("In progress", { exact: false })).resolves.toBeVisible();
     for (const text of ["Draft ready, not canon", "Failed, no Draft published", "Cancelled, no Draft published", "Rejected, not published", "Conflict, not published", "Published to revision revision_three", "Quarantined, publication not confirmed", "Stale base"]) expect(screen.getAllByText(text, { exact: false })[0]).toBeVisible();
-    expect(screen.getAllByRole("link", { name: "Open Draft" })[0]).toHaveAttribute("href", "/?generation=generation_pending");
-    expect(screen.getAllByRole("link", { name: "Review proposal" })[0]).toHaveAttribute("href", "/?proposal=proposal_draft&version=1");
+    expect(screen.getAllByRole("link", { name: "Open Draft" })[0]).toHaveAttribute("href", "/campaigns/campaign_atlas/drafts?revision=revision_two&generation=generation_pending");
+    expect(screen.getAllByRole("link", { name: "Review proposal" })[0]).toHaveAttribute("href", "/campaigns/campaign_atlas/proposals?revision=revision_two&proposal=proposal_draft&version=1");
     expect(screen.getByText("Provider reported this failure as retryable. Starting another inference requires a new explicit request.")).toBeVisible();
   });
 

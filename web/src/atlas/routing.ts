@@ -1,6 +1,6 @@
 import type { AtlasAuthority, AtlasStatusFilter } from "../contracts/v2";
 
-export type AtlasRouteKind = "overview" | "records" | "record" | "history" | "invalid";
+export type AtlasRouteKind = "overview" | "records" | "record" | "drafts" | "proposals" | "revisions" | "invalid";
 export interface AtlasRoute {
   kind: AtlasRouteKind;
   campaignId: string;
@@ -14,6 +14,7 @@ export interface AtlasRoute {
   relationshipCursor: string | null;
   generationCursor: string | null;
   proposalCursor: string | null;
+  generationId: string | null;
   proposalId: string | null;
   proposalVersion: number | null;
 }
@@ -31,10 +32,12 @@ export function parseAtlasRoute(location: string): AtlasRoute {
   if (parts.length === 2) kind = "overview";
   else if (parts.length === 3 && parts[2] === "records") kind = "records";
   else if (parts.length === 4 && parts[2] === "records") { kind = "record"; recordId = parts[3]; }
-  else if (parts.length === 3 && parts[2] === "history") kind = "history";
+  else if (parts.length === 3 && (parts[2] === "drafts" || parts[2] === "proposals")) kind = parts[2];
+  else if (parts.length === 3 && (parts[2] === "history" || parts[2] === "revisions")) kind = "revisions";
   const authority = url.searchParams.get("authority");
   const status = url.searchParams.get("status");
   const proposalId = url.searchParams.get("proposal");
+  const generationId = url.searchParams.get("generation");
   const parsedProposalVersion = Number(url.searchParams.get("version"));
   const proposalVersion = proposalId && Number.isInteger(parsedProposalVersion) && parsedProposalVersion > 0
     ? parsedProposalVersion
@@ -52,6 +55,7 @@ export function parseAtlasRoute(location: string): AtlasRoute {
     relationshipCursor: url.searchParams.get("relationship_cursor"),
     generationCursor: url.searchParams.get("generation_cursor"),
     proposalCursor: url.searchParams.get("proposal_cursor"),
+    generationId,
     proposalId: proposalVersion ? proposalId : null,
     proposalVersion,
   };
@@ -67,11 +71,12 @@ export interface AtlasUrlState {
   relationshipCursor?: string | null;
   generationCursor?: string | null;
   proposalCursor?: string | null;
+  generationId?: string | null;
   proposalId?: string | null;
   proposalVersion?: number | null;
 }
 
-export function atlasHref(campaignId: string, destination: "overview" | "records" | "history", state: AtlasUrlState) {
+export function atlasHref(campaignId: string, destination: "overview" | "records" | "drafts" | "proposals" | "revisions", state: AtlasUrlState) {
   const path = destination === "overview" ? `/campaigns/${encodeURIComponent(campaignId)}` : `/campaigns/${encodeURIComponent(campaignId)}/${destination}`;
   return addState(path, state, destination === "records");
 }
@@ -93,6 +98,7 @@ function addState(path: string, state: AtlasUrlState, includeLibrary: boolean) {
   if (state.relationshipCursor) params.set("relationship_cursor", state.relationshipCursor);
   if (state.generationCursor) params.set("generation_cursor", state.generationCursor);
   if (state.proposalCursor) params.set("proposal_cursor", state.proposalCursor);
+  if (state.generationId) params.set("generation", state.generationId);
   if (state.proposalId && state.proposalVersion) {
     params.set("proposal", state.proposalId);
     params.set("version", String(state.proposalVersion));
