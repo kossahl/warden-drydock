@@ -49,6 +49,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const wasActive = useRef(active);
   const pendingCampaignRefresh = useRef(false);
   const campaignRefreshSequence = useRef(0);
+  const hydrationSequence = useRef(0);
   const hydratedLocation = useRef("");
   const uncertainGeneration = useRef<{ action: GenerationAction; prompt: string; generationId: string } | null>(null);
   const campaigns = useResource(active && !campaign ? () => atlasApi.campaigns() : null, [active, atlasApi, campaign]);
@@ -60,14 +61,19 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
 
   useEffect(() => { if (active) void api.readiness().then(setReadiness).catch(failAction); }, [active, api]);
   useEffect(() => {
-    if (!active || hydratedLocation.current === location) return;
+    if (hydratedLocation.current === location) return;
+    const sequence = hydrationSequence.current + 1;
+    hydrationSequence.current = sequence;
+    const isCurrentHydration = () => hydrationSequence.current === sequence;
+    hydratedLocation.current = location;
+    if (!active) return;
     const params = new URL(location, "http://drydock.local").searchParams;
     const generationId = params.get("generation");
     const proposalId = params.get("proposal");
     const routeRevision = params.get("revision");
     const version = Number(params.get("version"));
     if (!generationId && !(proposalId && Number.isInteger(version) && version > 0)) return;
-    hydratedLocation.current = location; setHydrating(true); setError(null);
+    setHydrating(true); setError(null);
     void (async () => {
       const loadedProposal = proposalId ? await api.readProposal(proposalId, version) : null;
       const loadedGeneration = await api.readGeneration(loadedProposal?.generation_id ?? generationId!);
@@ -76,10 +82,11 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
       const subjectId = loadedProposal?.exact_diff[0].subject_id ?? (loadedGeneration.context.scope === "record" ? loadedGeneration.context.record_id : null);
       const loadedRecord = subjectId ? await api.readRecord(loadedGeneration.campaign_id, loadedGeneration.source_revision, subjectId) : null;
       const loadedDigest = loadedRecord ? (await exactRecordContext(loadedRecord)).content_digest : null;
+      if (!isCurrentHydration()) return;
       setCampaign(loadedCampaign); setRecord(loadedRecord); setRecordContentDigest(loadedDigest); setGeneration(loadedGeneration); setStreamDraft(""); setProposal(loadedProposal);
       if (loadedProposal) setCorrectedContent(loadedProposal.exact_diff[0].after_content);
       observedSequence.current = loadedGeneration.last_sequence; setLastObservedSequence(loadedGeneration.last_sequence); setAnnouncement(loadedProposal ? `Opened proposal ${loadedProposal.proposal_id}, version ${loadedProposal.proposal_version}.` : `Opened Draft ${loadedGeneration.generation_id}.`);
-    })().catch(failAction).finally(() => setHydrating(false));
+    })().catch((failure) => { if (isCurrentHydration()) failAction(failure); }).finally(() => { if (isCurrentHydration()) setHydrating(false); });
   }, [active, api, location]);
   useEffect(() => {
     if (active && !wasActive.current) mainRef.current?.focus();

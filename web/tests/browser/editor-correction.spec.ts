@@ -533,6 +533,28 @@ test("historical proposal URLs keep review and correction available", async ({ p
   await expect(panel.getByRole("heading", { name: "Exact proposal review" })).toBeVisible();
 });
 
+test("external proposal URL clearing closes the editor surface", async ({ page }) => {
+  await installAtlasApi(page);
+  const reviewed = proposal(headRevision, originalRecord);
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path.endsWith("/records/record-one/editor")) return json(route, view(headRevision, headRevision, originalRecord));
+    if (request.method() === "GET" && path.endsWith("/editor/proposals/proposal_correction/versions/1")) return json(route, reviewed);
+    return route.fallback();
+  });
+
+  await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two&proposal=proposal_correction&version=1");
+  await expect(page.locator(".editor-surface")).toBeVisible();
+  await expect(page.locator(".atlas-shell")).toHaveAttribute("inert", "");
+  await page.evaluate(() => {
+    history.replaceState(null, "", "/campaigns/campaign_atlas/records/record-one?revision=revision_two");
+    window.dispatchEvent(new Event("drydock:navigate"));
+  });
+  await expect(page.locator(".editor-surface")).toHaveCount(0);
+  await expect(page.locator(".atlas-shell")).not.toHaveAttribute("inert", "");
+});
+
 test("connection context validation blocks empty and multiline proposals on the connection row", async ({ page }) => {
   await installAtlasApi(page);
   const record = {

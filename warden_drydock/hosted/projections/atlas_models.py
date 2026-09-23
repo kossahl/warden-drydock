@@ -121,6 +121,140 @@ class AtlasRecord:
 
 
 @dataclass(frozen=True)
+class RecordMatchPart:
+    text: str
+    matched: bool
+
+
+@dataclass(frozen=True)
+class RecordMatch:
+    field: str
+    label: str
+    parts: tuple[RecordMatchPart, ...]
+
+
+_SEARCH_CONTEXT_CHARS = 72
+_SEARCH_EXCERPT_CHARS = 180
+_SEARCH_LABEL_CHARS = 80
+_SEARCH_MATCHES_PER_RECORD = 5
+
+
+def _plain_search_text(value: str) -> str:
+    value = re.sub(r"!?(?:\[\[([^\]|]+)(?:\|([^\]]+))?\]\]|\[([^\]]+)\]\([^)]*\))", lambda match: match.group(2) or match.group(3) or match.group(1), value)
+    value = re.sub(r"<!--.*?-->|</?[A-Za-z][^>]*>", " ", value, flags=re.DOTALL)
+    value = re.sub(r"`([^`\n]+)`", r"\1", value)
+    value = re.sub(r"(?<!\w)(\*\*|__|~~|\*|_)(?=\S)(.+?\S)\1(?!\w)", r"\2", value)
+    value = re.sub(r"^\s{0,3}(?:>\s?)+", "", value, flags=re.MULTILINE)
+    value = re.sub(r"^\s{0,3}(?:[-+*]|\d+\.)\s+", "", value, flags=re.MULTILINE)
+    value = re.sub(r"^\s{0,3}([-*_])(?:\s*\1){2,}\s*$", "", value, flags=re.MULTILINE)
+    return " ".join(value.split())
+
+
+def _bounded_search_label(value: str) -> str:
+    if len(value) <= _SEARCH_LABEL_CHARS:
+        return value
+    return value[:_SEARCH_LABEL_CHARS - 1] + "…"
+
+
+def _content_search_fields(content: str) -> tuple[tuple[str, str, str], ...]:
+    lines = normalize_content(content).splitlines()
+    if lines and lines[0].strip() == "---":
+        try:
+            lines = lines[lines.index("---", 1) + 1:]
+        except ValueError:
+            pass
+    fields: list[tuple[str, str, str]] = []
+    search_label = "Record content"
+    display_label = "Record content"
+    body: list[str] = []
+    heading = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
+
+    def add_field() -> None:
+        text = _plain_search_text("\n".join(body))
+        if text:
+            fields.append(("section", display_label, f"{search_label}: {text}"))
+
+    for line in lines:
+        match = heading.match(line)
+        if match:
+            add_field()
+            search_label = _plain_search_text(match.group(1)) or "Record content"
+            display_label = _bounded_search_label(search_label)
+            body = []
+        else:
+            body.append(line)
+    add_field()
+    return tuple(fields)
+
+
+def _record_search_fields(record: AtlasRecord) -> tuple[tuple[str, str, str], ...]:
+    return (
+        ("record_id", "Record ID", record.record_id),
+        ("record_type", "Type", record.record_type),
+        ("name", "Name", record.name),
+        ("summary", "Summary", record.summary),
+        *_content_search_fields(record.content),
+    )
+
+
+def _match_span(value: str, query: str) -> tuple[int, int] | None:
+    folded_query = query.casefold()
+    folded_value = value.casefold()
+    folded_start = folded_value.find(folded_query)
+    if folded_start < 0:
+        return None
+    folded_end = folded_start + len(folded_query)
+    boundaries: list[tuple[int, int]] = []
+    offset = 0
+    for index, character in enumerate(value):
+        next_offset = offset + len(character.casefold())
+        boundaries.append((offset, next_offset))
+        offset = next_offset
+    start = next(index for index, (_, end) in enumerate(boundaries) if folded_start < end)
+    end = next(index + 1 for index, (_, finish) in enumerate(boundaries) if folded_end <= finish)
+    return start, end
+
+
+def _excerpt_parts(value: str, query: str) -> tuple[RecordMatchPart, ...]:
+    span = _match_span(value, query)
+    if span is None:
+        return ()
+    match_start, match_end = span
+    start = max(0, match_start - _SEARCH_CONTEXT_CHARS)
+    display_match_end = min(match_end, match_start + _SEARCH_EXCERPT_CHARS)
+    end = min(len(value), match_end + _SEARCH_CONTEXT_CHARS) if display_match_end == match_end else display_match_end
+    prefix = ("…" if start else "") + value[start:match_start]
+    match = value[match_start:display_match_end]
+    if display_match_end < match_end:
+        match = match[:_SEARCH_EXCERPT_CHARS - 1] + "…"
+        suffix = ""
+    else:
+        suffix = value[match_end:end] + ("…" if end < len(value) else "")
+    return tuple(
+        part
+        for part in (
+            RecordMatchPart(prefix, False),
+            RecordMatchPart(match, True),
+            RecordMatchPart(suffix, False),
+        )
+        if part.text
+    )
+
+
+def record_match_evidence(record: AtlasRecord, query: str) -> tuple[RecordMatch, ...]:
+    if not query:
+        return ()
+    matches: list[RecordMatch] = []
+    for field, label, value in _record_search_fields(record):
+        parts = _excerpt_parts(value, query)
+        if parts:
+            matches.append(RecordMatch(field, label, parts))
+            if len(matches) == _SEARCH_MATCHES_PER_RECORD:
+                break
+    return tuple(matches)
+
+
+@dataclass(frozen=True)
 class AtlasEdge:
     edge_id: str
     occurrence_order: int

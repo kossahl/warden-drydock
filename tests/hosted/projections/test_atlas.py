@@ -66,6 +66,7 @@ class AtlasFixture(unittest.TestCase):
         name: str | None = None,
         status: str | None = "draft",
         summary: str | None = None,
+        notes: str | None = None,
         connections: tuple[str, ...] = (),
         line_ending: str = "\n",
     ) -> None:
@@ -74,6 +75,8 @@ class AtlasFixture(unittest.TestCase):
             frontmatter.append(f"status: {status}")
         body = frontmatter + ["---", "", "# Record", "", "## Summary", "", summary or f"Summary for {record_id}.", "", "## Connections", ""]
         body.extend(connections or ("<!-- None. -->",))
+        if notes is not None:
+            body.extend(("", "## Notes", "", notes))
         body.append("")
         (self.source / f"{record_id}.md").write_bytes(
             line_ending.join(body).encode("utf-8")
@@ -127,6 +130,7 @@ class AtlasFixture(unittest.TestCase):
                 f"record-{index:03d}",
                 name="Äther" if index == 10 else None,
                 status=statuses[(index - 1) % len(statuses)],
+                notes="The crew reaches Erebos." if index == 11 else None,
                 connections=duplicate if index == 1 else (),
             )
         first = self.publish("revision_one", 1, None)
@@ -345,6 +349,58 @@ class AtlasProjectionTests(AtlasFixture):
 
         searched = service.record_library(replace(query, query="äTHER"))
         self.assertEqual(("record-010",), tuple(item.record_id for item in searched.items))
+        evidence = service.record_library(replace(query, query="Erebos"))
+        self.assertEqual(("record-011",), tuple(item.record_id for item in evidence.items))
+        evidence_payload = record_library_contract(evidence, bundle, bundle)
+        self.assertEqual(
+            "Notes",
+            evidence_payload["items"][0]["matches"][0]["label"],
+        )
+        self.assertEqual(
+            [{"text": "Notes: The crew reaches ", "matched": False},
+             {"text": "Erebos", "matched": True},
+             {"text": ".", "matched": False}],
+            evidence_payload["items"][0]["matches"][0]["parts"],
+        )
+        markdown_content = (
+            "# Record\n\n"
+            "## " + "Long heading " + ("x" * 90) + "\n\n"
+            "Needle\n\n"
+            "2 < 3 and 5 > 4\n\n"
+            "> Quoted text.\n"
+        )
+        markdown_record = replace(
+            bundle.records[0],
+            content=markdown_content,
+            content_digest=content_digest(markdown_content),
+        )
+        markdown_bundle = replace(bundle, records=(markdown_record, *bundle.records[1:]))
+        markdown_projections = InMemoryAtlasProjectionRepository()
+        markdown_projections.replace(markdown_bundle)
+        markdown_service = AtlasQueryService(markdown_projections)
+        markdown_query = replace(query, query="< 3")
+        self.assertEqual(
+            ("record-001",),
+            tuple(item.record_id for item in markdown_service.record_library(markdown_query).items),
+        )
+        self.assertEqual(
+            (),
+            tuple(
+                item.record_id
+                for item in markdown_service.record_library(replace(query, query="> Quoted")).items
+            ),
+        )
+        markdown_evidence = markdown_service.record_library(replace(query, query="Needle"))
+        markdown_payload = record_library_contract(markdown_evidence, markdown_bundle, markdown_bundle)
+        self.assertLessEqual(len(markdown_payload["items"][0]["matches"][0]["label"]), 80)
+        self.assertEqual(
+            "Needle",
+            "".join(
+                part["text"]
+                for part in markdown_payload["items"][0]["matches"][0]["parts"]
+                if part["matched"]
+            ),
+        )
         type_only_record = replace(bundle.records[0], record_type="type-only")
         type_only_bundle = replace(
             bundle, records=(type_only_record, *bundle.records[1:])

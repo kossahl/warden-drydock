@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { AtlasApi } from "../api/atlasClient";
 import { httpSliceApi, type SliceApi } from "../api/client";
-import type { AtlasCampaignItem, AtlasFacets, AtlasHistoryCollection, AtlasHistoryEntry, AtlasNeighborhood, AtlasOverview, AtlasRecordLibraryResult, AtlasRevisionRef, ProviderReadiness, RawStatus } from "../contracts/v2";
+import type { AtlasCampaignItem, AtlasFacets, AtlasHistoryCollection, AtlasHistoryEntry, AtlasNeighborhood, AtlasOverview, AtlasRecordLibraryResult, AtlasRecordMatch, AtlasRevisionRef, ProviderReadiness, RawStatus } from "../contracts/v2";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { bindingMatches, ErrorState, GroundedAiPanel, isCursorFailure, isIntegrityFailure, Link, openHeadHref, RelationshipView, revisionQuery, stateFromRoute, titleCase, useResource, WorkflowPanels, type Navigate, type Resource } from "./AtlasCompletion";
 import { atlasHref, parseAtlasRoute, recordHref, type AtlasRoute, type AtlasUrlState } from "./routing";
@@ -9,26 +10,43 @@ import { RecordEditor } from "../editor/RecordEditor";
 
 export type ProviderState = ProviderReadiness;
 
+type BackgroundRef = { current: HTMLElement | null };
+const AtlasBackgroundContext = createContext<BackgroundRef | null>(null);
+
 function ProviderStatus({ resource }: { resource: Resource<ProviderState> }) {
   const value = resource.value;
   const label = resource.pending && !value ? "Checking" : !value ? "Unavailable" : !value.provider_configured ? "Setup required" : !value.provider_available ? "Unavailable" : !value.consent_current ? "Consent required" : value.ai_available ? "Ready" : "Unavailable";
   return <span role="status">Provider: {label}</span>;
 }
 
-function RecordEditorSurface({ campaign, route, revision, navigate, backgroundRef }: { campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate; backgroundRef: { current: HTMLElement | null } }) {
+function RecordEditorSurface({ campaign, route, revision, navigate }: { campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate }) {
+  const backgroundRef = useContext(AtlasBackgroundContext);
   const historical = revision.revision_id !== campaign.head_revision.revision_id;
   const isCreate = route.recordId === "__new__";
   const [open, setOpen] = useState(!!route.proposalId || isCreate);
   const trigger = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const surface = useRef<HTMLDivElement>(null);
+  const restoreFocus = useRef(false);
+  const preserveOpenOnProposalClear = useRef(false);
+  const previousRoute = useRef({ recordId: route.recordId, revisionId: revision.revision_id, proposalId: route.proposalId });
   useEffect(() => {
     if (route.proposalId) setOpen(true);
-  }, [route.proposalId]);
+    else if (
+      previousRoute.current.proposalId
+      && previousRoute.current.recordId === route.recordId
+      && !preserveOpenOnProposalClear.current
+    ) {
+      setOpen(false);
+      restoreFocus.current = true;
+    }
+    preserveOpenOnProposalClear.current = false;
+    previousRoute.current = { recordId: route.recordId, revisionId: revision.revision_id, proposalId: route.proposalId };
+  }, [revision.revision_id, route.proposalId, route.recordId]);
   useEffect(() => {
     if (!open || !surface.current) return;
     const surfaceElement = surface.current;
-    const backgroundElement = backgroundRef.current;
+    const backgroundElement = backgroundRef?.current;
     backgroundElement?.toggleAttribute("inert", true);
     const focusable = () => Array.from(surfaceElement.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex='-1'])"));
     const containFocus = (event: KeyboardEvent) => {
@@ -48,43 +66,59 @@ function RecordEditorSurface({ campaign, route, revision, navigate, backgroundRe
         first.focus();
       }
     };
-    const restoreFocus = (event: FocusEvent) => {
+    const redirectFocus = (event: FocusEvent) => {
       if (!surfaceElement.contains(event.target as Node)) closeButton.current?.focus();
     };
     document.addEventListener("keydown", containFocus);
-    document.addEventListener("focusin", restoreFocus);
+    document.addEventListener("focusin", redirectFocus);
     closeButton.current?.focus();
     return () => {
       document.removeEventListener("keydown", containFocus);
-      document.removeEventListener("focusin", restoreFocus);
+      document.removeEventListener("focusin", redirectFocus);
       backgroundElement?.removeAttribute("inert");
+      if (restoreFocus.current) {
+        restoreFocus.current = false;
+        trigger.current?.focus();
+      }
     };
   }, [backgroundRef, open]);
   if (historical && !route.proposalId) return null;
   const close = () => {
     setOpen(false);
-    trigger.current?.focus();
+    restoreFocus.current = true;
     if (route.proposalId) {
       navigate(recordHref(campaign.campaign_id, route.recordId ?? "", { ...stateFromRoute(route, revision.revision_id), proposalId: null, proposalVersion: null }));
     }
   };
+  const editorNavigate: Navigate = (href, replace) => {
+    const nextRoute = parseAtlasRoute(href);
+    if (
+      route.proposalId
+      && !nextRoute.proposalId
+      && nextRoute.recordId === route.recordId
+      && nextRoute.revisionId === revision.revision_id
+    ) {
+      preserveOpenOnProposalClear.current = true;
+    }
+    navigate(href, replace);
+  };
   return <>
     {!historical && !isCreate && <button ref={trigger} type="button" onClick={() => setOpen(true)} aria-expanded={open}>Edit this record</button>}
-    {open && <div ref={surface} className="editor-surface" role="dialog" aria-modal="true" aria-label={historical ? "Review record proposal" : "Edit record"}>
+    {open && createPortal(<div ref={surface} className="editor-surface" role="dialog" aria-modal="true" aria-label={historical ? "Review record proposal" : "Edit record"}>
       <div className="editor-surface-header"><button ref={closeButton} type="button" onClick={close}>Close editor</button></div>
-      <RecordEditor campaignId={campaign.campaign_id} revisionId={revision.revision_id} recordId={route.recordId ?? ""} proposalId={route.proposalId} proposalVersion={route.proposalVersion} navigate={navigate} />
-    </div>}
+      <RecordEditor campaignId={campaign.campaign_id} revisionId={revision.revision_id} recordId={route.recordId ?? ""} proposalId={route.proposalId} proposalVersion={route.proposalVersion} navigate={editorNavigate} />
+    </div>, document.body)}
   </>;
 }
 
 function RecordDetailView(props: { api: AtlasApi; sliceApi: SliceApi; provider: Resource<ProviderState>; campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate; block: (error: unknown) => void }) {
-  const backgroundRef = useRef<HTMLDivElement>(null);
-  return <><div ref={backgroundRef}><RecordDetailContent {...props} /></div><RecordEditorSurface campaign={props.campaign} route={props.route} revision={props.revision} navigate={props.navigate} backgroundRef={backgroundRef} /></>;
+  return <><RecordDetailContent {...props} /><RecordEditorSurface campaign={props.campaign} route={props.route} revision={props.revision} navigate={props.navigate} /></>;
 }
 
 function Shell({ campaign, route, viewed, provider, navigate, children }: { campaign: AtlasCampaignItem; route: AtlasRoute; viewed: AtlasRevisionRef; provider: Resource<ProviderState>; navigate: Navigate; children: ReactNode }) {
   const state = stateFromRoute(route, viewed.revision_id); const navigationState = { ...state, cursor: null, relationshipCursor: null, generationCursor: null, proposalCursor: null, generationId: null, proposalId: null, proposalVersion: null }; const historical = viewed.revision_id !== campaign.head_revision.revision_id;
-  return <div className="app-shell atlas-shell"><a className="skip-link" href="#atlas-content">Skip to main content</a><header className="banner"><div><p className="eyebrow">Local Warden workspace</p><Link href="/" navigate={navigate} className="brand-link">Warden Drydock proposal workspace</Link></div><ProviderStatus resource={provider} /></header><div className="atlas-layout"><aside className="atlas-rail"><p className="atlas-campaign-name">{campaign.campaign_name}</p><nav aria-label="Campaign Atlas"><Link href={atlasHref(campaign.campaign_id, "overview", navigationState)} navigate={navigate} current={route.kind === "overview"}>Overview</Link><Link href={atlasHref(campaign.campaign_id, "records", navigationState)} navigate={navigate} current={route.kind === "records" || route.kind === "record"}>Records</Link><Link href={atlasHref(campaign.campaign_id, "drafts", navigationState)} navigate={navigate} current={route.kind === "drafts"}>Drafts</Link><Link href={atlasHref(campaign.campaign_id, "proposals", navigationState)} navigate={navigate} current={route.kind === "proposals"}>Proposals</Link><Link href={atlasHref(campaign.campaign_id, "revisions", navigationState)} navigate={navigate} current={route.kind === "revisions"}>Revisions</Link></nav></aside><div className="atlas-main-wrap"><aside className="revision-banner" aria-label="Viewed revision"><span>Viewed revision {viewed.ordinal} · <code>{viewed.revision_id}</code> · {historical ? "Historical" : "Head"}</span>{historical && <Link href={openHeadHref(route, campaign.head_revision)} navigate={navigate} className="button-link">Open head</Link>}</aside><main id="atlas-content" className="atlas-main" tabIndex={-1}>{children}</main></div></div></div>;
+  const backgroundRef = useRef<HTMLDivElement>(null);
+  return <AtlasBackgroundContext.Provider value={backgroundRef}><div ref={backgroundRef} className="app-shell atlas-shell"><a className="skip-link" href="#atlas-content">Skip to main content</a><header className="banner"><div><p className="eyebrow">Local Warden workspace</p><Link href="/" navigate={navigate} className="brand-link">Warden Drydock proposal workspace</Link></div><ProviderStatus resource={provider} /></header><div className="atlas-layout"><aside className="atlas-rail"><p className="atlas-campaign-name">{campaign.campaign_name}</p><nav aria-label="Campaign Atlas"><Link href={atlasHref(campaign.campaign_id, "overview", navigationState)} navigate={navigate} current={route.kind === "overview"}>Overview</Link><Link href={atlasHref(campaign.campaign_id, "records", navigationState)} navigate={navigate} current={route.kind === "records" || route.kind === "record"}>Records</Link><Link href={atlasHref(campaign.campaign_id, "drafts", navigationState)} navigate={navigate} current={route.kind === "drafts"}>Drafts</Link><Link href={atlasHref(campaign.campaign_id, "proposals", navigationState)} navigate={navigate} current={route.kind === "proposals"}>Proposals</Link><Link href={atlasHref(campaign.campaign_id, "revisions", navigationState)} navigate={navigate} current={route.kind === "revisions"}>Revisions</Link></nav></aside><div className="atlas-main-wrap"><aside className="revision-banner" aria-label="Viewed revision"><span>Viewed revision {viewed.ordinal} · <code>{viewed.revision_id}</code> · {historical ? "Historical" : "Head"}</span>{historical && <Link href={openHeadHref(route, campaign.head_revision)} navigate={navigate} className="button-link">Open head</Link>}</aside><main id="atlas-content" className="atlas-main" tabIndex={-1}>{children}</main></div></div></div></AtlasBackgroundContext.Provider>;
 }
 
 function Heading({ children, focusKey }: { children: ReactNode; focusKey?: string | null }) {
@@ -111,6 +145,11 @@ function HistoryEntries({ value, campaignId, navigate, compact = false }: { valu
 }
 function HistoryEntry({ entry, campaignId, navigate, compact }: { entry: AtlasHistoryEntry; campaignId: string; navigate: Navigate; compact: boolean }) {
   return <li className="history-entry"><h3>Revision {entry.revision.ordinal}</h3><p><code>{entry.revision.revision_id}</code>{entry.parent_revision_id ? <> · Parent <Link href={atlasHref(campaignId, "overview", { revisionId: entry.parent_revision_id })} navigate={navigate}><code>{entry.parent_revision_id}</code></Link></> : " · Initial revision"}</p>{!compact && <><ul className="change-list">{entry.changes.map((change, index) => <li key={`${change.record_id}-${change.change_kind}-${index}`}><span className={`change-kind change-kind--${change.change_kind}`}>{titleCase(change.change_kind)}</span>{" "}<Link href={recordHref(campaignId, change.record_id, { revisionId: change.link_revision_id })} navigate={navigate}>{change.change_kind === "removed" ? `Removed record ${change.record_id}` : change.record_id}</Link>{change.from_authority !== change.to_authority && <span> · Authority: {change.from_authority ? titleCase(change.from_authority) : "None"} → {change.to_authority ? titleCase(change.to_authority) : "None"}</span>}</li>)}</ul>{entry.proposal_id && entry.proposal_version && <p>Proposal <code>{entry.proposal_id}</code>, version {entry.proposal_version}</p>}</>}</li>;
+}
+
+function MatchEvidence({ matches }: { matches: ReadonlyArray<AtlasRecordMatch> }) {
+  if (!matches.length) return null;
+  return <ul className="match-evidence" aria-label="Search match evidence">{matches.map((match, index) => <li key={`${match.field}-${match.label}-${index}`}><span className="match-evidence-label">{match.label}:</span>{" "}{match.parts.map((part, partIndex) => part.matched ? <mark key={partIndex}>{part.text}</mark> : <span key={partIndex}>{part.text}</span>)}</li>)}</ul>;
 }
 
 function useIntegrityGate(errors: ReadonlyArray<unknown>, block: (error: unknown) => void) { useEffect(() => { const failure = errors.find(isIntegrityFailure); if (failure) block(failure); }, [block, ...errors]); }
@@ -140,8 +179,23 @@ function OverviewView({ api, sliceApi, provider, campaign, route, revision, navi
 
 function RecordsView({ api, campaign, route, revision, navigate, block }: { api: AtlasApi; campaign: AtlasCampaignItem; route: AtlasRoute; revision: AtlasRevisionRef; navigate: Navigate; block: (error: unknown) => void }) {
   const historical = revision.revision_id !== campaign.head_revision.revision_id;
-  const [draftQuery, setDraftQuery] = useState(route.q); const [creating, setCreating] = useState(!!route.proposalId); useEffect(() => setDraftQuery(route.q), [route.q]); useEffect(() => { if (route.proposalId) setCreating(true); }, [route.proposalId]); const state = { ...stateFromRoute(route, revision.revision_id), proposalId: route.proposalId, proposalVersion: route.proposalVersion }; const records = useResource<AtlasRecordLibraryResult>(() => api.records(campaign.campaign_id, { ...revisionQuery(revision), q: route.q, types: route.type ? [route.type] : [], authorities: route.authority ? [route.authority] : [], statuses: route.status ? [route.status] : [], ...(route.cursor ? { cursor: route.cursor } : {}) }), [api, campaign.campaign_id, revision.revision_id, route.q, route.type, route.authority, route.status, route.cursor]); useIntegrityGate([records.error], block); const changeState = (next: Partial<AtlasUrlState>) => navigate(atlasHref(campaign.campaign_id, "records", { ...state, ...next, cursor: null })); const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); changeState({ q: new FormData(event.currentTarget).get("record-search")?.toString().trim() ?? "" }); }; const revisionHasRecords = records.value ? records.value.facets.record_types.some((facet) => facet.count > 0) : true;
-  return <section aria-busy={records.pending}><Heading>Records</Heading>{(!historical || (route.proposalId && creating)) && <>{!historical && <button type="button" onClick={() => setCreating((value) => !value)} aria-expanded={creating}>{creating ? "Close create editor" : "Create typed record"}</button>}{creating && <RecordEditor campaignId={campaign.campaign_id} revisionId={revision.revision_id} recordId="__new__" proposalId={route.proposalId} proposalVersion={route.proposalVersion} navigate={navigate} />}</>}<form className="search-form" role="search" onSubmit={submit}><label htmlFor="record-search">Search campaign records</label><div><input id="record-search" name="record-search" value={draftQuery} onChange={(event) => setDraftQuery(event.target.value)} /><button type="submit">Search</button><button type="button" onClick={() => { setDraftQuery(""); changeState({ q: "" }); }}>Clear</button></div></form><div className="filters"><label>Type<select value={route.type ?? ""} onChange={(event) => changeState({ type: event.target.value || null })}><option value="">All types</option>{records.value?.facets.record_types.map((facet) => <option key={facet.value} value={facet.value}>{titleCase(facet.value)} ({facet.count})</option>)}</select></label><label>Authority<select value={route.authority ?? ""} onChange={(event) => changeState({ authority: (event.target.value || null) as AtlasUrlState["authority"] })}><option value="">All authorities</option>{records.value?.facets.authorities.map((facet) => <option key={facet.value} value={facet.value}>{titleCase(facet.value)} ({facet.count})</option>)}</select></label><label>Status<select value={route.status ?? ""} onChange={(event) => changeState({ status: (event.target.value || null) as AtlasUrlState["status"] })}><option value="">All statuses</option>{records.value?.facets.statuses.map((facet) => <option key={facet.value} value={facet.value}>{statusFilterLabel(facet.value)} ({facet.count})</option>)}</select></label></div>{records.pending && !records.value && <p role="status">Loading records.</p>}{!!records.error && <ErrorState error={records.error} retry={records.retry} />}{records.value && <><p role="status">{records.value.total} matching {records.value.total === 1 ? "record" : "records"}.</p>{!records.value.items.length ? <p className="empty-state">{revisionHasRecords ? "No records match this search and filter combination." : "No records are stored in this revision."}</p> : <div className="table-wrap"><table className="records-table"><caption className="sr-only">Campaign records</caption><thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Summary</th><th scope="col">Authority</th><th scope="col">Status</th></tr></thead><tbody>{records.value.items.map((record) => <tr key={record.record_id}><th scope="row" data-label="Name"><Link href={recordHref(campaign.campaign_id, record.record_id, state)} navigate={navigate}>{record.name}</Link></th><td data-label="Type">{titleCase(record.record_type)}</td><td data-label="Summary">{record.summary || "No summary recorded."}</td><td data-label="Authority"><span className={`authority-label authority-label--${record.authority}`}>{titleCase(record.authority)}</span></td><td data-label="Status"><span className={`status-label status-label--${record.raw_status.classification}`}>{statusLabel(record.raw_status)}</span></td></tr>)}</tbody></table></div>}<nav className="pagination" aria-label="Record pages">{records.value.previous_cursor ? <Link href={atlasHref(campaign.campaign_id, "records", { ...state, cursor: records.value.previous_cursor })} navigate={navigate}>Previous</Link> : <span aria-disabled="true">Previous</span>}{records.value.next_cursor ? <Link href={atlasHref(campaign.campaign_id, "records", { ...state, cursor: records.value.next_cursor })} navigate={navigate}>Next</Link> : <span aria-disabled="true">Next</span>}</nav></>}</section>;
+  const [draftQuery, setDraftQuery] = useState(route.q);
+  const [creating, setCreating] = useState(!!route.proposalId);
+  const state = { ...stateFromRoute(route, revision.revision_id), proposalId: route.proposalId, proposalVersion: route.proposalVersion };
+  const stateRef = useRef(state);
+  const searchTimer = useRef<number | null>(null);
+  stateRef.current = state;
+  useEffect(() => setDraftQuery(route.q), [route.q]);
+  useEffect(() => { if (route.proposalId) setCreating(true); }, [route.proposalId]);
+  useEffect(() => () => { if (searchTimer.current !== null) window.clearTimeout(searchTimer.current); }, []);
+  const records = useResource<AtlasRecordLibraryResult>(() => api.records(campaign.campaign_id, { ...revisionQuery(revision), q: route.q, types: route.type ? [route.type] : [], authorities: route.authority ? [route.authority] : [], statuses: route.status ? [route.status] : [], ...(route.cursor ? { cursor: route.cursor } : {}) }), [api, campaign.campaign_id, revision.revision_id, route.q, route.type, route.authority, route.status, route.cursor]);
+  useIntegrityGate([records.error], block);
+  const changeState = (next: Partial<AtlasUrlState>) => navigate(atlasHref(campaign.campaign_id, "records", { ...state, ...next, cursor: null }));
+  const applySearch = (value: string) => { if (searchTimer.current !== null) window.clearTimeout(searchTimer.current); navigate(atlasHref(campaign.campaign_id, "records", { ...stateRef.current, q: value.trim(), cursor: null })); };
+  const queueSearch = (value: string) => { setDraftQuery(value); if (searchTimer.current !== null) window.clearTimeout(searchTimer.current); searchTimer.current = window.setTimeout(() => { searchTimer.current = null; navigate(atlasHref(campaign.campaign_id, "records", { ...stateRef.current, q: value.trim(), cursor: null })); }, 200); };
+  const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); applySearch(new FormData(event.currentTarget).get("record-search")?.toString() ?? ""); };
+  const revisionHasRecords = records.value ? records.value.facets.record_types.some((facet) => facet.count > 0) : true;
+  return <section aria-busy={records.pending}><Heading>Records</Heading>{(!historical || (route.proposalId && creating)) && <>{!historical && <button type="button" onClick={() => setCreating((value) => !value)} aria-expanded={creating}>{creating ? "Close create editor" : "Create typed record"}</button>}{creating && <RecordEditor campaignId={campaign.campaign_id} revisionId={revision.revision_id} recordId="__new__" proposalId={route.proposalId} proposalVersion={route.proposalVersion} navigate={navigate} />}</>}<form className="search-form" role="search" onSubmit={submit}><label htmlFor="record-search">Search campaign records</label><div><input id="record-search" name="record-search" value={draftQuery} onChange={(event) => queueSearch(event.target.value)} /><button type="submit">Search</button><button type="button" onClick={() => { setDraftQuery(""); applySearch(""); }}>Clear</button></div></form><div className="filters"><label>Type<select value={route.type ?? ""} onChange={(event) => changeState({ type: event.target.value || null })}><option value="">All types</option>{records.value?.facets.record_types.map((facet) => <option key={facet.value} value={facet.value}>{titleCase(facet.value)} ({facet.count})</option>)}</select></label><label>Authority<select value={route.authority ?? ""} onChange={(event) => changeState({ authority: (event.target.value || null) as AtlasUrlState["authority"] })}><option value="">All authorities</option>{records.value?.facets.authorities.map((facet) => <option key={facet.value} value={facet.value}>{titleCase(facet.value)} ({facet.count})</option>)}</select></label><label>Status<select value={route.status ?? ""} onChange={(event) => changeState({ status: (event.target.value || null) as AtlasUrlState["status"] })}><option value="">All statuses</option>{records.value?.facets.statuses.map((facet) => <option key={facet.value} value={facet.value}>{statusFilterLabel(facet.value)} ({facet.count})</option>)}</select></label></div>{records.pending && <p role="status">Searching records…</p>}{!!records.error && <ErrorState error={records.error} retry={records.retry} />}{records.value && <><p role="status">{records.value.total} matching {records.value.total === 1 ? "record" : "records"}.</p>{!records.value.items.length ? <p className="empty-state">{revisionHasRecords ? "No records match this search and filter combination." : "No records are stored in this revision."}</p> : <div className="table-wrap"><table className="records-table"><caption className="sr-only">Campaign records</caption><thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Summary</th><th scope="col">Authority</th><th scope="col">Status</th></tr></thead><tbody>{records.value.items.map((record) => <tr key={record.record_id}><th scope="row" data-label="Name"><Link href={recordHref(campaign.campaign_id, record.record_id, state)} navigate={navigate}>{record.name}</Link></th><td data-label="Type">{titleCase(record.record_type)}</td><td data-label="Summary">{record.summary ? <>{record.summary}<MatchEvidence matches={record.matches} /></> : <MatchEvidence matches={record.matches} />}</td><td data-label="Authority"><span className={`authority-label authority-label--${record.authority}`}>{titleCase(record.authority)}</span></td><td data-label="Status"><span className={`status-label status-label--${record.raw_status.classification}`}>{statusLabel(record.raw_status)}</span></td></tr>)}</tbody></table></div>}<nav className="pagination" aria-label="Record pages">{records.value.previous_cursor ? <Link href={atlasHref(campaign.campaign_id, "records", { ...state, cursor: records.value.previous_cursor })} navigate={navigate}>Previous</Link> : <span aria-disabled="true">Previous</span>}{records.value.next_cursor ? <Link href={atlasHref(campaign.campaign_id, "records", { ...state, cursor: records.value.next_cursor })} navigate={navigate}>Next</Link> : <span aria-disabled="true">Next</span>}</nav></>}</section>;
 }
 
 type RecordConnections = {

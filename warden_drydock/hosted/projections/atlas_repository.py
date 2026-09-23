@@ -24,6 +24,7 @@ from .atlas_models import (
     decode_cursor,
     encode_cursor,
     facet_counts,
+    record_match_evidence,
     require_domain_id,
     require_public_id,
 )
@@ -456,13 +457,7 @@ class AtlasQueryService:
             for record in records
             if (
                 not normalized_query
-                or any(
-                    normalized_query in value.casefold()
-                    for value in (
-                        record.record_id, record.record_type, record.name,
-                        record.summary, record.content,
-                    )
-                )
+                or record_match_evidence(record, query.query)
             )
             and (not type_filters or record.record_type in type_filters)
             and (not authority_filters or record.authority.value in authority_filters)

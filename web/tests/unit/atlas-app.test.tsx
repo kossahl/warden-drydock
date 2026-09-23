@@ -4,7 +4,7 @@ import type { AtlasApi } from "../../src/api/atlasClient";
 import { ApiError, type SliceApi } from "../../src/api/client";
 import type { GenerationView, ProposalView, ProviderReadiness } from "../../src/contracts/v2";
 import { openHeadHref, WorkflowPanels } from "../../src/atlas/AtlasCompletion";
-import { parseAtlasRoute, type AtlasRoute } from "../../src/atlas/routing";
+import { atlasHref, parseAtlasRoute, type AtlasRoute } from "../../src/atlas/routing";
 import { binding, campaigns, detail, fullHistory, generations, headRevision, neighborhood, newestFiveHistory, oldRevision, overview, proposals, readinessUnavailable, recordHistory, records, workflow } from "../fixtures/atlas";
 
 function fakeAtlas(overrides: Partial<AtlasApi> = {}): AtlasApi {
@@ -55,6 +55,10 @@ describe("Campaign Atlas browser experience", () => {
     expect(screen.getByRole("link", { name: "Accepted (legacy) (1)" })).toBeVisible();
   });
 
+  it("preserves revision pagination cursors without record-library filters", () => {
+    expect(atlasHref("campaign_atlas", "revisions", { revisionId: "revision_two", cursor: "older_page", q: "station", type: "npc" })).toBe("/campaigns/campaign_atlas/revisions?revision=revision_two&cursor=older_page");
+  });
+
   it("labels the effective overview timezone and falls back to UTC", async () => {
     window.history.replaceState(null, "", "/campaigns/campaign_atlas?revision=revision_two");
     const api = fakeAtlas({ overview: vi.fn(async () => ({ ...overview, display_timezone: "Invalid/Zone" })) });
@@ -72,6 +76,42 @@ describe("Campaign Atlas browser experience", () => {
     await waitFor(() => expect(window.location.search).toContain("q=station+%26+keeper"));
     expect(window.location.search).toContain("type=npc");
     expect(window.location.search).not.toContain("cursor=");
+  });
+
+  it("filters while typing and renders server-provided match evidence", async () => {
+    const filtered = {
+      ...records,
+      normalized_query: "station",
+      total: 1,
+      next_cursor: null,
+      items: [{ ...records.items[0], matches: [{ field: "summary", label: "Summary", parts: [{ text: "Keeps the ", matched: false }, { text: "station", matched: true }, { text: ".", matched: false }] }] }],
+    };
+    const api = fakeAtlas({ records: vi.fn(async (_campaign, query) => query.q ? filtered : records) });
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records?revision=revision_two");
+    render(<App atlasApi={api} providerReadiness={async () => readinessUnavailable} />);
+    const search = await screen.findByLabelText("Search campaign records");
+    fireEvent.change(search, { target: { value: "station" } });
+    await waitFor(() => expect(window.location.search).toContain("q=station"));
+    expect(await screen.findByText("station")).toBeVisible();
+    expect(screen.getByText("Summary:")).toBeVisible();
+    expect(api.records).toHaveBeenCalledWith("campaign_atlas", expect.objectContaining({ q: "station" }));
+  });
+
+  it("does not replace a newer typed search with an older response", async () => {
+    const older = deferred<typeof records>();
+    const newer = deferred<typeof records>();
+    const api = fakeAtlas({ records: vi.fn(async (_campaign, query) => query.q === "old" ? older.promise : query.q === "new" ? newer.promise : records) });
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas/records?revision=revision_two");
+    render(<App atlasApi={api} providerReadiness={async () => readinessUnavailable} />);
+    const search = await screen.findByLabelText("Search campaign records");
+    fireEvent.change(search, { target: { value: "old" } });
+    await waitFor(() => expect(api.records).toHaveBeenCalledWith("campaign_atlas", expect.objectContaining({ q: "old" })));
+    fireEvent.change(search, { target: { value: "new" } });
+    await waitFor(() => expect(api.records).toHaveBeenCalledWith("campaign_atlas", expect.objectContaining({ q: "new" })));
+    await act(async () => older.resolve({ ...records, total: 1, items: [{ ...records.items[0], name: "Old result" }] }));
+    expect(screen.queryByRole("link", { name: "Old result" })).not.toBeInTheDocument();
+    await act(async () => newer.resolve({ ...records, total: 1, items: [{ ...records.items[0], name: "New result" }] }));
+    expect(await screen.findByRole("link", { name: "New result" })).toBeVisible();
   });
 
   it("renders records as an accessible table with revision-bound links", async () => {
