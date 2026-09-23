@@ -66,6 +66,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
     hydrationSequence.current = sequence;
     const isCurrentHydration = () => hydrationSequence.current === sequence;
     hydratedLocation.current = location;
+    setHydrating(false);
     if (!active) return;
     const params = new URL(location, "http://drydock.local").searchParams;
     const generationId = params.get("generation");

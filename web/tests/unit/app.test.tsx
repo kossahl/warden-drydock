@@ -324,6 +324,22 @@ describe("proposal browser slice", () => {
     expect(screen.queryByText("Old draft.")).not.toBeInTheDocument();
   });
 
+  it("clears pending workflow hydration after leaving its deep link", async () => {
+    const oldHydration = deferred<GenerationView>();
+    const oldGeneration = { ...complete, generation_id: "generation_old", context: { scope: "campaign" as const }, terminal_content: "Old draft." };
+    const api = fakeApi({ readGeneration: vi.fn(async () => oldHydration.promise) });
+    const view = render(<ProposalWorkspace api={api} location="/campaigns/campaign_alpha/drafts?revision=revision_alpha&generation=generation_old" />);
+    await waitFor(() => expect(api.readGeneration).toHaveBeenCalledWith("generation_old"));
+    expect(screen.getByRole("heading", { name: "Opening persisted work" })).toBeVisible();
+
+    view.rerender(<ProposalWorkspace api={api} active={false} location="/campaigns" />);
+    view.rerender(<ProposalWorkspace api={api} location="/campaigns" />);
+    expect(screen.queryByRole("heading", { name: "Opening persisted work" })).not.toBeInTheDocument();
+
+    await act(async () => oldHydration.resolve(oldGeneration));
+    expect(screen.queryByText("Old draft.")).not.toBeInTheDocument();
+  });
+
   it("keeps a Draft deep link inside the campaign Drafts route", async () => {
     window.history.replaceState(null, "", "/campaigns/campaign_alpha/drafts?revision=revision_alpha&generation=generation_alpha");
     const api = fakeApi({ readGeneration: vi.fn(async () => ({ ...complete, generation_id: "generation_alpha", context: { scope: "campaign" as const } })) });
