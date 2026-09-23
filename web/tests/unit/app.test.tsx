@@ -1,3 +1,6 @@
+import { useLayoutEffect } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "../../src/App";
 import { ProposalWorkspace } from "../../src/ProposalWorkspace";
@@ -30,6 +33,11 @@ function fakeApi(overrides: Partial<SliceApi> = {}): SliceApi {
     createProposal: vi.fn(async () => proposal), readProposal: vi.fn(async () => proposal), correctProposal: vi.fn(async () => ({ ...proposal, proposal_version: 2 })), rejectProposal: vi.fn(async (): Promise<ProposalView> => ({ ...proposal, status: "rejected" })), approveProposal: vi.fn(async (): Promise<ProposalApprovalResult> => ({ contract_name: "proposal_approval_result", contract_version: 2, proposal: { ...proposal, status: "published", published_revision_id: "revision_beta" }, outcome: "published", published_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1"), validation_status: "passed" }, error: null, exact_replay: false })),
   };
   return { ...defaults, ...overrides };
+}
+
+function ResolveHydrationOnRouteCommit({ location, initialLocation, resolve }: { location: string; initialLocation: string; resolve: () => void }) {
+  useLayoutEffect(() => { if (location !== initialLocation) resolve(); }, [initialLocation, location, resolve]);
+  return null;
 }
 
 async function openRecord(api: SliceApi) {
@@ -324,20 +332,45 @@ describe("proposal browser slice", () => {
     expect(screen.queryByText("Old draft.")).not.toBeInTheDocument();
   });
 
-  it("clears pending workflow hydration after leaving its deep link", async () => {
+  it("invalidates pending workflow hydration before the next route's passive effect", async () => {
     const oldHydration = deferred<GenerationView>();
     const oldGeneration = { ...complete, generation_id: "generation_old", context: { scope: "campaign" as const }, terminal_content: "Old draft." };
     const api = fakeApi({ readGeneration: vi.fn(async () => oldHydration.promise) });
-    const view = render(<ProposalWorkspace api={api} location="/campaigns/campaign_alpha/drafts?revision=revision_alpha&generation=generation_old" />);
+    const initialLocation = "/campaigns/campaign_alpha/drafts?revision=revision_alpha&generation=generation_old";
+    const destination = "/campaigns";
+    const resolveOldHydration = () => { oldHydration.resolve(oldGeneration); };
+    const renderAt = (active: boolean, location: string) => (
+      <>
+        <ResolveHydrationOnRouteCommit location={location} initialLocation={initialLocation} resolve={resolveOldHydration} />
+        <ProposalWorkspace api={api} active={active} location={location} />
+      </>
+    );
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => { flushSync(() => root.render(renderAt(true, initialLocation))); });
     await waitFor(() => expect(api.readGeneration).toHaveBeenCalledWith("generation_old"));
     expect(screen.getByRole("heading", { name: "Opening persisted work" })).toBeVisible();
 
-    view.rerender(<ProposalWorkspace api={api} active={false} location="/campaigns" />);
-    view.rerender(<ProposalWorkspace api={api} location="/campaigns" />);
+    await act(async () => {
+      flushSync(() => root.render(renderAt(false, destination)));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => { flushSync(() => root.render(renderAt(true, destination))); });
     expect(screen.queryByRole("heading", { name: "Opening persisted work" })).not.toBeInTheDocument();
-
-    await act(async () => oldHydration.resolve(oldGeneration));
     expect(screen.queryByText("Old draft.")).not.toBeInTheDocument();
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it.each([
+    "/campaigns/campaign_alpha/drafts?generation=",
+    "/campaigns/campaign_alpha/proposals?proposal=&version=1",
+  ])("does not leave an empty workflow deep link loading: %s", (location) => {
+    render(<ProposalWorkspace api={fakeApi()} active={false} location={location} />);
+    expect(screen.queryByRole("heading", { name: "Opening persisted work" })).not.toBeInTheDocument();
   });
 
   it("keeps a Draft deep link inside the campaign Drafts route", async () => {

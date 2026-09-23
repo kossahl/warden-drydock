@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import { type AtlasApi, httpAtlasApi } from "./api/atlasClient";
 import { ApiError, browserId, httpSliceApi, recordGenerationContext, type SliceApi } from "./api/client";
 import { ErrorState, Link, useResource } from "./atlas/AtlasCompletion";
@@ -40,7 +40,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const workflowCollection = workflowRoute?.[2] ?? null;
   const workflowCampaignId = workflowRoute ? (() => { try { return decodeURIComponent(workflowRoute[1]); } catch { return ""; } })() : null;
   const workflowParams = new URL(location, "http://drydock.local").searchParams;
-  const workflowItem = workflowCollection && (workflowParams.has("generation") || (workflowParams.has("proposal") && Number.isInteger(Number(workflowParams.get("version"))) && Number(workflowParams.get("version")) > 0));
+  const workflowItem = workflowCollection && (Boolean(workflowParams.get("generation")) || (Boolean(workflowParams.get("proposal")) && Number.isInteger(Number(workflowParams.get("version"))) && Number(workflowParams.get("version")) > 0));
   const active = routeActive || Boolean(workflowItem);
   const retries = useRef<Record<string, string>>({});
   const actionIds = useRef<Record<string, string>>({});
@@ -60,13 +60,15 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const failAction = (failure: unknown) => { setError(friendlyError(failure)); setAnnouncement("The request failed."); setBusy(null); };
 
   useEffect(() => { if (active) void api.readiness().then(setReadiness).catch(failAction); }, [active, api]);
+  useLayoutEffect(() => {
+    hydrationSequence.current += 1;
+    setHydrating(Boolean(active && workflowItem));
+  }, [active, location, workflowItem]);
   useEffect(() => {
     if (hydratedLocation.current === location) return;
-    const sequence = hydrationSequence.current + 1;
-    hydrationSequence.current = sequence;
+    const sequence = hydrationSequence.current;
     const isCurrentHydration = () => hydrationSequence.current === sequence;
     hydratedLocation.current = location;
-    setHydrating(false);
     if (!active) return;
     const params = new URL(location, "http://drydock.local").searchParams;
     const generationId = params.get("generation");
