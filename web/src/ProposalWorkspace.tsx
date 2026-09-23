@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import { type AtlasApi, httpAtlasApi } from "./api/atlasClient";
 import { ApiError, browserId, httpSliceApi, recordGenerationContext, type SliceApi } from "./api/client";
 import { ErrorState, Link, useResource } from "./atlas/AtlasCompletion";
@@ -35,12 +35,13 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const [lastObservedSequence, setLastObservedSequence] = useState(0);
   const [announcement, setAnnouncement] = useState("");
   const [hydrating, setHydrating] = useState(false);
+  const [refreshingCampaign, setRefreshingCampaign] = useState(false);
   const [rootAction, setRootAction] = useState<GenerationAction>("ask");
   const workflowRoute = new URL(location, "http://drydock.local").pathname.match(/^\/campaigns\/([^/]+)\/(drafts|proposals)$/);
   const workflowCollection = workflowRoute?.[2] ?? null;
   const workflowCampaignId = workflowRoute ? (() => { try { return decodeURIComponent(workflowRoute[1]); } catch { return ""; } })() : null;
   const workflowParams = new URL(location, "http://drydock.local").searchParams;
-  const workflowItem = workflowCollection && (workflowParams.has("generation") || (workflowParams.has("proposal") && Number.isInteger(Number(workflowParams.get("version"))) && Number(workflowParams.get("version")) > 0));
+  const workflowItem = workflowCollection && (Boolean(workflowParams.get("generation")) || (Boolean(workflowParams.get("proposal")) && Number.isInteger(Number(workflowParams.get("version"))) && Number(workflowParams.get("version")) > 0));
   const active = routeActive || Boolean(workflowItem);
   const retries = useRef<Record<string, string>>({});
   const actionIds = useRef<Record<string, string>>({});
@@ -50,6 +51,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const pendingCampaignRefresh = useRef(false);
   const campaignRefreshSequence = useRef(0);
   const hydrationSequence = useRef(0);
+  const invalidatedHydrationRoute = useRef<{ active: boolean; location: string } | null>(null);
   const hydratedLocation = useRef("");
   const uncertainGeneration = useRef<{ action: GenerationAction; prompt: string; generationId: string } | null>(null);
   const campaigns = useResource(active && !campaign ? () => atlasApi.campaigns() : null, [active, atlasApi, campaign]);
@@ -60,10 +62,21 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const failAction = (failure: unknown) => { setError(friendlyError(failure)); setAnnouncement("The request failed."); setBusy(null); };
 
   useEffect(() => { if (active) void api.readiness().then(setReadiness).catch(failAction); }, [active, api]);
+  useLayoutEffect(() => {
+    if (invalidatedHydrationRoute.current?.active !== active || invalidatedHydrationRoute.current?.location !== location) {
+      invalidatedHydrationRoute.current = { active, location };
+      hydrationSequence.current += 1;
+    }
+    if (active && workflowItem && (pendingCampaignRefresh.current || refreshingCampaign)) {
+      campaignRefreshSequence.current += 1;
+      pendingCampaignRefresh.current = true;
+      setRefreshingCampaign(false);
+    }
+    setHydrating(Boolean(active && workflowItem));
+  }, [active, location, workflowItem]);
   useEffect(() => {
     if (hydratedLocation.current === location) return;
-    const sequence = hydrationSequence.current + 1;
-    hydrationSequence.current = sequence;
+    const sequence = hydrationSequence.current;
     const isCurrentHydration = () => hydrationSequence.current === sequence;
     hydratedLocation.current = location;
     if (!active) return;
@@ -97,14 +110,15 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
       campaignRefreshSequence.current += 1;
       if (active || !campaign) return;
       pendingCampaignRefresh.current = true;
-      setHydrating(true);
+      setRefreshingCampaign(true);
     };
     window.addEventListener("drydock:campaign-mutated", invalidate);
     return () => window.removeEventListener("drydock:campaign-mutated", invalidate);
   }, [active, campaign]);
   useEffect(() => {
-    if (!active || !campaign || !pendingCampaignRefresh.current) return;
+    if (!active || !campaign || !pendingCampaignRefresh.current || workflowItem) return;
     pendingCampaignRefresh.current = false;
+    setRefreshingCampaign(true);
     const refreshSequence = campaignRefreshSequence.current;
     const isCurrentRefresh = () => campaignRefreshSequence.current === refreshSequence;
     const currentRecordId = record?.record_id;
@@ -137,8 +151,8 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
       const loadedDigest = loadedRecord ? (await exactRecordContext(loadedRecord)).content_digest : null;
       if (!isCurrentRefresh()) return;
       setCampaign(loadedCampaign); setRecord(loadedRecord); setRecordContentDigest(loadedDigest); setAnnouncement(`Opened latest campaign revision ${loadedCampaign.viewed_revision.revision_id}.`);
-    })().catch((failure) => { if (isCurrentRefresh()) failAction(failure); }).finally(() => { if (isCurrentRefresh()) setHydrating(false); });
-  }, [active, api, atlasApi, campaign, generation, proposal, record]);
+    })().catch((failure) => { if (isCurrentRefresh()) failAction(failure); }).finally(() => { if (isCurrentRefresh()) setRefreshingCampaign(false); });
+  }, [active, api, atlasApi, campaign, generation, proposal, record, workflowItem]);
 
   async function createCampaign(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy("campaign"); setError(null);
@@ -262,7 +276,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
         <span role="status">Provider: {providerStatus}</span>
       </header>
       <main id="main-content" tabIndex={-1} ref={mainRef}>
-        {hydrating ? (
+        {hydrating || refreshingCampaign ? (
           <section className="card narrow" aria-busy="true"><h1>Opening persisted work</h1></section>
         ) : !campaign ? (
           <div className="campaign-home">

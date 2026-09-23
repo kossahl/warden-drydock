@@ -1,9 +1,12 @@
+import { StrictMode, useLayoutEffect } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "../../src/App";
 import { ProposalWorkspace } from "../../src/ProposalWorkspace";
 import type { AtlasApi } from "../../src/api/atlasClient";
 import { ApiError, type SliceApi } from "../../src/api/client";
-import type { AtlasCampaignItem, CampaignRevisionView, GenerationEvent, GenerationView, ProposalApprovalResult, ProposalView, ProviderReadiness, RecordView } from "../../src/contracts/v2";
+import type { AtlasCampaignCollection, AtlasCampaignItem, CampaignRevisionView, GenerationEvent, GenerationView, ProposalApprovalResult, ProposalView, ProviderReadiness, RecordView } from "../../src/contracts/v2";
 
 const hex = (value: string) => value.repeat(64);
 const recordDigest = "6ae57d4640095550294f9f68b8390e483c43103bcabad485716afbea7680a6fd";
@@ -30,6 +33,11 @@ function fakeApi(overrides: Partial<SliceApi> = {}): SliceApi {
     createProposal: vi.fn(async () => proposal), readProposal: vi.fn(async () => proposal), correctProposal: vi.fn(async () => ({ ...proposal, proposal_version: 2 })), rejectProposal: vi.fn(async (): Promise<ProposalView> => ({ ...proposal, status: "rejected" })), approveProposal: vi.fn(async (): Promise<ProposalApprovalResult> => ({ contract_name: "proposal_approval_result", contract_version: 2, proposal: { ...proposal, status: "published", published_revision_id: "revision_beta" }, outcome: "published", published_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1"), validation_status: "passed" }, error: null, exact_replay: false })),
   };
   return { ...defaults, ...overrides };
+}
+
+function ResolveHydrationOnRouteCommit({ location, initialLocation, resolve }: { location: string; initialLocation: string; resolve: () => void }) {
+  useLayoutEffect(() => { if (location !== initialLocation) resolve(); }, [initialLocation, location, resolve]);
+  return null;
 }
 
 async function openRecord(api: SliceApi) {
@@ -308,6 +316,15 @@ describe("proposal browser slice", () => {
     window.history.replaceState(null, "", "/");
   });
 
+  it("keeps persisted workflow hydration valid through Strict Mode effect replay", async () => {
+    const location = "/campaigns/campaign_alpha/drafts?revision=revision_alpha&generation=generation_alpha";
+    const api = fakeApi({ readGeneration: vi.fn(async () => ({ ...complete, context: { scope: "campaign" as const } })) });
+    render(<StrictMode><ProposalWorkspace api={api} atlasApi={fakeAtlas()} location={location} /></StrictMode>);
+
+    expect(await screen.findByRole("heading", { name: "Campaign Draft" })).toBeVisible();
+    expect(api.readGeneration).toHaveBeenCalledWith("generation_alpha");
+  });
+
   it("does not let stale workflow hydration replace the current deep link", async () => {
     const oldHydration = deferred<GenerationView>();
     const newHydration = deferred<GenerationView>();
@@ -322,6 +339,47 @@ describe("proposal browser slice", () => {
     expect(await screen.findByText("New draft.")).toBeVisible();
     await act(async () => oldHydration.resolve(oldGeneration));
     expect(screen.queryByText("Old draft.")).not.toBeInTheDocument();
+  });
+
+  it("invalidates pending workflow hydration before the next route's passive effect", async () => {
+    const oldHydration = deferred<GenerationView>();
+    const oldGeneration = { ...complete, generation_id: "generation_old", context: { scope: "campaign" as const }, terminal_content: "Old draft." };
+    const api = fakeApi({ readGeneration: vi.fn(async () => oldHydration.promise) });
+    const initialLocation = "/campaigns/campaign_alpha/drafts?revision=revision_alpha&generation=generation_old";
+    const destination = "/campaigns";
+    const resolveOldHydration = () => { oldHydration.resolve(oldGeneration); };
+    const renderAt = (active: boolean, location: string) => (
+      <>
+        <ResolveHydrationOnRouteCommit location={location} initialLocation={initialLocation} resolve={resolveOldHydration} />
+        <ProposalWorkspace api={api} active={active} location={location} />
+      </>
+    );
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => { flushSync(() => root.render(renderAt(true, initialLocation))); });
+    await waitFor(() => expect(api.readGeneration).toHaveBeenCalledWith("generation_old"));
+    expect(screen.getByRole("heading", { name: "Opening persisted work" })).toBeVisible();
+
+    await act(async () => {
+      flushSync(() => root.render(renderAt(false, destination)));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => { flushSync(() => root.render(renderAt(true, destination))); });
+    expect(screen.queryByRole("heading", { name: "Opening persisted work" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Old draft.")).not.toBeInTheDocument();
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it.each([
+    "/campaigns/campaign_alpha/drafts?generation=",
+    "/campaigns/campaign_alpha/proposals?proposal=&version=1",
+  ])("does not leave an empty workflow deep link loading: %s", (location) => {
+    render(<ProposalWorkspace api={fakeApi()} active={false} location={location} />);
+    expect(screen.queryByRole("heading", { name: "Opening persisted work" })).not.toBeInTheDocument();
   });
 
   it("keeps a Draft deep link inside the campaign Drafts route", async () => {
@@ -397,8 +455,10 @@ describe("proposal browser slice", () => {
   it("refreshes a hidden workspace after an Atlas campaign mutation", async () => {
     const latestCampaign = { ...campaign, campaign_name: "Updated Campaign", viewed_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1"), validation_status: "passed" as const }, head_revision: "revision_beta", records: [{ ...campaign.records[0], name: "Updated Campaign" }] };
     const latestRecord = { ...record, revision_id: "revision_beta", name: "Updated Campaign", content: "# Updated Campaign" };
-    let mutated = false;
-    const atlasApi = { campaigns: vi.fn(async () => ({ contract_name: "atlas_campaign_collection" as const, contract_version: 2 as const, campaigns: [{ ...atlasCampaign, campaign_name: mutated ? "Updated Campaign" : atlasCampaign.campaign_name, head_revision: mutated ? { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1") } : atlasCampaign.head_revision, projected_revision: mutated ? { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1") } : atlasCampaign.projected_revision }] })) } as unknown as AtlasApi;
+    const refreshCampaigns = deferred<AtlasCampaignCollection>();
+    const initialCampaigns: AtlasCampaignCollection = { contract_name: "atlas_campaign_collection", contract_version: 2, campaigns: [atlasCampaign] };
+    let campaignReadCount = 0;
+    const atlasApi = { campaigns: vi.fn(async () => ++campaignReadCount > 1 ? refreshCampaigns.promise : initialCampaigns) } as unknown as AtlasApi;
     const api = fakeApi({ readRevision: vi.fn(async (_campaignId, revisionId) => revisionId === "revision_beta" ? latestCampaign : campaign), readRecord: vi.fn(async (_campaignId, revisionId) => revisionId === "revision_beta" ? latestRecord : record) });
     const view = render(<ProposalWorkspace api={api} atlasApi={atlasApi} />);
     await screen.findByText("Provider: Ready");
@@ -406,16 +466,65 @@ describe("proposal browser slice", () => {
     await screen.findByRole("heading", { name: "Synthetic Campaign" });
 
     await act(async () => { view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} active={false} />); });
-    mutated = true;
     await act(async () => {
       window.dispatchEvent(new Event("drydock:campaign-mutated"));
       view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} />);
     });
 
+    await waitFor(() => expect(atlasApi.campaigns).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("heading", { name: "Opening persisted work" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Synthetic Campaign" })).not.toBeInTheDocument();
+    await act(async () => { view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} active={false} />); });
+    await act(async () => { view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} />); });
+    expect(screen.getByRole("heading", { name: "Opening persisted work" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Synthetic Campaign" })).not.toBeInTheDocument();
+    await act(async () => refreshCampaigns.resolve({ contract_name: "atlas_campaign_collection", contract_version: 2, campaigns: [{ ...atlasCampaign, campaign_name: "Updated Campaign", head_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1") }, projected_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1") } }] }));
+
     expect(await screen.findByRole("heading", { name: "Updated Campaign" })).toBeVisible();
     expect(screen.getByText("# Updated Campaign")).toBeVisible();
     expect(api.readRevision).toHaveBeenCalledWith("campaign_alpha", "revision_beta");
     expect(api.readRecord).toHaveBeenCalledWith("campaign_alpha", "revision_beta", "campaign-main");
+  });
+
+  it("does not let a hidden refresh overwrite a newly opened workflow deep link", async () => {
+    const refreshCampaignReads = [deferred<AtlasCampaignCollection>(), deferred<AtlasCampaignCollection>()];
+    const initialCampaigns: AtlasCampaignCollection = { contract_name: "atlas_campaign_collection", contract_version: 2, campaigns: [atlasCampaign] };
+    const latestAtlasCampaign: AtlasCampaignItem = { ...atlasCampaign, campaign_name: "Updated Campaign", head_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1") }, projected_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1") } };
+    const latestCampaign = { ...campaign, campaign_name: "Updated Campaign", viewed_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1"), validation_status: "passed" as const }, head_revision: "revision_beta" };
+    const latestRecord = { ...record, revision_id: "revision_beta", name: "Updated Campaign", content: "# Updated Campaign" };
+    const recordBeta = { ...record, record_id: "record_beta", name: "Record Beta", content: "# Record Beta" };
+    const latestRecordBeta = { ...recordBeta, revision_id: "revision_beta", name: "Updated Record Beta", content: "# Updated Record Beta" };
+    const deepLinkedGeneration: GenerationView = { ...complete, generation_id: "generation_beta", context: { scope: "record", record_id: "record_beta", content_digest: recordDigest }, terminal_content: "Draft for Record Beta." };
+    let campaignReadCount = 0;
+    const atlasApi = { campaigns: vi.fn(async () => ++campaignReadCount === 1 ? initialCampaigns : refreshCampaignReads[campaignReadCount - 2].promise) } as unknown as AtlasApi;
+    const api = fakeApi({
+      readGeneration: vi.fn(async () => deepLinkedGeneration),
+      readRevision: vi.fn(async (_campaignId, revisionId) => revisionId === "revision_beta" ? latestCampaign : campaign),
+      readRecord: vi.fn(async (_campaignId, revisionId, recordId) => recordId === "record_beta" ? revisionId === "revision_beta" ? latestRecordBeta : recordBeta : revisionId === "revision_beta" ? latestRecord : record),
+    });
+    const view = render(<ProposalWorkspace api={api} atlasApi={atlasApi} />);
+    await screen.findByText("Provider: Ready");
+    fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
+    await screen.findByRole("heading", { name: "Synthetic Campaign" });
+
+    await act(async () => { view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} active={false} location="/campaigns" />); });
+    await act(async () => { window.dispatchEvent(new Event("drydock:campaign-mutated")); });
+    await act(async () => { view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} location="/" />); });
+    await waitFor(() => expect(atlasApi.campaigns).toHaveBeenCalledTimes(2));
+
+    const deepLink = "/campaigns/campaign_alpha/drafts?revision=revision_alpha&generation=generation_beta";
+    await act(async () => { view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} active={false} location={deepLink} />); });
+    expect(await screen.findByRole("heading", { name: "Record Beta" })).toBeVisible();
+    await act(async () => refreshCampaignReads[0].resolve({ contract_name: "atlas_campaign_collection", contract_version: 2, campaigns: [latestAtlasCampaign] }));
+
+    expect(screen.getByRole("heading", { name: "Record Beta" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Updated Campaign" })).not.toBeInTheDocument();
+    expect(api.readRevision).not.toHaveBeenCalledWith("campaign_alpha", "revision_beta");
+
+    await act(async () => { view.rerender(<ProposalWorkspace api={api} atlasApi={atlasApi} location="/" />); });
+    await waitFor(() => expect(atlasApi.campaigns).toHaveBeenCalledTimes(3));
+    await act(async () => refreshCampaignReads[1].resolve({ contract_name: "atlas_campaign_collection", contract_version: 2, campaigns: [latestAtlasCampaign] }));
+    expect(await screen.findByRole("heading", { name: "Updated Record Beta" })).toBeVisible();
   });
 
   it.each([

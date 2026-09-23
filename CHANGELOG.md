@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Cleared stale loading state when navigating away from persisted workflow deep
+  links.
 - Fixed record editor section corruption, invalid new connection IDs, removal
   with multiple references from one record, and editing proposal corrections.
 - Added the hardened two-service localhost Compose runtime, reviewed startup
