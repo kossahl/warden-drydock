@@ -714,6 +714,20 @@ Preserve this unrelated section.
         self.assertEqual((422, "record_type_unknown"), (caught.exception.status, caught.exception.payload["error"]["code"]))
         self.assertEqual(1, self.app._editor_version("campaign_alpha"))
 
+    def test_unknown_connection_target_finding_identifies_connection(self):
+        with self.assertRaises(HTTPFailure) as caught:
+            self._create_record_proposal("record-invalid-target", connections=[{
+                "connection_id": "connection_invalid",
+                "target_record_id": "record-missing",
+                "relationship": "connected-to",
+                "state": "current",
+                "context": "Invalid target.",
+            }])
+        self.assertEqual((422, "unknown_connection_target"), (
+            caught.exception.status, caught.exception.payload["error"]["code"],
+        ))
+        self.assertEqual("connections.connection_invalid.target_record_id", caught.exception.payload["error"]["findings"][0]["location"])
+
     def test_removal_approval_stages_outgoing_and_incoming_connection_changes_atomically(self):
         target_revision = self._create_record("record-target", connections=[{
             "connection_id": "connection_target", "target_record_id": "campaign-main",
