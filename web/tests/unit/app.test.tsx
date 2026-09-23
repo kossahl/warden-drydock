@@ -341,6 +341,131 @@ describe("proposal browser slice", () => {
     expect(screen.queryByText("Old draft.")).not.toBeInTheDocument();
   });
 
+  it("clears the previous workflow when navigation to a new deep link fails", async () => {
+    const api = fakeApi({ readGeneration: vi.fn(async (generationId) => {
+      if (generationId === "generation_beta") throw new Error("generation_not_found");
+      return { ...complete, generation_id: generationId };
+    }) });
+    const view = render(<ProposalWorkspace api={api} active location="/campaigns/campaign_alpha/drafts?revision=revision_alpha&generation=generation_alpha" />);
+
+    expect(await screen.findByRole("heading", { name: "Revision record" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Submit Ask" })).toBeEnabled();
+
+    view.rerender(<ProposalWorkspace api={api} active location="/campaigns/campaign_alpha/drafts?revision=revision_alpha&generation=generation_beta" />);
+
+    expect(await screen.findByText(/Request failed \(generation_not_found\)/)).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Revision record" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit Ask" })).not.toBeInTheDocument();
+  });
+
+  it("does not let pending campaign creation restore a workspace after failed deep-link hydration", async () => {
+    const creation = deferred<CampaignRevisionView>();
+    const api = fakeApi({
+      createCampaign: vi.fn(() => creation.promise),
+      readGeneration: vi.fn(async () => { throw new Error("generation_not_found"); }),
+    });
+    const view = render(<ProposalWorkspace api={api} active location="/" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
+    await waitFor(() => expect(api.createCampaign).toHaveBeenCalledTimes(1));
+    view.rerender(<ProposalWorkspace api={api} active location="/campaigns/campaign_alpha/drafts?generation=generation_beta" />);
+    expect(await screen.findByText(/Request failed \(generation_not_found\)/)).toBeVisible();
+
+    await act(async () => { creation.resolve(campaign); await creation.promise; });
+
+    expect(api.readRecord).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: "Revision record" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit Ask" })).not.toBeInTheDocument();
+  });
+
+  it("does not reuse a generation retry ID after failed hydration discards its workspace", async () => {
+    const generationIds: string[] = [];
+    let starts = 0;
+    const api = fakeApi({
+      startGeneration: vi.fn(async (_campaignId, _revisionId, action, _prompt, generationId, context) => {
+        generationIds.push(generationId);
+        starts += 1;
+        if (starts === 1) throw new Error("transport_lost");
+        return { ...pending, generation_id: generationId, action, context };
+      }),
+      readGeneration: vi.fn(async () => { throw new Error("generation_not_found"); }),
+    });
+    const view = render(<ProposalWorkspace api={api} active location="/" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
+    await screen.findByRole("heading", { name: "Revision record" });
+    fireEvent.change(screen.getByLabelText("Grounded question"), { target: { value: "Find the quiet place" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit Ask" }));
+    expect(await screen.findByText(/Request failed \(transport_lost\)/)).toBeVisible();
+
+    view.rerender(<ProposalWorkspace api={api} active location="/campaigns/campaign_alpha/drafts?generation=generation_beta" />);
+    expect(await screen.findByText(/Request failed \(generation_not_found\)/)).toBeVisible();
+    view.rerender(<ProposalWorkspace api={api} active location="/" />);
+    fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
+    await screen.findByRole("heading", { name: "Revision record" });
+    fireEvent.change(screen.getByLabelText("Grounded question"), { target: { value: "Find the quiet place" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit Ask" }));
+    await waitFor(() => expect(api.startGeneration).toHaveBeenCalledTimes(2));
+
+    expect(generationIds[1]).not.toBe(generationIds[0]);
+  });
+
+  it("does not reuse an uncertain generation ID after hydrating another workflow item", async () => {
+    const generationIds: string[] = [];
+    let starts = 0;
+    const api = fakeApi({
+      startGeneration: vi.fn(async (_campaignId, _revisionId, action, _prompt, generationId, context) => {
+        generationIds.push(generationId);
+        starts += 1;
+        if (starts === 1) throw new Error("transport_lost");
+        return { ...pending, generation_id: generationId, action, context };
+      }),
+      readGeneration: vi.fn(async (generationId) => ({ ...complete, generation_id: generationId })),
+    });
+    const view = render(<ProposalWorkspace api={api} active location="/" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Create campaign" }));
+    await screen.findByRole("heading", { name: "Revision record" });
+    fireEvent.change(screen.getByLabelText("Grounded question"), { target: { value: "Find the quiet place" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit Ask" }));
+    expect(await screen.findByText(/Request failed \(transport_lost\)/)).toBeVisible();
+
+    view.rerender(<ProposalWorkspace api={api} active location="/campaigns/campaign_alpha/drafts?generation=generation_beta" />);
+    await screen.findByRole("heading", { name: "Grounded Draft" });
+    fireEvent.change(screen.getByLabelText("Grounded question"), { target: { value: "Find the quiet place" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit Ask" }));
+    await waitFor(() => expect(api.startGeneration).toHaveBeenCalledTimes(2));
+
+    expect(generationIds[1]).not.toBe(generationIds[0]);
+  });
+
+  it("does not restore the previous workspace when its approval finishes after a failed deep link", async () => {
+    const approval = deferred<ProposalApprovalResult>();
+    const published: ProposalApprovalResult = { contract_name: "proposal_approval_result", contract_version: 2, proposal: { ...proposal, status: "published", published_revision_id: "revision_beta" }, outcome: "published", published_revision: { revision_id: "revision_beta", ordinal: 2, tree_digest: hex("1"), validation_status: "passed" }, error: null, exact_replay: false };
+    const api = fakeApi({
+      approveProposal: vi.fn(async () => approval.promise),
+      readGeneration: vi.fn(async (generationId) => {
+        if (generationId === "generation_beta") throw new Error("generation_not_found");
+        return { ...complete, generation_id: generationId };
+      }),
+    });
+    const view = render(<ProposalWorkspace api={api} active location="/?proposal=proposal_alpha&version=1" />);
+
+    expect(await screen.findByRole("heading", { name: "Proposal version 1" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Approve exact diff" }));
+    await waitFor(() => expect(api.approveProposal).toHaveBeenCalledTimes(1));
+
+    view.rerender(<ProposalWorkspace api={api} active location="/?generation=generation_beta" />);
+    expect(await screen.findByText(/Request failed \(generation_not_found\)/)).toBeVisible();
+
+    await act(async () => { approval.resolve(published); await approval.promise; });
+
+    expect(api.readRevision).not.toHaveBeenCalledWith("campaign_alpha", "revision_beta");
+    expect(screen.queryByRole("heading", { name: "Revision record" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve exact diff" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Request failed \(generation_not_found\)/)).toBeVisible();
+  });
+
   it("invalidates pending workflow hydration before the next route's passive effect", async () => {
     const oldHydration = deferred<GenerationView>();
     const oldGeneration = { ...complete, generation_id: "generation_old", context: { scope: "campaign" as const }, terminal_content: "Old draft." };
