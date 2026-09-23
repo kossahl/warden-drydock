@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type Mous
 import { type AtlasApi, httpAtlasApi } from "./api/atlasClient";
 import { ApiError, browserId, httpSliceApi, recordGenerationContext, type SliceApi } from "./api/client";
 import { ErrorState, Link, useResource } from "./atlas/AtlasCompletion";
+import { isWorkflowItemRoute, parseAtlasRoute } from "./atlas/routing";
 import { AuthorityBadge, RevisionStatus } from "./components/StatusPrimitives";
 import type { CampaignRevisionView, GenerationAction, GenerationContext, GenerationView, ProposalView, ProviderReadiness, RecordView } from "./contracts/v2";
 
@@ -37,11 +38,10 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const [hydrating, setHydrating] = useState(false);
   const [refreshingCampaign, setRefreshingCampaign] = useState(false);
   const [rootAction, setRootAction] = useState<GenerationAction>("ask");
-  const workflowRoute = new URL(location, "http://drydock.local").pathname.match(/^\/campaigns\/([^/]+)\/(drafts|proposals)$/);
-  const workflowCollection = workflowRoute?.[2] ?? null;
-  const workflowCampaignId = workflowRoute ? (() => { try { return decodeURIComponent(workflowRoute[1]); } catch { return ""; } })() : null;
-  const workflowParams = new URL(location, "http://drydock.local").searchParams;
-  const workflowItem = workflowCollection && (Boolean(workflowParams.get("generation")) || (Boolean(workflowParams.get("proposal")) && Number.isInteger(Number(workflowParams.get("version"))) && Number(workflowParams.get("version")) > 0));
+  const route = parseAtlasRoute(location);
+  const workflowCollection = route.kind === "drafts" || route.kind === "proposals" ? route.kind : null;
+  const workflowCampaignId = workflowCollection ? route.campaignId : null;
+  const workflowItem = isWorkflowItemRoute(route);
   const currentWorkflowItem = useRef(Boolean(workflowItem));
   const active = routeActive || Boolean(workflowItem);
   const retries = useRef<Record<string, string>>({});

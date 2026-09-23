@@ -518,12 +518,31 @@ describe("proposal browser slice", () => {
     cleanup(); window.history.replaceState(null, "", "/");
   });
 
+  it("opens a Proposal deep link inside the campaign Proposals route", async () => {
+    window.history.replaceState(null, "", "/campaigns/campaign_alpha/proposals?proposal=proposal_alpha&version=1");
+    const api = fakeApi();
+    render(<App api={api} atlasApi={fakeAtlas([atlasCampaign])} />);
+    expect(await screen.findByRole("heading", { name: "Proposal version 1" })).toBeVisible();
+    expect(api.readProposal).toHaveBeenCalledWith("proposal_alpha", 1);
+    cleanup(); window.history.replaceState(null, "", "/");
+  });
+
   it("rejects a workflow item from a different campaign", async () => {
     window.history.replaceState(null, "", "/campaigns/campaign_beta/drafts?revision=revision_alpha&generation=generation_alpha");
     const api = fakeApi({ readGeneration: vi.fn(async () => ({ ...complete, generation_id: "generation_alpha", context: { scope: "campaign" as const } })) });
     render(<App api={api} atlasApi={fakeAtlas([atlasCampaign])} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("requested campaign workflow item could not be opened");
     expect(screen.queryByRole("heading", { name: "Campaign Draft" })).not.toBeInTheDocument();
+    cleanup(); window.history.replaceState(null, "", "/");
+  });
+
+  it("rejects a trailing-slash Proposal route that resolves to a different campaign", async () => {
+    window.history.replaceState(null, "", "/campaigns/campaign_beta/proposals/?proposal=proposal_alpha&version=1");
+    const api = fakeApi();
+    render(<App api={api} atlasApi={fakeAtlas([atlasCampaign])} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("requested campaign workflow item could not be opened");
+    expect(screen.queryByRole("heading", { name: "Proposal version 1" })).not.toBeInTheDocument();
+    expect(api.readProposal).toHaveBeenCalledWith("proposal_alpha", 1);
     cleanup(); window.history.replaceState(null, "", "/");
   });
 
