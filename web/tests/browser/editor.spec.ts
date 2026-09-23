@@ -330,6 +330,8 @@ test("editor action errors focus the editor error without reducing accessibility
   await expect(editor.getByRole("list", { name: "Validation findings" })).toContainText("connections.0.target_record_id");
   await expect(editor.getByRole("list", { name: "Validation findings" })).toContainText("Review the validation summary.");
   await expect(editor.locator(".editor-connection")).toContainText("This connection needs review.");
+  const connectionGroup = editor.getByRole("group", { name: "Connection connection_1" });
+  await expect(connectionGroup).toHaveAttribute("aria-describedby", /editor-validation-finding_connection-connections-connection_1-0/);
   const summaryIds = await editor.getByRole("list", { name: "Validation findings" }).locator("li").evaluateAll((items) => items.map((item) => item.id));
   expect(new Set(summaryIds).size).toBe(summaryIds.length);
   const messageIds = await editor.locator(".validation-finding").evaluateAll((items) => items.map((item) => item.id));
