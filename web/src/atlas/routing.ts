@@ -61,6 +61,11 @@ export function parseAtlasRoute(location: string): AtlasRoute {
   };
 }
 
+export function isWorkflowItemRoute(route: AtlasRoute) {
+  return (route.kind === "drafts" || route.kind === "proposals")
+    && (Boolean(route.generationId) || Boolean(route.proposalId && route.proposalVersion));
+}
+
 export interface AtlasUrlState {
   revisionId: string;
   q?: string;

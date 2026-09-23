@@ -36,6 +36,20 @@ function generationApi(context: GenerationView["context"], action: GenerationVie
 describe("Campaign Atlas browser experience", () => {
   afterEach(() => window.history.replaceState(null, "", "/"));
 
+  it.each([
+    ["Drafts", "/campaigns/campaign_atlas/drafts?generation="],
+    ["Proposals", "/campaigns/campaign_atlas/proposals?proposal=&version=1"],
+  ])("renders the %s collection for an empty workflow identifier", async (collection, location) => {
+    window.history.replaceState(null, "", location);
+    const api = fakeAtlas();
+
+    render(<App atlasApi={api} providerReadiness={async () => ready} />);
+
+    expect(await screen.findByRole("heading", { level: 1, name: collection })).toBeVisible();
+    if (collection === "Drafts") expect(api.generations).toHaveBeenCalledWith("campaign_atlas", expect.any(Object));
+    else expect(api.proposals).toHaveBeenCalledWith("campaign_atlas", expect.any(Object));
+  });
+
   it("keeps Atlas usable during provider outage and shows only the newest five approved revisions", async () => {
     const api = fakeAtlas();
     window.history.replaceState(null, "", "/campaigns/campaign_atlas?revision=revision_two");
