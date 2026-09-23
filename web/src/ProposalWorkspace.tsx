@@ -42,6 +42,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const workflowCollection = workflowRoute?.[2] ?? null;
   const workflowCampaignId = workflowRoute ? (() => { try { return decodeURIComponent(workflowRoute[1]); } catch { return ""; } })() : null;
   const workflowItem = isWorkflowItemRoute(parseAtlasRoute(location));
+  const currentWorkflowItem = useRef(Boolean(workflowItem));
   const active = routeActive || Boolean(workflowItem);
   const retries = useRef<Record<string, string>>({});
   const actionIds = useRef<Record<string, string>>({});
@@ -63,6 +64,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
 
   useEffect(() => { if (active) void api.readiness().then(setReadiness).catch(failAction); }, [active, api]);
   useLayoutEffect(() => {
+    currentWorkflowItem.current = Boolean(workflowItem);
     if (invalidatedHydrationRoute.current?.active !== active || invalidatedHydrationRoute.current?.location !== location) {
       invalidatedHydrationRoute.current = { active, location };
       hydrationSequence.current += 1;
@@ -86,7 +88,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
     const routeRevision = params.get("revision");
     const version = Number(params.get("version"));
     if (!generationId && !(proposalId && Number.isInteger(version) && version > 0)) return;
-    setHydrating(true); setError(null);
+    setHydrating(true); setError(null); setBusy(null); uncertainGeneration.current = null;
     void (async () => {
       const loadedProposal = proposalId ? await api.readProposal(proposalId, version) : null;
       const loadedGeneration = await api.readGeneration(loadedProposal?.generation_id ?? generationId!);
@@ -99,7 +101,13 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
       setCampaign(loadedCampaign); setRecord(loadedRecord); setRecordContentDigest(loadedDigest); setGeneration(loadedGeneration); setStreamDraft(""); setProposal(loadedProposal);
       if (loadedProposal) setCorrectedContent(loadedProposal.exact_diff[0].after_content);
       observedSequence.current = loadedGeneration.last_sequence; setLastObservedSequence(loadedGeneration.last_sequence); setAnnouncement(loadedProposal ? `Opened proposal ${loadedProposal.proposal_id}, version ${loadedProposal.proposal_version}.` : `Opened Draft ${loadedGeneration.generation_id}.`);
-    })().catch((failure) => { if (isCurrentHydration()) failAction(failure); }).finally(() => { if (isCurrentHydration()) setHydrating(false); });
+    })().catch((failure) => {
+      if (isCurrentHydration()) {
+        setCampaign(null); setRecord(null); setRecordContentDigest(null); setGeneration(null); setStreamDraft(""); setProposal(null); setCorrectedContent("");
+        setStreamInterrupted(false); setLastObservedSequence(0); observedSequence.current = 0;
+        failAction(failure);
+      }
+    }).finally(() => { if (isCurrentHydration()) setHydrating(false); });
   }, [active, api, location]);
   useEffect(() => {
     if (active && !wasActive.current) mainRef.current?.focus();
@@ -156,17 +164,22 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
 
   async function createCampaign(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy("campaign"); setError(null);
+    const sequence = hydrationSequence.current;
+    const isCurrentRoute = () => hydrationSequence.current === sequence || !currentWorkflowItem.current;
     const form = new FormData(event.currentTarget);
     const name = form.get("campaign-name")?.toString().trim() ?? "";
     const parsedPlayerCount = Number(form.get("player-count") ?? 0);
     const playerCount = Number.isFinite(parsedPlayerCount) ? Math.max(0, Math.min(32, Math.floor(parsedPlayerCount))) : 0;
     try {
       const created = await api.createCampaign(name, stableId("campaign", "campaign"), retryKey("campaign"), playerCount);
+      if (!isCurrentRoute()) return;
       const first = created.records[0];
       const opened = await api.readRecord(created.campaign_id, created.viewed_revision.revision_id, first.record_id);
+      if (!isCurrentRoute()) return;
       const context = await exactRecordContext(opened);
+      if (!isCurrentRoute()) return;
       setCampaign(created); setRecord(opened); setRecordContentDigest(context.content_digest); retries.current = {}; actionIds.current = {}; finishAction(`Opened ${opened.name} at revision ${opened.revision_id}.`);
-    } catch (failure) { failAction(failure); }
+    } catch (failure) { if (isCurrentRoute()) failAction(failure); }
   }
 
   async function grantConsent() {
@@ -237,15 +250,22 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
 
   async function approveProposal() {
     if (!proposal || !campaign || proposal.status !== "draft" || proposal.base_revision !== campaign.head_revision) return;
+    const sequence = hydrationSequence.current;
+    const isCurrentRoute = () => hydrationSequence.current === sequence;
     setBusy("approve"); setError(null);
     try {
       const result = await api.approveProposal(proposal, campaign.head_revision, retryKey(`approve_${proposal.proposal_version}`));
+      if (!isCurrentRoute()) return;
       setProposal(result.proposal);
       if (result.outcome === "conflict") { finishAction("Conflict. The proposal is preserved and was not published."); return; }
       const revision = await api.readRevision(campaign.campaign_id, result.published_revision.revision_id);
+      if (!isCurrentRoute()) return;
       const opened = await api.readRecord(revision.campaign_id, revision.viewed_revision.revision_id, revision.records[0].record_id);
-      setCampaign(revision); setRecord(opened); setRecordContentDigest((await exactRecordContext(opened)).content_digest); finishAction(`Published and opened validated revision ${opened.revision_id}.`);
-    } catch (failure) { failAction(failure); }
+      if (!isCurrentRoute()) return;
+      const digest = (await exactRecordContext(opened)).content_digest;
+      if (!isCurrentRoute()) return;
+      setCampaign(revision); setRecord(opened); setRecordContentDigest(digest); finishAction(`Published and opened validated revision ${opened.revision_id}.`);
+    } catch (failure) { if (isCurrentRoute()) failAction(failure); }
   }
 
   const currentDraft = generation?.terminal_content ?? streamDraft;
