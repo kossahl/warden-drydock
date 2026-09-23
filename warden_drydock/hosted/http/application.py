@@ -1700,11 +1700,17 @@ class SliceApplication:
             raise HTTPFailure(409, "proposal_approval_conflict", "record_already_exists", "editor_proposal")
         for connection in document["connections"]:
             if connection["target_record_id"] not in record_ids:
-                raise HTTPFailure(422, "proposal_validation_failure", "unknown_connection_target", "editor_proposal", findings=[self._editor_finding("unknown_connection_target")])
+                raise HTTPFailure(
+                    422, "proposal_validation_failure", "unknown_connection_target", "editor_proposal",
+                    findings=[self._editor_finding(
+                        "unknown_connection_target",
+                        location=f"connections.{connection['connection_id']}.target_record_id",
+                    )],
+                )
         return document
 
     @staticmethod
-    def _editor_finding(code: str, *, subject_id: str = "record") -> dict:
+    def _editor_finding(code: str, *, subject_id: str = "record", location: str | None = None) -> dict:
         details = {
             "unsupported_connection_relationship": ("connections.relationship", "This relationship type is not supported by the selected adapter.", "Choose a supported relationship."),
             "unsupported_connection_state": ("connections.state", "This relationship state is not supported by the selected adapter.", "Choose a supported relationship state."),
@@ -1713,11 +1719,11 @@ class SliceApplication:
             "empty_required_adapter_field": ("fields", "A required field is empty.", "Enter a value for every required field."),
             "missing_required_adapter_field": ("fields", "A required field is missing.", "Restore the required field before submitting."),
         }
-        location, message, recovery_action = details.get(
+        default_location, message, recovery_action = details.get(
             code, ("record", "The proposed record failed deterministic validation.", "Review the highlighted record values and try again."),
         )
         return {"finding_id": f"finding_editor_{code}", "code": code, "severity": "error",
-                "location": location, "message": message, "recovery_action": recovery_action,
+                "location": location or default_location, "message": message, "recovery_action": recovery_action,
                 "retryable": False, "subject_id": subject_id}
 
     def _editor_validate_changes(
