@@ -74,6 +74,17 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
 .atlas-main-wrap { min-width: 0; }
 .revision-banner { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .75rem; padding: .8rem clamp(1rem, 4vw, 2.5rem); border-bottom: 1px solid #365247; background: #15221d; overflow-wrap: anywhere; }
 .atlas-main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem); }
+.overview-context { margin: 1.2rem 0; padding: clamp(1rem, 3vw, 1.5rem); border: 1px solid #5b7b6d; border-radius: .7rem; background: #15221d; }
+.overview-context-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 1rem; }
+.overview-context-heading h2 { margin-bottom: .25rem; }
+.overview-context-heading strong { padding: .45rem .7rem; border: 1px solid #f4c95d; border-radius: .35rem; color: #fff1b8; background: #3b2b0b; }
+.metadata-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem; margin: 1.2rem 0; }
+.metadata-grid div { min-width: 0; padding: .8rem; border: 1px solid #365247; border-radius: .45rem; background: #101914; }
+.metadata-grid dt { color: #b8cec3; }
+.metadata-grid dd { margin: .25rem 0 0; font-weight: 800; overflow-wrap: anywhere; }
+.latest-story { margin: 1.2rem 0; padding: 1rem; border-left: .35rem solid #63ca93; background: #101914; }
+.latest-story h3 { margin-top: 0; }
+.next-action { margin-bottom: 0; }
 .totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem; margin: 1.2rem 0; }
 .totals div { min-width: 0; padding: 1rem; border: 1px solid #365247; border-radius: .5rem; background: #101914; }
 .totals dt { color: #b8cec3; }
@@ -176,7 +187,7 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
   .atlas-campaign-name { margin: 0 0 .5rem; }
   .atlas-rail nav { flex-direction: row; flex-wrap: wrap; }
   .atlas-rail nav a { flex: 1 1 auto; text-align: center; }
-  .totals, .facet-groups, .filters { grid-template-columns: 1fr; }
+  .metadata-grid, .totals, .facet-groups, .filters { grid-template-columns: 1fr; }
   .search-form > div { grid-template-columns: 1fr 1fr; }
   .search-form input { grid-column: 1 / -1; }
   .revision-banner { align-items: flex-start; flex-direction: column; }

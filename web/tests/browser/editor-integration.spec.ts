@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import type { EditorProposal, EditorRecordView } from "../../src/editor/editorClient";
+import type { EditorProposal, EditorRecord, EditorRecordView } from "../../src/editor/editorClient";
 
 // Exercise the shipped client against the real HTTP/engine/revision services.
 // Mock responses cannot catch incompatible connection IDs or publication drift.
@@ -150,4 +150,85 @@ test("editor publishes reviewed section corrections and resolves multiple refere
   await approve();
   expect((await read("npc-source")).record.connections).toEqual([]);
   expect((await read("npc-source", originalRevision)).record.connections).toHaveLength(2);
+});
+
+test("live editor preserves context after backend relationship validation failure", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto("/");
+  await page.getByLabel("Campaign name").fill("Live editor validation regression campaign");
+  const creation = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/v1/campaigns"));
+  await page.getByRole("button", { name: "Create campaign", exact: true }).click();
+  const created = await creation;
+  expect(created.status(), await created.text()).toBe(201);
+  const campaign = await created.json() as { campaign_id: string; viewed_revision: { revision_id: string; ordinal: number; tree_digest: string } };
+  const revision = campaign.viewed_revision;
+  const creationContext = await page.request.get(`/api/v1/campaigns/${campaign.campaign_id}/revisions/${revision.revision_id}/editor/creation-context`);
+  expect(creationContext.status()).toBe(200);
+  const initialEditorWorkflow = (await creationContext.json() as { editor_workflow_version: number }).editor_workflow_version;
+
+  await page.goto(`/campaigns/${campaign.campaign_id}/records/__new__?revision=${revision.revision_id}`);
+  const editor = page.locator(".editor");
+  await expect(editor.getByRole("heading", { name: "Create record" })).toBeVisible();
+  await editor.getByLabel("Record ID", { exact: true }).fill("npc-live-validation");
+  await editor.getByLabel("Displayed name", { exact: true }).fill("Live validation record");
+  await editor.getByLabel("Status", { exact: true }).selectOption("draft");
+  await editor.getByLabel("summary", { exact: true }).fill("The editor keeps this value after the server rejects the proposal.\n");
+  await editor.getByRole("button", { name: "Add typed connection", exact: true }).click();
+  const connection = editor.locator(".editor-connection").first();
+  await connection.getByRole("button", { name: /Target for connection_1: choose existing record/ }).click();
+  const targetDialog = page.locator(".record-picker-dialog");
+  await targetDialog.getByLabel("Search existing records").fill("campaign-main");
+  await targetDialog.getByRole("button", { name: "Search", exact: true }).click();
+  await targetDialog.getByRole("option", { name: /campaign-main/ }).click();
+  await connection.getByLabel("Context", { exact: true }).fill("A valid target before the boundary test.");
+
+  const hideTarget = await page.request.post(`/__test_hide_atlas_record__?campaign_id=${campaign.campaign_id}&revision_id=${revision.revision_id}&record_id=campaign-main`);
+  expect(hideTarget.status()).toBe(204);
+
+  const proposalRequest = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith("/editor/records/proposals"));
+  const failedProposal = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/editor/records/proposals"));
+  await editor.getByRole("button", { name: "Submit create proposal", exact: true }).click();
+  const request = await proposalRequest;
+  const response = await failedProposal;
+  expect(request.postDataJSON().candidate.connections[0].target_record_id).toBe("campaign-main");
+  expect(response.status(), await response.text()).toBe(422);
+  const payload = await response.json() as { error: { category: string; code: string; findings: Array<Record<string, unknown>> } };
+  expect(payload.error.category).toBe("proposal_validation_failure");
+  expect(payload.error.code).toBe("unknown_connection_target");
+  expect(payload.error.findings).toEqual([
+    expect.objectContaining({
+      code: "unknown_connection_target",
+      location: "connections.target_record_id",
+      message: "The relationship target does not exist in this revision.",
+      recovery_action: "Choose an existing record as the target.",
+      retryable: false,
+    }),
+  ]);
+  expect(JSON.stringify(payload)).not.toContain("missing-target");
+
+  await expect(editor.getByRole("heading", { name: "Editor error" })).toBeFocused();
+  const findings = editor.getByRole("list", { name: "Validation findings" });
+  await expect(findings).toContainText("connections.target_record_id");
+  await expect(findings).toContainText("The relationship target does not exist in this revision.");
+  await expect(findings).toContainText("Choose an existing record as the target.");
+  await expect(editor.getByLabel("Record ID", { exact: true })).toHaveValue("npc-live-validation");
+  await expect(editor.getByLabel("Displayed name", { exact: true })).toHaveValue("Live validation record");
+  await expect(editor.getByLabel("Status", { exact: true })).toHaveValue("draft");
+  await expect(editor.getByLabel("summary", { exact: true })).toHaveValue("The editor keeps this value after the server rejects the proposal.\n");
+  await expect(connection).toContainText("campaign-main");
+  await expect(connection.getByLabel("Context", { exact: true })).toHaveValue("A valid target before the boundary test.");
+
+  const campaigns = await page.request.get("/api/v1/campaigns");
+  expect(campaigns.status()).toBe(200);
+  const current = (await campaigns.json() as { campaigns: Array<{ campaign_id: string; head_revision: { revision_id: string } }> }).campaigns.find((item) => item.campaign_id === campaign.campaign_id);
+  expect(current?.head_revision.revision_id).toBe(revision.revision_id);
+
+  const afterFailureContext = await page.request.get(`/api/v1/campaigns/${campaign.campaign_id}/revisions/${revision.revision_id}/editor/creation-context`);
+  expect(afterFailureContext.status()).toBe(200);
+  expect((await afterFailureContext.json() as { editor_workflow_version: number }).editor_workflow_version).toBe(initialEditorWorkflow);
+
+  const query = new URLSearchParams({ revision_id: revision.revision_id, revision_ordinal: String(revision.ordinal), tree_digest: revision.tree_digest, limit: "50" });
+  const proposals = await page.request.get(`/api/v1/campaigns/${campaign.campaign_id}/atlas/proposals?${query}`);
+  expect(proposals.status()).toBe(200);
+  expect((await proposals.json() as { items: unknown[] }).items).toEqual([]);
 });

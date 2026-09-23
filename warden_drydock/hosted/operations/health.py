@@ -25,6 +25,7 @@ def readiness() -> bool:
         " AND EXISTS (SELECT 1 FROM hosted_schema_migration WHERE version='0010')"
         " AND EXISTS (SELECT 1 FROM hosted_schema_migration WHERE version='0011')"
         " AND EXISTS (SELECT 1 FROM hosted_schema_migration WHERE version='0012')"
+        " AND EXISTS (SELECT 1 FROM hosted_schema_migration WHERE version='0013')"
     )
     environment = os.environ.copy()
     secret = pathlib.Path("/run/secrets/db_password")

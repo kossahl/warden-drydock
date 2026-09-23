@@ -120,7 +120,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_migrations_are_ordered_and_outer_transactions_removed(self) -> None:
         files = migration_files(ROOT / "warden_drydock" / "hosted" / "migrations")
-        self.assertEqual(["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012"], [path.name[:4] for path in files])
+        self.assertEqual(["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013"], [path.name[:4] for path in files])
         for path in files:
             assert_no_outer_transaction_wrapper(path)
 
@@ -245,7 +245,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_readiness_requires_current_schema_markers(self) -> None:
         health_source = (ROOT / "warden_drydock" / "hosted" / "operations" / "health.py").read_text(encoding="utf-8")
-        for version in ("0007", "0008", "0009", "0010", "0011", "0012"):
+        for version in ("0007", "0008", "0009", "0010", "0011", "0012", "0013"):
             self.assertIn(f"version='{version}'", health_source)
         self.assertNotIn("version='0002'", health_source)
 
@@ -261,7 +261,7 @@ class RuntimeTests(unittest.TestCase):
             (root / "snapshots").mkdir()
             (root / "secrets").mkdir()
 
-            for missing in ("0011", "0012"):
+            for missing in ("0011", "0012", "0013"):
                 def fake_run(command, **kwargs):
                     query = command[-1]
                     ready = f"version='{missing}'" not in query

@@ -11,9 +11,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
+from datetime import datetime, timezone
 
 from warden_drydock.hosted.http.application import HTTPFailure, SliceApplication, SyntheticProvider
-from warden_drydock.hosted.ai.models import LiveSession
+from warden_drydock.hosted.ai.models import (
+    Action, Capture, CaptureType, GenerationRecord, GenerationRequest,
+    LiveSession, SourceEnvelope,
+)
 from warden_drydock.hosted.http.contracts import canonical_digest, request_digest_input
 from warden_drydock.hosted.http.query import parse_flat_query, require_int, serialize_flat_query
 from warden_drydock.hosted.operations.server import Handler
@@ -163,6 +167,59 @@ class AtlasApplicationTests(unittest.TestCase):
         self.assertEqual((422, "invalid_revision_binding"), (
             caught.exception.status, caught.exception.payload["error"]["code"],
         ))
+
+    def test_overview_context_uses_profile_and_separate_played_ordering(self) -> None:
+        payload = {
+            "contract_name": "campaign_create_request", "contract_version": 2,
+            "operation_request": self.operation("campaign_create", "request_context", "idem_context"),
+            "input": {
+                "campaign_id": "campaign_context", "campaign_name": "Context Campaign",
+                "adapter_id": "mothership", "display_timezone": "America/New_York",
+                "players": [
+                    {"player_id": "player-active", "name": "Active", "status": "active"},
+                    {"player_id": "player-inactive", "name": "Away", "status": "inactive"},
+                    {"player_id": "player-archived", "name": "Archived", "status": "archived"},
+                ],
+            },
+        }
+        created = self.app.create_campaign(self.bind(payload))[1]
+        revision = created["viewed_revision"]
+
+        for session_id, text, ended_at in (
+            ("session_first", "The crew found the beacon.", datetime(2026, 8, 25, 9, tzinfo=timezone.utc)),
+            ("session_second", "The crew opened the airlock.", datetime(2026, 8, 25, 8, tzinfo=timezone.utc)),
+        ):
+            session = LiveSession(session_id, "campaign_context", revision["revision_id"], revision["revision_id"])
+            self.app.ai_repository.create_session(session)
+            session.captures.append(Capture(
+                f"event_{session_id}", "device_one", f"operation_{session_id}", 1,
+                CaptureType.CONFIRMED_FACT, text, "0" * 64,
+            ))
+            session.mode = "ended_review_pending"
+            session.ended_at = ended_at
+            self.app.ai_repository.save_session(session)
+
+        overview = self.app.atlas_overview(
+            "campaign_context", revision["revision_id"], revision["ordinal"], revision["tree_digest"]
+        )[1]
+        self.assertEqual("America/New_York", overview["display_timezone"])
+        self.assertEqual(1, overview["player_count"])
+        self.assertEqual("2026-08-25T09:00:00.000000Z", overview["last_played_at"])
+        self.assertEqual("session_second", overview["latest_story"]["session_id"])
+        self.assertEqual("table_fact", overview["latest_story"]["summary_authority"])
+        self.assertEqual("The crew opened the airlock.", overview["latest_story"]["summary"])
+        self.assertEqual("continue_campaign", overview["next_action"]["kind"])
+        self.assertEqual("new", overview["conversation"]["state"])
+
+        self.app.ai_repository.reserve_generation(GenerationRecord(GenerationRequest(
+            "generation_context", "campaign_context", revision["revision_id"], Action.ASK,
+            "What should happen next?", SourceEnvelope("campaign_context", revision["revision_id"], ()),
+        )))
+        overview = self.app.atlas_overview(
+            "campaign_context", revision["revision_id"], revision["ordinal"], revision["tree_digest"]
+        )[1]
+        self.assertEqual("resume_conversation", overview["next_action"]["kind"])
+        self.assertEqual("resumable", overview["conversation"]["state"])
 
     def test_unsafe_path_bindings_are_rejected_before_lookup(self) -> None:
         created = self.create()

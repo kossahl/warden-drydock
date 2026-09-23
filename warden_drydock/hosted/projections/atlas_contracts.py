@@ -87,6 +87,7 @@ def overview_contract(
     head: AtlasProjectionBundle,
     *,
     approved_revision_count: int,
+    context: dict[str, object],
 ) -> dict[str, object]:
     if approved_revision_count < viewed.ordinal:
         raise ValueError("unsafe_binding")
@@ -98,6 +99,22 @@ def overview_contract(
         else item.raw_status.kind.value
         for item in viewed.records
     )
+    required_context = {
+        "campaign_created_at", "display_timezone", "player_count",
+        "player_count_policy", "last_played_at", "latest_story",
+        "next_action", "conversation",
+    }
+    if set(context) != required_context:
+        raise ValueError("unsafe_binding")
+    if (
+        not isinstance(context["campaign_created_at"], str)
+        or not isinstance(context["display_timezone"], str)
+        or not isinstance(context["player_count"], int)
+        or context["player_count"] < 0
+        or context["player_count_policy"] != "active_non_archived"
+        or (context["last_played_at"] is not None and not isinstance(context["last_played_at"], str))
+    ):
+        raise ValueError("unsafe_binding")
     return {
         "contract_name": "atlas_overview",
         "contract_version": ATLAS_HTTP_CONTRACT_VERSION,
@@ -107,6 +124,7 @@ def overview_contract(
         "record_count": len(viewed.records),
         "edge_occurrence_count": len(viewed.edges),
         "approved_revision_count": approved_revision_count,
+        **context,
         "facets": {
             "record_types": [item.__dict__ for item in type_facets],
             "authorities": [item.__dict__ for item in authority_facets],

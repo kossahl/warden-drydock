@@ -19,7 +19,7 @@ from warden_drydock.hosted.http.editor import document_digest
 from warden_drydock.hosted.proposals.service import ProposalStatus
 from warden_drydock.hosted.engine import Status
 from warden_drydock.hosted.operations.server import Handler, _editor_error_response
-from warden_drydock.hosted.http.repository import InMemoryHTTPRepository
+from warden_drydock.hosted.http.repository import InMemoryCampaignProfileRepository, InMemoryHTTPRepository
 from warden_drydock.hosted.revisions import InMemoryWorkflowRepository
 
 
@@ -323,6 +323,24 @@ class SliceApplicationTests(unittest.TestCase):
         restarted = SliceApplication(runtime, snapshot_root=snapshots, provider=self.provider,
                                      workflow_repository=workflow, receipts=receipts)
         self.assertEqual(200, restarted.create_campaign(deepcopy(payload))[0])
+
+    def test_restart_prunes_profile_left_by_crash_before_publication(self) -> None:
+        runtime = Path(self.temporary.name) / "campaign-profile-crash-runtime"
+        snapshots = Path(self.temporary.name) / "campaign-profile-crash-snapshots"
+        profiles = InMemoryCampaignProfileRepository()
+        first = SliceApplication(runtime, snapshot_root=snapshots, provider=self.provider,
+                                 campaign_profile_repository=profiles)
+        payload = {"contract_name": "campaign_create_request", "contract_version": 2,
+                   "operation_request": self.operation("campaign_create", "request_profile_crash", "idem_profile_crash"),
+                   "input": {"campaign_id": "campaign_profile_crash", "campaign_name": "Profile Crash", "adapter_id": "mothership"}}
+        payload = self.bind(payload)
+        with mock.patch.object(first.engine, "initialize", side_effect=SystemExit("crash")):
+            with self.assertRaises(SystemExit):
+                first.create_campaign(payload)
+        self.assertIsNotNone(profiles.get("campaign_profile_crash"))
+        restarted = SliceApplication(runtime, snapshot_root=snapshots, provider=self.provider,
+                                     campaign_profile_repository=profiles)
+        self.assertIsNone(restarted.campaign_profiles.get("campaign_profile_crash"))
 
     def test_start_persists_sources_before_dispatch_and_resume_detects_gap(self) -> None:
         generation = self.generation()

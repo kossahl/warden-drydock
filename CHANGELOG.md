@@ -7,6 +7,8 @@
 - Added the hardened two-service localhost Compose runtime, reviewed startup
   migrations, health checks, provider-secret storage boundary, and verified
   backup/restore workflow for the Hosted MVP operations baseline.
+- Added the Erebos Station Demo Revision 2 fixture and non-destructive local
+  Compose seeding for an immediately usable MVP dataset.
 
 ## 0.2.0 - Mothership 1e Narrative Adapter
 

@@ -29,6 +29,7 @@ services:
       DRYDOCK_MIGRATIONS: /app/warden_drydock/hosted/migrations
       DRYDOCK_SNAPSHOTS: /var/lib/drydock/snapshots
       DRYDOCK_SECRETS: /var/lib/drydock/secrets
+      DRYDOCK_SEED_FIXTURES: "${DRYDOCK_SEED_FIXTURES:-1}"
       DRYDOCK_STATIC: /app/web/dist
       OPENAI_API_KEY_FILE: /var/lib/drydock/secrets/openai_api_key
     volumes:

@@ -55,6 +55,13 @@ describe("Campaign Atlas browser experience", () => {
     expect(screen.getByRole("link", { name: "Accepted (legacy) (1)" })).toBeVisible();
   });
 
+  it("labels the effective overview timezone and falls back to UTC", async () => {
+    window.history.replaceState(null, "", "/campaigns/campaign_atlas?revision=revision_two");
+    const api = fakeAtlas({ overview: vi.fn(async () => ({ ...overview, display_timezone: "Invalid/Zone" })) });
+    render(<App atlasApi={api} providerReadiness={async () => readinessUnavailable} />);
+    expect(await screen.findByText("Times shown in UTC.")).toBeVisible();
+  });
+
   it("clears a cursor when search changes and keeps filters in the URL", async () => {
     window.history.replaceState(null, "", "/campaigns/campaign_atlas/records?revision=revision_two&type=npc&cursor=stale_cursor");
     render(<App atlasApi={fakeAtlas()} providerReadiness={async () => readinessUnavailable} />);

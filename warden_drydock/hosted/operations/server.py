@@ -14,7 +14,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 from .health import liveness, readiness
 from warden_drydock.hosted.http.application import HTTPFailure, SliceApplication, SyntheticProvider
-from warden_drydock.hosted.http.repository import PostgresHTTPRepository
+from warden_drydock.hosted.http.repository import PostgresCampaignProfileRepository, PostgresHTTPRepository
 from warden_drydock.hosted.proposals import PostgresProposalRepository
 from warden_drydock.hosted.ai.repository import PostgresAIRepository
 from warden_drydock.hosted.projections import PostgresAtlasProjectionRepository
@@ -617,6 +617,7 @@ def main() -> None:
     workflow_repository = None
     ai_repository = None
     atlas_repository = None
+    campaign_profile_repository = None
     if os.environ.get("DATABASE_URL"):
         try:
             import psycopg
@@ -626,6 +627,7 @@ def main() -> None:
             workflow_repository = PostgresWorkflowRepository(lambda: psycopg.connect(database_url))
             ai_repository = PostgresAIRepository(lambda: psycopg.connect(database_url))
             atlas_repository = PostgresAtlasProjectionRepository(lambda: psycopg.connect(database_url))
+            campaign_profile_repository = PostgresCampaignProfileRepository(lambda: psycopg.connect(database_url))
         except ImportError:
             raise RuntimeError("postgres driver unavailable")
     Handler.application = SliceApplication(
@@ -634,6 +636,7 @@ def main() -> None:
         workflow_repository=workflow_repository,
         ai_repository=ai_repository,
         atlas_repository=atlas_repository,
+        campaign_profile_repository=campaign_profile_repository,
     )
     Handler.csrf_secret = _installation_csrf_secret(root)
     ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()

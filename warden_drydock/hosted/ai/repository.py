@@ -105,12 +105,22 @@ class InMemoryAIRepository:
             return None
         return _select_current_from_seq(non_active)
 
+    def campaign_sessions(self, campaign_id: str) -> tuple[LiveSession, ...]:
+        return tuple(
+            sorted(
+                (item for item in self.sessions.values() if item.campaign_id == campaign_id),
+                key=lambda item: item.session_seq,
+                reverse=True,
+            )
+        )
+
     def get_session(self, session_id: str) -> LiveSession:
         return self.sessions[session_id]
 
     def create_session(self, session: LiveSession) -> None:
         with self._lock:
             session.session_seq = next(self._session_seq_counter)
+            session.created_at = datetime.now(timezone.utc)
             self.sessions[session.session_id] = session
 
     def save_session(self, session: LiveSession, *, expected_workflow_version: int | None = None, expected_epoch: int | None = None) -> None:
@@ -294,9 +304,19 @@ class PostgresAIRepository:
         sessions = [self.get_session(session_id) for session_id, _ in rows]
         return _select_current_from_seq(sessions)
 
+    def campaign_sessions(self, campaign_id: str) -> tuple[LiveSession, ...]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT session_id FROM hosted_live_session "
+                "WHERE campaign_id=%s ORDER BY session_seq DESC, session_id DESC",
+                (campaign_id,),
+            )
+            session_ids = tuple(row[0] for row in cursor.fetchall())
+        return tuple(self.get_session(session_id) for session_id in session_ids)
+
     def get_session(self, session_id: str) -> LiveSession:
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT campaign_id,base_revision,reported_head_revision,workflow_version,controller_epoch,controller_id,mode,end_barrier,session_seq FROM hosted_live_session WHERE session_id=%s", (session_id,))
+            cursor.execute("SELECT campaign_id,base_revision,reported_head_revision,workflow_version,controller_epoch,controller_id,mode,end_barrier,session_seq,created_at,ended_at FROM hosted_live_session WHERE session_id=%s", (session_id,))
             row = cursor.fetchone()
             if not row:
                 raise KeyError(session_id)
@@ -304,6 +324,8 @@ class PostgresAIRepository:
                 session_id, row[0], row[1], row[2], row[3], row[4], row[5], row[6],
                 end_barrier=self._decode_end_barrier(row[7]) if row[7] is not None else None,
                 session_seq=row[8] if row[8] is not None else 0,
+                created_at=row[9].astimezone(timezone.utc) if row[9] is not None else None,
+                ended_at=row[10].astimezone(timezone.utc) if row[10] is not None else None,
             )
             cursor.execute("SELECT event_id,device_id,operation_id,device_order,capture_type,content,payload_digest,record_id FROM hosted_live_capture WHERE session_id=%s ORDER BY device_order,event_id", (session_id,))
             for item in cursor.fetchall():
@@ -369,7 +391,7 @@ class PostgresAIRepository:
             if expected_epoch is not None:
                 clauses.append("controller_epoch=%s")
                 bindings.append(expected_epoch)
-            cursor.execute("UPDATE hosted_live_session SET reported_head_revision=%s,workflow_version=%s,controller_epoch=%s,controller_id=%s,mode=%s,end_barrier=%s WHERE " + " AND ".join(clauses), (session.reported_head_revision, session.workflow_version, session.controller_epoch, session.controller_id, session.mode, self._encode_end_barrier(session.end_barrier), *bindings))
+            cursor.execute("UPDATE hosted_live_session SET reported_head_revision=%s,workflow_version=%s,controller_epoch=%s,controller_id=%s,mode=%s,end_barrier=%s,ended_at=%s WHERE " + " AND ".join(clauses), (session.reported_head_revision, session.workflow_version, session.controller_epoch, session.controller_id, session.mode, self._encode_end_barrier(session.end_barrier), session.ended_at, *bindings))
             if cursor.rowcount != 1:
                 raise ValueError("stale_workflow_version")
             for item in session.captures:
