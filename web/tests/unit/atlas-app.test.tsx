@@ -46,8 +46,11 @@ describe("Campaign Atlas browser experience", () => {
     render(<App atlasApi={api} providerReadiness={async () => ready} />);
 
     expect(await screen.findByRole("heading", { level: 1, name: collection })).toBeVisible();
-    if (collection === "Drafts") expect(api.generations).toHaveBeenCalledWith("campaign_atlas", expect.any(Object));
-    else expect(api.proposals).toHaveBeenCalledWith("campaign_atlas", expect.any(Object));
+    if (collection === "Drafts") {
+      await waitFor(() => expect(api.generations).toHaveBeenCalledWith("campaign_atlas", expect.any(Object)));
+    } else {
+      await waitFor(() => expect(api.proposals).toHaveBeenCalledWith("campaign_atlas", expect.any(Object)));
+    }
   });
 
   it("keeps Atlas usable during provider outage and shows only the newest five approved revisions", async () => {
