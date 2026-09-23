@@ -198,7 +198,7 @@ test("live editor preserves context after backend relationship validation failur
   expect(payload.error.findings).toEqual([
     expect.objectContaining({
       code: "unknown_connection_target",
-      location: "connections.target_record_id",
+      location: "connections.connection_1.target_record_id",
       message: "The relationship target does not exist in this revision.",
       recovery_action: "Choose an existing record as the target.",
       retryable: false,
@@ -208,7 +208,7 @@ test("live editor preserves context after backend relationship validation failur
 
   await expect(editor.getByRole("heading", { name: "Editor error" })).toBeFocused();
   const findings = editor.getByRole("list", { name: "Validation findings" });
-  await expect(findings).toContainText("connections.target_record_id");
+  await expect(findings).toContainText("connections.connection_1.target_record_id");
   await expect(findings).toContainText("The relationship target does not exist in this revision.");
   await expect(findings).toContainText("Choose an existing record as the target.");
   await expect(editor.getByLabel("Record ID", { exact: true })).toHaveValue("npc-live-validation");
