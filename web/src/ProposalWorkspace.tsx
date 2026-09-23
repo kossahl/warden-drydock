@@ -38,10 +38,10 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const [hydrating, setHydrating] = useState(false);
   const [refreshingCampaign, setRefreshingCampaign] = useState(false);
   const [rootAction, setRootAction] = useState<GenerationAction>("ask");
-  const workflowRoute = new URL(location, "http://drydock.local").pathname.match(/^\/campaigns\/([^/]+)\/(drafts|proposals)$/);
-  const workflowCollection = workflowRoute?.[2] ?? null;
-  const workflowCampaignId = workflowRoute ? (() => { try { return decodeURIComponent(workflowRoute[1]); } catch { return ""; } })() : null;
-  const workflowItem = isWorkflowItemRoute(parseAtlasRoute(location));
+  const route = parseAtlasRoute(location);
+  const workflowCollection = route.kind === "drafts" || route.kind === "proposals" ? route.kind : null;
+  const workflowCampaignId = workflowCollection ? route.campaignId : null;
+  const workflowItem = isWorkflowItemRoute(route);
   const currentWorkflowItem = useRef(Boolean(workflowItem));
   const active = routeActive || Boolean(workflowItem);
   const retries = useRef<Record<string, string>>({});
