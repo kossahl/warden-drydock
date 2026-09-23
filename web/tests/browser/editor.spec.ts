@@ -315,6 +315,7 @@ test("editor action errors focus the editor error without reducing accessibility
   const editor = page.locator(".editor").filter({ hasText: "Edit record" });
   await expect(editor.getByRole("heading", { name: "Edit record" })).toBeVisible();
   await editor.getByLabel("Displayed name").fill("Edited before failure");
+  await editor.locator("#connection-context-connection_1").fill("Edited connection context");
   await editor.getByRole("button", { name: "Save as proposal" }).click();
   const errorHeading = editor.getByRole("heading", { name: "Editor error" });
   await expect(errorHeading).toBeVisible();
@@ -333,7 +334,8 @@ test("editor action errors focus the editor error without reducing accessibility
   await expect(editor.locator("#editor-section-summary")).toHaveAttribute("aria-describedby", /editor-validation-finding_section/);
   await expect(editor.locator("#editor-validation-finding_unknown")).toHaveCount(0);
   await expect(editor.locator("#connection-relationship-connection_1")).toHaveValue("connected-to");
-  await expect(editor.locator("#connection-context-connection_1")).toHaveValue("The keeper knows the ship.");
+  await expect(editor.getByLabel("Displayed name")).toHaveValue("Edited before failure");
+  await expect(editor.locator("#connection-context-connection_1")).toHaveValue("Edited connection context");
   await expect(editor.getByLabel("Displayed name")).toBeEnabled();
 });
 
