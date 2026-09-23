@@ -42,6 +42,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
   const workflowCampaignId = workflowRoute ? (() => { try { return decodeURIComponent(workflowRoute[1]); } catch { return ""; } })() : null;
   const workflowParams = new URL(location, "http://drydock.local").searchParams;
   const workflowItem = workflowCollection && (Boolean(workflowParams.get("generation")) || (Boolean(workflowParams.get("proposal")) && Number.isInteger(Number(workflowParams.get("version"))) && Number(workflowParams.get("version")) > 0));
+  const currentWorkflowItem = useRef(Boolean(workflowItem));
   const active = routeActive || Boolean(workflowItem);
   const retries = useRef<Record<string, string>>({});
   const actionIds = useRef<Record<string, string>>({});
@@ -63,6 +64,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
 
   useEffect(() => { if (active) void api.readiness().then(setReadiness).catch(failAction); }, [active, api]);
   useLayoutEffect(() => {
+    currentWorkflowItem.current = Boolean(workflowItem);
     if (invalidatedHydrationRoute.current?.active !== active || invalidatedHydrationRoute.current?.location !== location) {
       invalidatedHydrationRoute.current = { active, location };
       hydrationSequence.current += 1;
@@ -86,7 +88,7 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
     const routeRevision = params.get("revision");
     const version = Number(params.get("version"));
     if (!generationId && !(proposalId && Number.isInteger(version) && version > 0)) return;
-    setHydrating(true); setError(null); setBusy(null);
+    setHydrating(true); setError(null); setBusy(null); uncertainGeneration.current = null;
     void (async () => {
       const loadedProposal = proposalId ? await api.readProposal(proposalId, version) : null;
       const loadedGeneration = await api.readGeneration(loadedProposal?.generation_id ?? generationId!);
@@ -162,17 +164,22 @@ export function ProposalWorkspace({ api = httpSliceApi, atlasApi = httpAtlasApi,
 
   async function createCampaign(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy("campaign"); setError(null);
+    const sequence = hydrationSequence.current;
+    const isCurrentRoute = () => hydrationSequence.current === sequence || !currentWorkflowItem.current;
     const form = new FormData(event.currentTarget);
     const name = form.get("campaign-name")?.toString().trim() ?? "";
     const parsedPlayerCount = Number(form.get("player-count") ?? 0);
     const playerCount = Number.isFinite(parsedPlayerCount) ? Math.max(0, Math.min(32, Math.floor(parsedPlayerCount))) : 0;
     try {
       const created = await api.createCampaign(name, stableId("campaign", "campaign"), retryKey("campaign"), playerCount);
+      if (!isCurrentRoute()) return;
       const first = created.records[0];
       const opened = await api.readRecord(created.campaign_id, created.viewed_revision.revision_id, first.record_id);
+      if (!isCurrentRoute()) return;
       const context = await exactRecordContext(opened);
+      if (!isCurrentRoute()) return;
       setCampaign(created); setRecord(opened); setRecordContentDigest(context.content_digest); retries.current = {}; actionIds.current = {}; finishAction(`Opened ${opened.name} at revision ${opened.revision_id}.`);
-    } catch (failure) { failAction(failure); }
+    } catch (failure) { if (isCurrentRoute()) failAction(failure); }
   }
 
   async function grantConsent() {
