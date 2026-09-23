@@ -310,6 +310,8 @@ test("editor action errors focus the editor error without reducing accessibility
     { finding_id: "finding_section", code: "invalid_section", severity: "error", location: "sections.0.body", message: "This section is invalid.", recovery_action: "Rewrite the section.", retryable: false },
     { finding_id: "finding_unknown", code: "unknown_server_location", severity: "error", location: "candidate.unknown", message: "This finding has no editor control.", recovery_action: "Review the validation summary.", retryable: false },
     { finding_id: "finding_unknown", code: "unknown_server_location", severity: "error", location: "candidate.another_unknown", message: "This second finding has no editor control.", recovery_action: "Review the validation summary.", retryable: false },
+    { finding_id: "finding_duplicate", code: "duplicate_relationship", severity: "error", location: "connections.0.relationship", message: "This relationship needs review.", recovery_action: "Choose a supported relationship.", retryable: false },
+    { finding_id: "finding_duplicate", code: "duplicate_section", severity: "error", location: "sections.0.body", message: "This section needs review.", recovery_action: "Rewrite the section.", retryable: false },
   ]);
   await page.goto("/campaigns/campaign_atlas/records/record-one?revision=revision_two");
   await openRecordEditor(page);
@@ -327,6 +329,8 @@ test("editor action errors focus the editor error without reducing accessibility
   await expect(editor.getByRole("list", { name: "Validation findings" })).toContainText("Review the validation summary.");
   const summaryIds = await editor.getByRole("list", { name: "Validation findings" }).locator("li").evaluateAll((items) => items.map((item) => item.id));
   expect(new Set(summaryIds).size).toBe(summaryIds.length);
+  const messageIds = await editor.locator(".validation-finding").evaluateAll((items) => items.map((item) => item.id));
+  expect(new Set(messageIds).size).toBe(messageIds.length);
   await expect(editor.locator("#connection-relationship-connection_1")).toHaveAttribute("aria-invalid", "true");
   await expect(editor.locator("#connection-relationship-connection_1")).toHaveAttribute("aria-describedby", /editor-validation-finding_relationship/);
   await expect(editor.locator("#connection-target-connection_1")).toHaveAttribute("aria-invalid", "true");

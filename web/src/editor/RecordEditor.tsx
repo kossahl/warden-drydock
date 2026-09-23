@@ -15,7 +15,11 @@ const publicId = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 const errorText = (reason: unknown) => reason instanceof Error ? reason.message : "request_failed";
 const errorFindings = (reason: unknown): EditorFinding[] => reason && typeof reason === "object" && "findings" in reason && Array.isArray((reason as { findings?: unknown }).findings) ? (reason as { findings: EditorFinding[] }).findings : [];
 const errorCategory = (reason: unknown) => reason && typeof reason === "object" && "category" in reason ? String((reason as { category?: unknown }).category ?? "") : "";
-const findingDescriptionId = (finding: EditorFinding) => `editor-validation-${finding.finding_id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+const findingDescriptionId = (finding: EditorFinding, index?: number) => {
+  const findingKey = finding.finding_id.replace(/[^a-zA-Z0-9_-]/g, "-");
+  const locationKey = finding.location.replace(/[^a-zA-Z0-9_-]/g, "-");
+  return `editor-validation-${findingKey}-${locationKey}${index === undefined ? "" : `-${index}`}`;
+};
 const findingText = (finding: EditorFinding) => <>{finding.message ?? finding.code}{finding.recovery_action && <> {finding.recovery_action}</>}</>;
 const findingLocationControl = (location: string, record: EditorRecord): string | null => {
   const normalized = location.trim().replace(/^(?:candidate|record)\./, "");
@@ -46,7 +50,7 @@ const findingsByControl = (findings: EditorFinding[], record: EditorRecord): Rec
   if (control) grouped[control] = [...(grouped[control] ?? []), finding];
   return grouped;
 }, {});
-const findingIds = (findings: EditorFinding[]) => findings.map(findingDescriptionId).join(" ") || undefined;
+const findingIds = (findings: EditorFinding[]) => findings.map((finding, index) => findingDescriptionId(finding, index)).join(" ") || undefined;
 const describedBy = (...ids: Array<string | undefined>) => ids.filter((id): id is string => !!id).join(" ") || undefined;
 const staleCategories = ["stale_revision", "workflow_conflict", "stale_record_digest"];
 const isStaleReason = (reason: unknown) => staleCategories.includes(errorCategory(reason)) || errorText(reason) === "workflow_conflict";
@@ -99,7 +103,7 @@ const definitionSet = (view: EditorContext | null): AdapterDefinition => view?.a
 
 function ValidationFindingMessages({ findings }: { findings: EditorFinding[] }) {
   if (!findings.length) return null;
-  return <span className="validation-finding-messages">{findings.map((finding) => <span key={finding.finding_id} id={findingDescriptionId(finding)} className="error validation-finding" role="alert">{findingText(finding)}</span>)}</span>;
+  return <span className="validation-finding-messages">{findings.map((finding, index) => { const id = findingDescriptionId(finding, index); return <span key={id} id={id} className="error validation-finding" role="alert">{findingText(finding)}</span>; })}</span>;
 }
 
 function RecordPicker({ campaignId, revision, label, value, onChange, error, findings = [], triggerId }: { campaignId: string; revision: RevisionRef; label: string; value: string; onChange: (recordId: string) => void; error?: string; findings?: EditorFinding[]; triggerId?: string }) {
@@ -757,7 +761,7 @@ export function RecordEditor({ campaignId, revisionId, recordId, proposalId, pro
     {approvalDialogView}
     <div className="section-title"><h2 id="editor-heading">{isCreate ? "Create record" : "Edit record"}</h2><span role="status">Head · workflow {view.editor_workflow_version}</span></div>
     <p>Changes create a typed proposal. Approval is required before the campaign head changes.</p>
-    {error && <div className="error editor-error" role="alert" aria-labelledby="editor-error-heading"><h3 id="editor-error-heading" ref={errorHeading} tabIndex={-1}>Editor error</h3><p>{error}</p>{validationFindings.length > 0 && <ul aria-label="Validation findings">{validationFindings.map((finding, index) => <li key={`${finding.finding_id}-${index}`} id={`${findingDescriptionId(finding)}-summary-${index}`}><strong>{finding.location}</strong>: {findingText(finding)}</li>)}</ul>}</div>}
+    {error && <div className="error editor-error" role="alert" aria-labelledby="editor-error-heading"><h3 id="editor-error-heading" ref={errorHeading} tabIndex={-1}>Editor error</h3><p>{error}</p>{validationFindings.length > 0 && <ul aria-label="Validation findings">{validationFindings.map((finding, index) => <li key={`${findingDescriptionId(finding)}-summary-${index}`} id={`${findingDescriptionId(finding)}-summary-${index}`}><strong>{finding.location}</strong>: {findingText(finding)}</li>)}</ul>}</div>}
     {message && <p role="status" aria-live="polite">{message}</p>}
     {conflict && <aside className="editor-conflict" role="alert" aria-labelledby="editor-conflict-heading"><h3 id="editor-conflict-heading">Head changed; rebase required</h3><p>This proposal is bound to an older revision or workflow. Reload the current head before retrying.</p>{navigate && <button type="button" onClick={openCurrentHead}>Reload current head</button>}</aside>}
     <fieldset disabled={fieldsLocked}><legend>Record details</legend>
