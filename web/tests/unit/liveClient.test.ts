@@ -1,5 +1,5 @@
 import { canonicalJson, digest } from "../../src/api/digest";
-import { httpCaptureTransport } from "../../src/api/liveClient";
+import { httpCaptureTransport, httpLiveClient } from "../../src/api/liveClient";
 import { MemoryCaptureStore, type CaptureInput } from "../../src/live/captureStore";
 
 const input: CaptureInput = {
@@ -17,6 +17,39 @@ const input: CaptureInput = {
 };
 
 describe("live capture HTTP transport", () => {
+  it("uses only the documented live start, observe, and takeover contract fields", async () => {
+    const session = {
+      contract_name: "live_session_view", contract_version: 2, session_id: "session_alpha", campaign_id: "campaign_alpha",
+      base_revision: "revision_12", reported_head_revision: "revision_12", workflow_version: 1,
+      controller: { epoch: 1, controller_id: "controller_alpha", mode: "controller" }, mode: "active", events: [], acknowledgements: [], end_barrier: null,
+      overlay: { overlay_id: "overlay_alpha", authority: "non_canon", base_revision: "revision_12", confirmed_fact_ids: [], question_ids: [] },
+    };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
+      ok: true, status: init?.method === "POST" ? 201 : 200, headers: new Headers(), json: async () => session,
+    }) as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await httpLiveClient.start("campaign_alpha", "revision_12", "controller_alpha");
+      const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit?]>;
+      const start = calls.find(([, init]) => init?.method === "POST")!;
+      const startBody = JSON.parse(start[1]!.body as string) as Record<string, unknown>;
+      const startInput = { campaign_id: "campaign_alpha", session_id: startBody.session_id, head_revision: "revision_12", controller_id: "controller_alpha" };
+      expect(start[0]).toBe("/api/v1/campaigns/campaign_alpha/live/session");
+      expect(startBody).toMatchObject({ contract_name: "live_start_request", contract_version: 2, ...startInput });
+      expect(startBody.operation_request).toMatchObject({ operation: "live_start", payload_digest: await digest(startInput), expected_revision: null, expected_workflow_version: null });
+
+      await httpLiveClient.observe("campaign_alpha");
+      await httpLiveClient.takeover(session as never, "controller_beta");
+      const last = calls.at(-1)!;
+      const takeover = JSON.parse(last[1]!.body as string) as Record<string, unknown>;
+      const takeoverInput = { campaign_id: "campaign_alpha", session_id: "session_alpha", controller_id: "controller_beta", controller_epoch: 1 };
+      expect(calls[1][0]).toBe("/api/v1/campaigns/campaign_alpha/live/session");
+      expect(last[0]).toBe("/api/v1/campaigns/campaign_alpha/live/session/takeover");
+      expect(takeover).toMatchObject({ contract_name: "live_takeover_request", contract_version: 2, ...takeoverInput });
+      expect(takeover.operation_request).toMatchObject({ operation: "live_takeover", payload_digest: await digest(takeoverInput), expected_workflow_version: 1 });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("binds capture requests to the complete public live payload", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
@@ -135,6 +168,14 @@ describe("live capture HTTP transport", () => {
         session_id: "session_alpha",
         workflow_version: 4,
         mode: "ended_review_pending",
+        controller: { controller_id: "controller_beta", epoch: 3, mode: "controller" },
+        end_barrier: {
+          end_device_id: "device_alpha",
+          end_operation_id: "operation_end",
+          required_operation_ids: [],
+          acknowledged_operation_ids: [],
+          ready_for_proposal: true,
+        },
         events: [{ device_id: "device_alpha", operation_id: "operation_alpha" }],
         acknowledgements: [{ device_id: "device_alpha", operation_id: "operation_alpha", payload_digest: "a".repeat(64), outcome: "accepted" }],
       }),
@@ -143,6 +184,9 @@ describe("live capture HTTP transport", () => {
     try {
       await expect(httpCaptureTransport.readSession!("campaign_alpha", "session_alpha")).resolves.toEqual({
         workflowVersion: 4,
+        controllerId: "controller_beta",
+        controllerEpoch: 3,
+        endBarrier: { deviceId: "device_alpha", operationId: "operation_end", readyForProposal: true },
         acknowledgedOperationIds: [{ deviceId: "device_alpha", operationId: "operation_alpha" }],
         acknowledgements: [{ deviceId: "device_alpha", operationId: "operation_alpha", payloadDigest: "a".repeat(64), outcome: "accepted" }],
         captureOperationIds: [{ deviceId: "device_alpha", operationId: "operation_alpha" }],

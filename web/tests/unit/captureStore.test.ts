@@ -8,7 +8,9 @@ import {
   endDigest,
   type CaptureInput,
   type CaptureSyncTransport,
+  type StoredCapture,
 } from "../../src/live/captureStore";
+import { ApiError } from "../../src/api/client";
 
 const input: CaptureInput = {
   campaignId: "campaign_alpha",
@@ -109,6 +111,92 @@ describe("durable live capture queue", () => {
     expect(transport.sendCapture).toHaveBeenNthCalledWith(2, expect.anything(), 2);
   });
 
+  it("rebinds an unacknowledged stale-controller capture after observing the active controller", async () => {
+    const store = new MemoryCaptureStore();
+    let reads = 0;
+    const attempts: Array<{ capture: StoredCapture; workflowVersion: number }> = [];
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async (capture, workflowVersion) => {
+        attempts.push({ capture, workflowVersion });
+        if (attempts.length === 1) throw new ApiError(409, "stale_controller_epoch");
+        return { outcome: "accepted" as const, workflowVersion: workflowVersion + 1 };
+      }),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 1 })),
+      readSession: vi.fn(async () => {
+        reads += 1;
+        return {
+          workflowVersion: reads === 1 ? 2 : 8,
+          controllerId: reads === 1 ? "controller_alpha" : "controller_beta",
+          controllerEpoch: reads === 1 ? 1 : 2,
+          acknowledgedOperationIds: [],
+          acknowledgements: [],
+          mode: "active" as const,
+        };
+      }),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const saved = await queue.capture(input);
+
+    expect((await queue.sync(input.sessionId)).captures[0]).toEqual({ key: saved.key, state: "Saved on device" });
+    expect((await store.listCaptures(input.sessionId))[0].lastError).toBe("stale_controller_epoch");
+    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Synced");
+
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toMatchObject({
+      workflowVersion: 8,
+      capture: {
+        campaignId: saved.campaignId,
+        sessionId: saved.sessionId,
+        baseRevision: saved.baseRevision,
+        deviceId: saved.deviceId,
+        deviceOrder: saved.deviceOrder,
+        eventId: saved.eventId,
+        operationId: saved.operationId,
+        captureType: saved.captureType,
+        text: saved.text,
+        recordId: saved.recordId,
+        controllerId: "controller_beta",
+        controllerEpoch: 2,
+        workflowVersion: 8,
+      },
+    });
+    expect(attempts[1].capture.attemptedPayloadDigest).toBe(await captureDigest({ ...attempts[1].capture, workflowVersion: 8 }));
+  });
+
+  it("reconciles an exact acknowledgement before rebinding after takeover", async () => {
+    const store = new MemoryCaptureStore();
+    let reads = 0;
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => { throw Object.assign(new Error("response lost"), { retryable: true }); }),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 1 })),
+      readSession: vi.fn(async () => {
+        reads += 1;
+        const capture = (await store.listCaptures(input.sessionId))[0];
+        const current = reads === 1;
+        return {
+          workflowVersion: 9,
+          controllerId: current ? "controller_alpha" : "controller_beta",
+          controllerEpoch: current ? 1 : 2,
+          acknowledgedOperationIds: capture && reads > 1 ? [{ deviceId: capture.deviceId, operationId: capture.operationId }] : [],
+          acknowledgements: capture && reads > 1 ? [{
+            deviceId: capture.deviceId,
+            operationId: capture.operationId,
+            payloadDigest: capture.attemptedPayloadDigest!,
+            outcome: "accepted" as const,
+          }] : [],
+          mode: "active" as const,
+        };
+      }),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const saved = await queue.capture(input);
+
+    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Saved on device");
+    expect((await queue.sync(input.sessionId)).captures[0]).toEqual({ key: saved.key, state: "Synced" });
+    expect(transport.sendCapture).toHaveBeenCalledTimes(1);
+    expect((await store.listCaptures(input.sessionId))[0]).toMatchObject({ controllerId: "controller_alpha", controllerEpoch: 1 });
+  });
+
   it("reconciles a committed capture when its response was lost", async () => {
     const store = new MemoryCaptureStore();
     let reads = 0;
@@ -161,6 +249,117 @@ describe("durable live capture queue", () => {
     expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Saved on device" });
     expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Synced" });
     expect(attempts).toBe(1);
+  });
+
+  it("rebinds an unacknowledged stale-controller end intent after observing the active controller", async () => {
+    const store = new MemoryCaptureStore();
+    let reads = 0;
+    const attempts: Array<{ end: Awaited<ReturnType<MemoryCaptureStore["saveEnd"]>>; workflowVersion: number }> = [];
+    const requiredOperationIds = [{ deviceId: "device_remote", operationId: "operation_remote" }];
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 1 })),
+      sendEnd: vi.fn(async (end, workflowVersion) => {
+        attempts.push({ end, workflowVersion });
+        if (attempts.length === 1) throw new ApiError(409, "stale_controller_epoch");
+        return { readyForProposal: true, workflowVersion: workflowVersion + 1 };
+      }),
+      readSession: vi.fn(async () => {
+        reads += 1;
+        const current = reads <= 2;
+        return {
+          workflowVersion: current ? 2 : 8,
+          controllerId: current ? "controller_alpha" : "controller_beta",
+          controllerEpoch: current ? 1 : 2,
+          acknowledgedOperationIds: requiredOperationIds,
+          acknowledgements: [],
+          mode: "active" as const,
+        };
+      }),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const saved = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds });
+
+    expect((await queue.sync(input.sessionId)).end).toEqual({ key: saved.key, state: "Saved on device" });
+    expect((await store.getEnd(input.sessionId))?.lastError).toBe("stale_controller_epoch");
+    expect((await queue.sync(input.sessionId)).end).toEqual({ key: saved.key, state: "Synced" });
+
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toMatchObject({
+      workflowVersion: 8,
+      end: {
+        campaignId: saved.campaignId,
+        sessionId: saved.sessionId,
+        baseRevision: saved.baseRevision,
+        deviceId: saved.deviceId,
+        operationId: saved.operationId,
+        requiredOperationIds,
+        controllerId: "controller_beta",
+        controllerEpoch: 2,
+        workflowVersion: 8,
+      },
+    });
+    expect(attempts[1].end.attemptedPayloadDigest).toBe(await endDigest({ ...attempts[1].end, workflowVersion: 8 }));
+  });
+
+  it("reconciles an exact end acknowledgement before rebinding after takeover", async () => {
+    const store = new MemoryCaptureStore();
+    let reads = 0;
+    const sentEnds: Awaited<ReturnType<MemoryCaptureStore["saveEnd"]>>[] = [];
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 1 })),
+      sendEnd: vi.fn(async (end) => {
+        sentEnds.push(end);
+        throw Object.assign(new Error("response lost"), { retryable: true });
+      }),
+      readSession: vi.fn(async () => {
+        reads += 1;
+        const end = await store.getEnd(input.sessionId);
+        const includeReceipt = reads > 2 && Boolean(end?.attemptedPayloadDigest);
+        const current = reads <= 2;
+        return {
+          workflowVersion: 9,
+          controllerId: current ? "controller_alpha" : "controller_beta",
+          controllerEpoch: current ? 1 : 2,
+          acknowledgedOperationIds: [],
+          acknowledgements: [],
+          endBarrier: includeReceipt ? { deviceId: end!.deviceId, operationId: end!.operationId, readyForProposal: true } : null,
+          mode: includeReceipt ? "ended_review_pending" as const : "active" as const,
+        };
+      }),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const saved = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [] });
+
+    expect((await queue.sync(input.sessionId)).end).toEqual({ key: saved.key, state: "Saved on device" });
+    expect((await queue.sync(input.sessionId)).end).toEqual({ key: saved.key, state: "Synced" });
+    expect(sentEnds).toHaveLength(1);
+    expect(sentEnds[0]).toMatchObject({ controllerId: "controller_alpha", controllerEpoch: 1 });
+  });
+
+  it("does not mark an acknowledged end intent synced when its barrier is not ready", async () => {
+    const store = new MemoryCaptureStore();
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 1 })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: false, workflowVersion: 2 })),
+      readSession: vi.fn(async () => {
+        const end = await store.getEnd(input.sessionId);
+        return {
+          workflowVersion: 2,
+          controllerId: "controller_alpha",
+          controllerEpoch: 1,
+          acknowledgedOperationIds: [],
+          acknowledgements: [],
+          endBarrier: end ? { deviceId: end.deviceId, operationId: end.operationId, readyForProposal: false } : null,
+          mode: "ended_review_pending" as const,
+        };
+      }),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [] });
+
+    expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Needs attention" });
+    expect((await store.getEnd(input.sessionId))?.lastError).toBe("live_session_ended");
+    expect(transport.sendEnd).not.toHaveBeenCalled();
   });
 
   it("marks a digest conflict as needing attention without deleting the capture", async () => {
@@ -233,8 +432,8 @@ describe("durable live capture queue", () => {
     expect(transport.sendEnd).not.toHaveBeenCalled();
   });
 
-  it("rejects an end watermark that hides a server capture", async () => {
-    const store = new MemoryCaptureStore();
+  it("repairs an end watermark to include the exact acknowledged server capture set", async () => {
+    const store = new MemoryCaptureStore("device_alpha");
     const transport: CaptureSyncTransport = {
       sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 2 })),
       sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 3 })),
@@ -252,8 +451,85 @@ describe("durable live capture queue", () => {
 
     const result = await queue.sync(input.sessionId);
 
-    expect(result.end).toEqual({ key: end.key, state: "Needs attention" });
-    expect(transport.sendEnd).not.toHaveBeenCalled();
+    const required = [
+      { deviceId: saved.deviceId, operationId: saved.operationId },
+      { deviceId: "device_remote", operationId: "operation_remote" },
+    ];
+    expect(result.captures).toEqual([{ key: saved.key, state: "Synced" }]);
+    expect(result.end).toEqual({ key: end.key, state: "Synced" });
+    expect((await store.getEnd(input.sessionId))?.requiredOperationIds).toEqual(required);
+    expect(transport.sendEnd).toHaveBeenCalledTimes(1);
+    expect(transport.sendEnd).toHaveBeenCalledWith(expect.objectContaining({ operationId: end.operationId, requiredOperationIds: required }), 2);
+  });
+
+  it("repairs a stale end barrier from the latest active session receipts and retries the same intent", async () => {
+    const store = new MemoryCaptureStore("device_alpha");
+    const remote = { deviceId: "device_remote", operationId: "operation_remote" };
+    let reads = 0;
+    let acceptedBody: StoredCapture | null = null;
+    const sendEnd = vi.fn(async (end: Awaited<ReturnType<MemoryCaptureStore["saveEnd"]>>) => {
+      acceptedBody = end as unknown as StoredCapture;
+      return { readyForProposal: true, workflowVersion: 3 };
+    });
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 2 })),
+      sendEnd,
+      readSession: vi.fn(async () => ({
+        workflowVersion: ++reads,
+        acknowledgedOperationIds: reads >= 2 ? [remote] : [],
+        captureOperationIds: reads >= 2 ? [remote] : [],
+        acknowledgements: reads >= 2 ? [{ ...remote, payloadDigest: "a".repeat(64), outcome: "accepted" as const }] : [],
+        mode: "active" as const,
+      })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [] });
+
+    const result = await queue.sync(input.sessionId);
+    const repaired = await store.getEnd(input.sessionId);
+
+    expect(result.end).toEqual({ key: end.key, state: "Synced" });
+    expect(repaired?.requiredOperationIds).toEqual([remote]);
+    expect(sendEnd).toHaveBeenCalledTimes(1);
+    expect(sendEnd.mock.calls[0][0].operationId).toBe(end.operationId);
+    expect(sendEnd.mock.calls[0][0].requiredOperationIds).toEqual([remote]);
+    expect(acceptedBody).not.toBeNull();
+  });
+
+  it("recovers live_unaccepted_barrier after a new server capture appears", async () => {
+    const store = new MemoryCaptureStore("device_alpha");
+    const remote = { deviceId: "device_remote", operationId: "operation_remote" };
+    let remoteCaptureAccepted = false;
+    const sendEnd = vi.fn(async (_end: Awaited<ReturnType<MemoryCaptureStore["saveEnd"]>>, workflowVersion: number) => {
+      if (!remoteCaptureAccepted) {
+        remoteCaptureAccepted = true;
+        throw new ApiError(409, "live_unaccepted_barrier");
+      }
+      return { readyForProposal: true, workflowVersion: workflowVersion + 1 };
+    });
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 2 })),
+      sendEnd,
+      readSession: vi.fn(async () => ({
+        workflowVersion: remoteCaptureAccepted ? 3 : 1,
+        acknowledgedOperationIds: remoteCaptureAccepted ? [remote] : [],
+        captureOperationIds: remoteCaptureAccepted ? [remote] : [],
+        acknowledgements: remoteCaptureAccepted ? [{ ...remote, payloadDigest: "b".repeat(64), outcome: "accepted" as const }] : [],
+        mode: "active" as const,
+      })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [] });
+
+    expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Needs attention" });
+    expect((await store.getEnd(input.sessionId))?.lastError).toBe("live_unaccepted_barrier");
+    expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Synced" });
+
+    const retried = sendEnd.mock.calls[1][0];
+    expect(sendEnd).toHaveBeenCalledTimes(2);
+    expect(retried.operationId).toBe(end.operationId);
+    expect(retried.requiredOperationIds).toEqual([remote]);
+    expect((await store.getEnd(input.sessionId))?.requiredOperationIds).toEqual([remote]);
   });
 
   it("does not send the end intent until its exact local operation set is synced", async () => {
