@@ -363,7 +363,7 @@ test("post-barrier record review preserves provenance through proposal correctio
   await expect(page.getByText("First then second.", { exact: true })).toBeVisible();
   page.once("dialog", async (dialog) => { expect(dialog.message()).toContain("End this live session"); await dialog.accept(); });
   await page.getByRole("button", { name: "End session" }).click();
-  await expect(page.getByText("Ended - review pending")).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "End state: Ended - review pending" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Review affected record" })).toBeVisible();
   expect(server.barrierEvents).toEqual(["capture_acknowledged", "end_requested"]);
   await page.getByRole("button", { name: "Review affected record" }).click();
