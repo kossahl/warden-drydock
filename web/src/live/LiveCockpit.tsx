@@ -60,10 +60,10 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
     if (!activeSessionId) return;
     const captures = await store.listCaptures(activeSessionId);
     setItems(captures);
-    if (captures.some((capture) => capture.lastError?.includes("stale_controller"))) setError("This tab lost live control. Its capture remains saved locally. Refresh the session and take over before writing again.");
+    if (!controller && captures.some((capture) => capture.lastError?.includes("stale_controller"))) setError("This tab lost live control. Its capture remains saved locally. Refresh the session and take over before writing again.");
     const end = await store.getEnd(activeSessionId);
     setEndStatus(end?.state ?? null);
-  }, [activeSessionId]);
+  }, [activeSessionId, controller]);
 
   const observe = useCallback(async () => {
     try {
@@ -137,7 +137,7 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
   async function sync() {
     if (!activeSessionId || !controller) return;
     try {
-      const result = await queue.sync(activeSessionId);
+      const result = await queue.sync(activeSessionId, ownController);
       const states: Record<string, SaveSyncState> = {};
       result.captures.forEach((item) => { states[item.key] = item.state; });
       if (result.end) states[result.end.key] = result.end.state;

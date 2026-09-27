@@ -204,9 +204,9 @@ test("offline capture survives IndexedDB reload and changes from device saved to
   await expect(page.getByText("Airlock opened.")).toBeVisible();
   await expect(page.getByText(sessionId)).toBeVisible();
   await expect(page.getByText("Observer · read only")).toBeVisible();
+  await expect(page.getByText("Saved on device", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Take over control" }).click();
   await expect(page.getByText("This tab controls the session")).toBeVisible();
-  await expect(page.getByText("Saved on device", { exact: true })).toBeVisible();
   server.failCaptures = false;
   await page.getByRole("button", { name: "Sync saved work" }).click();
   await expect(page.getByText("Synced", { exact: true })).toBeVisible();
@@ -233,6 +233,12 @@ test("second tab observes, explicitly takes over, and old controller receives st
   await expect(page.getByRole("alert")).toContainText("lost live control");
   await expect(page.getByText("Saved on device", { exact: true })).toBeVisible();
   expect(server.session?.events).toHaveLength(0);
+  await observer.reload();
+  await expect(observer.getByText("Observer · read only")).toBeVisible();
+  await expect(observer.getByRole("alert")).toContainText("lost live control");
+  await observer.getByRole("button", { name: "Take over control" }).click();
+  await expect(observer.getByText("This tab controls the session")).toBeVisible();
+  await expect(observer.getByRole("alert")).toHaveCount(0);
   await observer.close();
 });
 

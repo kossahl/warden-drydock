@@ -69,8 +69,8 @@ describe("durable live capture queue", () => {
     };
     const queue = new CaptureQueue(store, transport);
     await queue.capture(input);
-    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Saved on device");
-    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Synced");
+    expect((await queue.sync(input.sessionId, input.controllerId)).captures[0].state).toBe("Saved on device");
+    expect((await queue.sync(input.sessionId, input.controllerId)).captures[0].state).toBe("Synced");
     expect(transport.sendCapture).toHaveBeenCalledTimes(2);
   });
 
@@ -84,7 +84,7 @@ describe("durable live capture queue", () => {
     await queue.capture(input);
     await queue.capture({ ...input, eventId: "event_beta", operationId: "operation_beta", text: "The lights failed." });
 
-    const result = await queue.sync(input.sessionId);
+    const result = await queue.sync(input.sessionId, input.controllerId);
 
     expect(transport.sendCapture).toHaveBeenCalledTimes(1);
     expect(result.captures.every(({ state }) => state === "Saved on device")).toBe(true);
@@ -106,8 +106,8 @@ describe("durable live capture queue", () => {
     const queue = new CaptureQueue(store, transport);
     await queue.capture(input);
 
-    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Saved on device");
-    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Synced");
+    expect((await queue.sync(input.sessionId, input.controllerId)).captures[0].state).toBe("Saved on device");
+    expect((await queue.sync(input.sessionId, input.controllerId)).captures[0].state).toBe("Synced");
     expect(transport.sendCapture).toHaveBeenNthCalledWith(2, expect.anything(), 2);
   });
 
@@ -137,9 +137,9 @@ describe("durable live capture queue", () => {
     const queue = new CaptureQueue(store, transport);
     const saved = await queue.capture(input);
 
-    expect((await queue.sync(input.sessionId)).captures[0]).toEqual({ key: saved.key, state: "Saved on device" });
+    expect((await queue.sync(input.sessionId, input.controllerId)).captures[0]).toEqual({ key: saved.key, state: "Saved on device" });
     expect((await store.listCaptures(input.sessionId))[0].lastError).toBe("stale_controller_epoch");
-    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Synced");
+    expect((await queue.sync(input.sessionId, "controller_beta")).captures[0].state).toBe("Synced");
 
     expect(attempts).toHaveLength(2);
     expect(attempts[1]).toMatchObject({
@@ -161,6 +161,38 @@ describe("durable live capture queue", () => {
       },
     });
     expect(attempts[1].capture.attemptedPayloadDigest).toBe(await captureDigest({ ...attempts[1].capture, workflowVersion: 8 }));
+  });
+
+  it("does not rebind a capture to a controller owned by another tab", async () => {
+    const store = new MemoryCaptureStore();
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async (_capture, workflowVersion) => ({ outcome: "accepted" as const, workflowVersion: workflowVersion + 1 })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 1 })),
+      readSession: vi.fn(async () => ({
+        workflowVersion: 8,
+        controllerId: "controller_beta",
+        controllerEpoch: 2,
+        acknowledgedOperationIds: [],
+        acknowledgements: [],
+        mode: "active" as const,
+      })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const saved = await queue.capture(input);
+
+    const observerSync = await queue.sync(input.sessionId, "controller_alpha");
+
+    expect(observerSync.captures).toEqual([{ key: saved.key, state: "Saved on device" }]);
+    expect(transport.sendCapture).not.toHaveBeenCalled();
+    expect(await store.listCaptures(input.sessionId)).toEqual([expect.objectContaining({
+      controllerId: "controller_alpha",
+      controllerEpoch: 1,
+      payloadDigest: saved.payloadDigest,
+      lastError: "stale_controller",
+    })]);
+
+    expect((await queue.sync(input.sessionId, "controller_beta")).captures).toEqual([{ key: saved.key, state: "Synced" }]);
+    expect(transport.sendCapture).toHaveBeenCalledWith(expect.objectContaining({ controllerId: "controller_beta", controllerEpoch: 2 }), 8);
   });
 
   it("reconciles an exact acknowledgement before rebinding after takeover", async () => {
@@ -191,8 +223,8 @@ describe("durable live capture queue", () => {
     const queue = new CaptureQueue(store, transport);
     const saved = await queue.capture(input);
 
-    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Saved on device");
-    expect((await queue.sync(input.sessionId)).captures[0]).toEqual({ key: saved.key, state: "Synced" });
+    expect((await queue.sync(input.sessionId, input.controllerId)).captures[0].state).toBe("Saved on device");
+    expect((await queue.sync(input.sessionId, input.controllerId)).captures[0]).toEqual({ key: saved.key, state: "Synced" });
     expect(transport.sendCapture).toHaveBeenCalledTimes(1);
     expect((await store.listCaptures(input.sessionId))[0]).toMatchObject({ controllerId: "controller_alpha", controllerEpoch: 1 });
   });
@@ -220,8 +252,8 @@ describe("durable live capture queue", () => {
     const queue = new CaptureQueue(store, transport);
     await queue.capture(input);
 
-    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Saved on device");
-    expect((await queue.sync(input.sessionId)).captures[0].state).toBe("Synced");
+    expect((await queue.sync(input.sessionId, input.controllerId)).captures[0].state).toBe("Saved on device");
+    expect((await queue.sync(input.sessionId, input.controllerId)).captures[0].state).toBe("Synced");
     expect(attempts).toBe(1);
   });
 
@@ -246,8 +278,8 @@ describe("durable live capture queue", () => {
     const queue = new CaptureQueue(store, transport);
     const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [] });
 
-    expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Saved on device" });
-    expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Synced" });
+    expect((await queue.sync(input.sessionId, input.controllerId)).end).toEqual({ key: end.key, state: "Saved on device" });
+    expect((await queue.sync(input.sessionId, input.controllerId)).end).toEqual({ key: end.key, state: "Synced" });
     expect(attempts).toBe(1);
   });
 
@@ -279,9 +311,9 @@ describe("durable live capture queue", () => {
     const queue = new CaptureQueue(store, transport);
     const saved = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds });
 
-    expect((await queue.sync(input.sessionId)).end).toEqual({ key: saved.key, state: "Saved on device" });
+    expect((await queue.sync(input.sessionId, input.controllerId)).end).toEqual({ key: saved.key, state: "Saved on device" });
     expect((await store.getEnd(input.sessionId))?.lastError).toBe("stale_controller_epoch");
-    expect((await queue.sync(input.sessionId)).end).toEqual({ key: saved.key, state: "Synced" });
+    expect((await queue.sync(input.sessionId, "controller_beta")).end).toEqual({ key: saved.key, state: "Synced" });
 
     expect(attempts).toHaveLength(2);
     expect(attempts[1]).toMatchObject({
@@ -299,6 +331,68 @@ describe("durable live capture queue", () => {
       },
     });
     expect(attempts[1].end.attemptedPayloadDigest).toBe(await endDigest({ ...attempts[1].end, workflowVersion: 8 }));
+  });
+
+  it("does not rebind an end intent to a controller owned by another tab", async () => {
+    const store = new MemoryCaptureStore();
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 1 })),
+      sendEnd: vi.fn(async (_end, workflowVersion) => ({ readyForProposal: true, workflowVersion: workflowVersion + 1 })),
+      readSession: vi.fn(async () => ({
+        workflowVersion: 8,
+        controllerId: "controller_beta",
+        controllerEpoch: 2,
+        acknowledgedOperationIds: [],
+        acknowledgements: [],
+        mode: "active" as const,
+      })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const saved = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [] });
+
+    const observerSync = await queue.sync(input.sessionId, "controller_alpha");
+
+    expect(observerSync.end).toEqual({ key: saved.key, state: "Saved on device" });
+    expect(transport.sendEnd).not.toHaveBeenCalled();
+    expect(await store.getEnd(input.sessionId)).toEqual(expect.objectContaining({
+      controllerId: "controller_alpha",
+      controllerEpoch: 1,
+      payloadDigest: saved.payloadDigest,
+      lastError: "stale_controller",
+    }));
+
+    expect((await queue.sync(input.sessionId, "controller_beta")).end).toEqual({ key: saved.key, state: "Synced" });
+    expect(transport.sendEnd).toHaveBeenCalledWith(expect.objectContaining({ controllerId: "controller_beta", controllerEpoch: 2 }), 8);
+  });
+
+  it("does not repair an end-intent payload from an observer tab", async () => {
+    const store = new MemoryCaptureStore();
+    const remoteCapture = { deviceId: "device_remote", operationId: "operation_remote" };
+    const transport: CaptureSyncTransport = {
+      sendCapture: vi.fn(async () => ({ outcome: "accepted" as const, workflowVersion: 1 })),
+      sendEnd: vi.fn(async () => ({ readyForProposal: true, workflowVersion: 9 })),
+      readSession: vi.fn(async () => ({
+        workflowVersion: 8,
+        controllerId: "controller_beta",
+        controllerEpoch: 2,
+        acknowledgedOperationIds: [remoteCapture],
+        acknowledgements: [{ ...remoteCapture, payloadDigest: "4".repeat(64), outcome: "accepted" as const }],
+        captureOperationIds: [remoteCapture],
+        mode: "active" as const,
+      })),
+    };
+    const queue = new CaptureQueue(store, transport);
+    const saved = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [] });
+
+    const result = await queue.sync(input.sessionId, "controller_alpha");
+
+    expect(result.end).toEqual({ key: saved.key, state: "Saved on device" });
+    expect(transport.sendEnd).not.toHaveBeenCalled();
+    expect(await store.getEnd(input.sessionId)).toEqual(expect.objectContaining({
+      requiredOperationIds: [],
+      payloadDigest: saved.payloadDigest,
+      lastError: "stale_controller",
+    }));
   });
 
   it("reconciles an exact end acknowledgement before rebinding after takeover", async () => {
@@ -330,8 +424,8 @@ describe("durable live capture queue", () => {
     const queue = new CaptureQueue(store, transport);
     const saved = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [] });
 
-    expect((await queue.sync(input.sessionId)).end).toEqual({ key: saved.key, state: "Saved on device" });
-    expect((await queue.sync(input.sessionId)).end).toEqual({ key: saved.key, state: "Synced" });
+    expect((await queue.sync(input.sessionId, input.controllerId)).end).toEqual({ key: saved.key, state: "Saved on device" });
+    expect((await queue.sync(input.sessionId, input.controllerId)).end).toEqual({ key: saved.key, state: "Synced" });
     expect(sentEnds).toHaveLength(1);
     expect(sentEnds[0]).toMatchObject({ controllerId: "controller_alpha", controllerEpoch: 1 });
   });
@@ -357,7 +451,7 @@ describe("durable live capture queue", () => {
     const queue = new CaptureQueue(store, transport);
     const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [] });
 
-    expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Needs attention" });
+    expect((await queue.sync(input.sessionId, input.controllerId)).end).toEqual({ key: end.key, state: "Needs attention" });
     expect((await store.getEnd(input.sessionId))?.lastError).toBe("live_session_ended");
     expect(transport.sendEnd).not.toHaveBeenCalled();
   });
@@ -370,7 +464,7 @@ describe("durable live capture queue", () => {
     };
     const queue = new CaptureQueue(store, transport);
     const saved = await queue.capture(input);
-    const result = await queue.sync(input.sessionId);
+    const result = await queue.sync(input.sessionId, input.controllerId);
     expect(result.captures[0]).toEqual({ key: saved.key, state: "Needs attention" });
     expect((await store.listCaptures(input.sessionId))[0].text).toBe(input.text);
     expect(transport.sendEnd).not.toHaveBeenCalled();
@@ -389,7 +483,7 @@ describe("durable live capture queue", () => {
     const saved = await queue.capture(input);
     const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [{ deviceId: saved.deviceId, operationId: saved.operationId }] });
 
-    const result = await queue.sync(input.sessionId);
+    const result = await queue.sync(input.sessionId, input.controllerId);
 
     expect(result.captures).toEqual([{ key: saved.key, state: "Needs attention" }]);
     expect(result.end).toEqual({ key: end.key, state: "Saved on device" });
@@ -407,7 +501,7 @@ describe("durable live capture queue", () => {
     const saved = await queue.capture(input);
     const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [{ deviceId: saved.deviceId, operationId: saved.operationId }] });
 
-    const result = await queue.sync(input.sessionId);
+    const result = await queue.sync(input.sessionId, input.controllerId);
 
     expect(result.captures).toEqual([{ key: saved.key, state: "Needs attention" }]);
     expect(result.end).toEqual({ key: end.key, state: "Needs attention" });
@@ -424,7 +518,7 @@ describe("durable live capture queue", () => {
     const saved = await queue.capture(input);
     const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [{ deviceId: saved.deviceId, operationId: saved.operationId }] });
 
-    const result = await queue.sync(input.sessionId);
+    const result = await queue.sync(input.sessionId, input.controllerId);
 
     expect(result.captures).toEqual([{ key: saved.key, state: "Needs attention" }]);
     expect(result.end).toEqual({ key: end.key, state: "Needs attention" });
@@ -449,7 +543,7 @@ describe("durable live capture queue", () => {
     const saved = await queue.capture(input);
     const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [{ deviceId: saved.deviceId, operationId: saved.operationId }] });
 
-    const result = await queue.sync(input.sessionId);
+    const result = await queue.sync(input.sessionId, input.controllerId);
 
     const required = [
       { deviceId: saved.deviceId, operationId: saved.operationId },
@@ -485,7 +579,7 @@ describe("durable live capture queue", () => {
     const queue = new CaptureQueue(store, transport);
     const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [] });
 
-    const result = await queue.sync(input.sessionId);
+    const result = await queue.sync(input.sessionId, input.controllerId);
     const repaired = await store.getEnd(input.sessionId);
 
     expect(result.end).toEqual({ key: end.key, state: "Synced" });
@@ -521,9 +615,9 @@ describe("durable live capture queue", () => {
     const queue = new CaptureQueue(store, transport);
     const end = await queue.end({ ...input, operationId: "operation_end", requiredOperationIds: [] });
 
-    expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Needs attention" });
+    expect((await queue.sync(input.sessionId, input.controllerId)).end).toEqual({ key: end.key, state: "Needs attention" });
     expect((await store.getEnd(input.sessionId))?.lastError).toBe("live_unaccepted_barrier");
-    expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Synced" });
+    expect((await queue.sync(input.sessionId, input.controllerId)).end).toEqual({ key: end.key, state: "Synced" });
 
     const retried = sendEnd.mock.calls[1][0];
     expect(sendEnd).toHaveBeenCalledTimes(2);
@@ -546,9 +640,9 @@ describe("durable live capture queue", () => {
     const queue = new CaptureQueue(store, transport);
     const saved = await queue.capture(input);
     const end = await queue.end({ ...input, operationId: undefined, requiredOperationIds: [{ deviceId: saved.deviceId, operationId: saved.operationId }] });
-    expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Saved on device" });
+    expect((await queue.sync(input.sessionId, input.controllerId)).end).toEqual({ key: end.key, state: "Saved on device" });
     expect(transport.sendEnd).not.toHaveBeenCalled();
-    expect((await queue.sync(input.sessionId)).end).toEqual({ key: end.key, state: "Synced" });
+    expect((await queue.sync(input.sessionId, input.controllerId)).end).toEqual({ key: end.key, state: "Synced" });
     expect(transport.sendEnd).toHaveBeenCalledTimes(1);
   });
 
@@ -569,7 +663,7 @@ describe("durable live capture queue", () => {
       { deviceId: second.deviceId, operationId: second.operationId },
     ] });
 
-    await queue.sync(input.sessionId);
+    await queue.sync(input.sessionId, input.controllerId);
 
     expect(transport.sendCapture).toHaveBeenNthCalledWith(1, expect.objectContaining({ operationId: "operation_alpha" }), 1);
     expect(transport.sendCapture).toHaveBeenNthCalledWith(2, expect.objectContaining({ operationId: "operation_beta" }), 2);
@@ -586,7 +680,7 @@ describe("durable live capture queue", () => {
     const queue = new CaptureQueue(store, transport);
     await queue.capture({ ...input, workflowVersion: 1 });
 
-    await queue.sync(input.sessionId);
+    await queue.sync(input.sessionId, input.controllerId);
 
     expect(transport.sendCapture).toHaveBeenCalledWith(expect.anything(), 7);
   });
@@ -605,7 +699,7 @@ describe("durable live capture queue", () => {
       { deviceId: "device_remote", operationId: "operation_remote" },
     ] });
 
-    const result = await queue.sync(input.sessionId);
+    const result = await queue.sync(input.sessionId, input.controllerId);
 
     expect(result.end).toEqual({ key: end.key, state: "Synced" });
     expect(transport.sendEnd).toHaveBeenCalledTimes(1);
@@ -623,7 +717,7 @@ describe("durable live capture queue", () => {
       { deviceId: "device_remote", operationId: "operation_remote" },
     ] });
 
-    const result = await queue.sync(input.sessionId);
+    const result = await queue.sync(input.sessionId, input.controllerId);
 
     expect(result.end).toEqual({ key: end.key, state: "Saved on device" });
     expect(transport.sendEnd).not.toHaveBeenCalled();

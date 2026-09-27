@@ -732,13 +732,13 @@ export class CaptureQueue {
     return this.store.saveEnd(input);
   }
 
-  public sync(sessionId: PublicId): Promise<CaptureSyncResult> {
+  public sync(sessionId: PublicId, callerControllerId: PublicId): Promise<CaptureSyncResult> {
     const locks = globalThis.navigator?.locks;
-    if (!locks) return this.syncUnlocked(sessionId);
-    return locks.request(`warden-drydock-live-sync:${sessionId}`, { mode: "exclusive" }, () => this.syncUnlocked(sessionId));
+    if (!locks) return this.syncUnlocked(sessionId, callerControllerId);
+    return locks.request(`warden-drydock-live-sync:${sessionId}`, { mode: "exclusive" }, () => this.syncUnlocked(sessionId, callerControllerId));
   }
 
-  private async syncUnlocked(sessionId: PublicId): Promise<CaptureSyncResult> {
+  private async syncUnlocked(sessionId: PublicId, callerControllerId: PublicId): Promise<CaptureSyncResult> {
     let captures = await this.store.listCaptures(sessionId);
     let end = await this.store.getEnd(sessionId);
     let workflowVersion: number | undefined;
@@ -808,6 +808,10 @@ export class CaptureQueue {
 
     for (const capture of captures) {
       if (capture.state === "Synced" || (capture.state === "Needs attention" && !isStaleControllerCode(capture.lastError))) continue;
+      if ((observedSession?.controllerId ?? capture.controllerId) !== callerControllerId) {
+        await this.store.updateCapture(capture.key, "Saved on device", "stale_controller");
+        continue;
+      }
       await this.store.updateCapture(capture.key, "Syncing", null);
       try {
         const currentController = observedSession?.mode === "active" && observedSession.acknowledgements !== undefined && observedSession.controllerId !== undefined && observedSession.controllerEpoch !== undefined
@@ -854,6 +858,10 @@ export class CaptureQueue {
       } else if (!end || end.state === "Synced" || (end.state === "Needs attention" && end.lastError !== "live_barrier_conflict" && end.lastError !== "live_unaccepted_barrier")) {
         return summarize();
       } else {
+        if ((observedSession?.controllerId ?? end.controllerId) !== callerControllerId) {
+          await this.store.updateEnd(end.key, "Saved on device", "stale_controller");
+          return summarize();
+        }
         const byIdentity = new Map(captures.map((capture) => [`${capture.deviceId}\u0000${capture.operationId}`, capture]));
         const acknowledged = new Set((observedSession?.acknowledgedOperationIds ?? []).map(({ deviceId, operationId }) => `${deviceId}\u0000${operationId}`));
         const serverAcknowledgementsAvailable = Boolean(this.transport.readSession);
