@@ -351,6 +351,62 @@ test("persisted end intent locks writes when synchronization fails", async ({ pa
   await expect(page.getByRole("button", { name: "End intent saved" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Sync saved work" })).toBeEnabled();
   expect(server.endPosts).toBe(0);
+
+  await page.addInitScript(() => {
+    const originalGetAll = IDBIndex.prototype.getAll;
+    const state = { pending: 0 };
+    let released = false;
+    const waiting: Array<() => void> = [];
+    Object.defineProperty(window, "__endLookupBarrier", {
+      configurable: true,
+      value: {
+        state,
+        release() {
+          released = true;
+          waiting.splice(0).forEach((resume) => resume());
+        },
+      },
+    });
+    IDBIndex.prototype.getAll = function (this: IDBIndex, ...args: Parameters<typeof originalGetAll>) {
+      const request = originalGetAll.apply(this, args);
+      if (this.objectStore.name !== "ends") return request;
+      return new Proxy(request, {
+        get(target, property) { return Reflect.get(target, property, target); },
+        set(target, property, value) {
+          if (property === "onsuccess" && typeof value === "function") {
+            return Reflect.set(target, property, function (this: IDBRequest, event: Event) {
+              state.pending += 1;
+              if (released) value.call(this, event);
+              else waiting.push(() => value.call(this, event));
+            }, target);
+          }
+          return Reflect.set(target, property, value, target);
+        },
+      });
+    };
+  });
+  await page.reload();
+  await page.waitForFunction(() => (window as Window & { __endLookupBarrier?: { state: { pending: number } } }).__endLookupBarrier?.state.pending! > 0);
+  await expect(page.getByText("Observer · read only")).toBeVisible();
+  await page.getByRole("button", { name: "Take over control" }).click();
+  await expect(page.getByText("This tab controls the session")).toBeVisible();
+  await page.waitForFunction(() => (window as Window & { __endLookupBarrier?: { state: { pending: number } } }).__endLookupBarrier?.state.pending! > 1);
+  await expect(page.getByRole("button", { name: "Save capture" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Submit ask" })).toBeDisabled();
+  await page.locator("#live-prompt").evaluate((formControl) => {
+    const textarea = formControl as HTMLTextAreaElement;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "Must not be submitted before local rehydration.");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#live-prompt")).toHaveValue("Must not be submitted before local rehydration.");
+  await page.locator("#live-prompt").evaluate((formControl) => {
+    formControl.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  expect(server.generationRequests).toHaveLength(0);
+  await page.evaluate(() => (window as Window & { __endLookupBarrier?: { release: () => void } }).__endLookupBarrier?.release());
+  await expect(page.getByText(/End state: Saved on device/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save capture" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Submit ask" })).toBeDisabled();
 });
 
 test("end storage failure leaves the live session unlocked", async ({ page }) => {
@@ -376,6 +432,25 @@ test("end storage failure leaves the live session unlocked", async ({ page }) =>
   await expect(page.getByRole("button", { name: "End intent saved" })).toHaveCount(0);
   await expect(page.getByText(/End state:/)).toHaveCount(0);
   expect(server.endPosts).toBe(0);
+});
+
+test("end lookup failure keeps a reloaded live session locked", async ({ page }) => {
+  const server = serverState(); await installLive(page, server); await startSession(page, server);
+  await page.addInitScript(() => {
+    const originalGetAll = IDBIndex.prototype.getAll;
+    IDBIndex.prototype.getAll = function (this: IDBIndex, ...args: Parameters<typeof originalGetAll>) {
+      if (this.objectStore.name === "ends") throw new Error("forced_end_lookup_failure");
+      return originalGetAll.apply(this, args);
+    };
+  });
+  await page.reload();
+  await expect(page.getByText("Observer · read only")).toBeVisible();
+  await page.getByRole("button", { name: "Take over control" }).click();
+  await expect(page.getByText("This tab controls the session")).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("Local live state could not be loaded (forced_end_lookup_failure)");
+  await expect(page.getByRole("button", { name: "Save capture" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Submit ask" })).toBeDisabled();
+  expect(server.generationRequests).toHaveLength(0);
 });
 
 test("end barrier and post-session review include acknowledged captures from another tab", async ({ page }) => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { AtlasApi } from "../api/atlasClient";
 import { browserId, type SliceApi } from "../api/client";
 import { httpCaptureTransport, httpLiveClient, type LiveClient } from "../api/liveClient";
@@ -49,7 +49,8 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
   const [error, setError] = useState("");
   const [announcement, setAnnouncement] = useState("");
   const [syncStates, setSyncStates] = useState<Record<string, SaveSyncState>>({});
-  const [endStatus, setEndStatus] = useState<SaveSyncState | null>(null);
+  const [endState, setEndState] = useState<{ sessionId: string; state: SaveSyncState | null } | null>(null);
+  const endLookup = useRef(0);
   const [draftContext, setDraftContext] = useState<StoredCapture | null>(null);
   const ownController = controllerIdentity;
   const controller = session?.controller.controller_id === ownController;
@@ -58,11 +59,17 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
 
   const refreshLocal = useCallback(async () => {
     if (!activeSessionId) return;
-    const captures = await store.listCaptures(activeSessionId);
-    setItems(captures);
-    if (!controller && captures.some((capture) => capture.lastError?.includes("stale_controller"))) setError("This tab lost live control. Its capture remains saved locally. Refresh the session and take over before writing again.");
-    const end = await store.getEnd(activeSessionId);
-    setEndStatus(end?.state ?? null);
+    const lookup = ++endLookup.current;
+    setEndState(null);
+    try {
+      const captures = await store.listCaptures(activeSessionId);
+      setItems(captures);
+      if (!controller && captures.some((capture) => capture.lastError?.includes("stale_controller"))) setError("This tab lost live control. Its capture remains saved locally. Refresh the session and take over before writing again.");
+      const end = await store.getEnd(activeSessionId);
+      if (lookup === endLookup.current) setEndState({ sessionId: activeSessionId, state: end?.state ?? null });
+    } catch (failure) {
+      if (lookup === endLookup.current) setError(`Local live state could not be loaded (${errorText(failure)}). Writing stays locked until it can be read.`);
+    }
   }, [activeSessionId, controller]);
 
   const observe = useCallback(async () => {
@@ -141,13 +148,13 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
       const states: Record<string, SaveSyncState> = {};
       result.captures.forEach((item) => { states[item.key] = item.state; });
       if (result.end) states[result.end.key] = result.end.state;
-      setSyncStates(states); setEndStatus(result.end?.state ?? null); await refreshLocal();
+      setSyncStates(states); await refreshLocal();
       if (result.end?.state === "Synced") { setAnnouncement("Ended. Server acknowledged the complete required operation set; review is ready."); await observe(); }
     } catch (failure) { setError(`Sync could not finish (${errorText(failure)}). Local capture remains saved on this device.`); }
   }
 
   async function capture(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!session || !controller || !captureText.trim()) return;
+    event.preventDefault(); if (!session || !canWrite || !captureText.trim()) return;
     setBusy(true); setError("");
     try {
       const saved = await queue.capture({ campaignId: session.campaign_id, sessionId: session.session_id, baseRevision: session.base_revision, controllerId: session.controller.controller_id, controllerEpoch: session.controller.epoch, workflowVersion: session.workflow_version, captureType: type, text: captureText.trim(), recordId: recordId.trim() || null });
@@ -159,7 +166,11 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
   }
 
   async function runAi(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!session || !controller || !aiReady || !prompt.trim()) return;
+    event.preventDefault();
+    if (!session || !canWrite || !aiReady || !prompt.trim()) {
+      if (activeSessionId && endState?.sessionId !== activeSessionId) setError("Local end intent is still loading. AI actions stay locked until it is checked.");
+      return;
+    }
     const provenanceCapture = action === "generate" ? draftContext : null;
     setBusy(true); setError(""); setDraft(""); setSequence(0);
     try {
@@ -187,7 +198,7 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
   }
 
   async function end() {
-    if (!session || !controller) return;
+    if (!session || !canWrite) return;
     if (!window.confirm("End this live session? Unsynced captures will remain on this device until the server acknowledges them.")) return;
     setBusy(true); setError("");
     try {
@@ -195,7 +206,8 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
       const required = new Map(local.map(({ deviceId, operationId }) => [`${deviceId}\u0000${operationId}`, { deviceId, operationId }]));
       for (const receipt of session.acknowledgements) required.set(`${receipt.device_id}\u0000${receipt.operation_id}`, { deviceId: receipt.device_id, operationId: receipt.operation_id });
       const storedEnd = await queue.end({ campaignId: session.campaign_id, sessionId: session.session_id, baseRevision: session.base_revision, controllerId: session.controller.controller_id, controllerEpoch: session.controller.epoch, workflowVersion: session.workflow_version, requiredOperationIds: [...required.values()] });
-      setEndStatus(storedEnd.state);
+      endLookup.current += 1;
+      setEndState({ sessionId: session.session_id, state: storedEnd.state });
       setAnnouncement("Ended - review pending. Waiting for server acknowledgement of the exact operation set.");
       await sync();
     } catch (failure) { setError(`End intent was not saved (${errorText(failure)}).`); }
@@ -213,6 +225,7 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
   const reviewedCaptures = session?.end_barrier?.ready_for_proposal
     ? session.events.filter((item) => acknowledgedOperations.has(`${item.device_id}\u0000${item.operation_id}`) && item.record_id)
     : [];
+  const endStatus = endState?.sessionId === activeSessionId ? endState.state : undefined;
   const canWrite = controller && session?.mode === "active" && endStatus === null;
   const editLink = (capture: StoredCapture) => capture.recordId ? <><button type="button" className="button-link" onClick={() => openRecord(capture)}>Open affected record in editor</button>{capture.captureType === "confirmed_fact" && <button type="button" onClick={() => { setDraftContext(capture); setRecordId(capture.recordId!); setAction("generate"); document.querySelector<HTMLElement>("#live-prompt")?.focus(); }}>Generate Draft from this fact</button>}</> : null;
 
