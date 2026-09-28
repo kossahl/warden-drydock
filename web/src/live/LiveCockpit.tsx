@@ -194,7 +194,8 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
       const local = await store.listCaptures(session.session_id);
       const required = new Map(local.map(({ deviceId, operationId }) => [`${deviceId}\u0000${operationId}`, { deviceId, operationId }]));
       for (const receipt of session.acknowledgements) required.set(`${receipt.device_id}\u0000${receipt.operation_id}`, { deviceId: receipt.device_id, operationId: receipt.operation_id });
-      await queue.end({ campaignId: session.campaign_id, sessionId: session.session_id, baseRevision: session.base_revision, controllerId: session.controller.controller_id, controllerEpoch: session.controller.epoch, workflowVersion: session.workflow_version, requiredOperationIds: [...required.values()] });
+      const storedEnd = await queue.end({ campaignId: session.campaign_id, sessionId: session.session_id, baseRevision: session.base_revision, controllerId: session.controller.controller_id, controllerEpoch: session.controller.epoch, workflowVersion: session.workflow_version, requiredOperationIds: [...required.values()] });
+      setEndStatus(storedEnd.state);
       setAnnouncement("Ended - review pending. Waiting for server acknowledgement of the exact operation set.");
       await sync();
     } catch (failure) { setError(`End intent was not saved (${errorText(failure)}).`); }

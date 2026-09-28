@@ -330,6 +330,54 @@ test("end stays local until the exact capture set is acknowledged by the server 
   expect(server.endRequirements[0]).toEqual(server.session?.acknowledgements.map(({ device_id, operation_id }) => ({ device_id, operation_id })));
 });
 
+test("persisted end intent locks writes when synchronization fails", async ({ page }) => {
+  const server = serverState(); await installLive(page, server); await startSession(page, server);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: { request: () => Promise.reject(new Error("forced_sync_failure")) },
+    });
+  });
+  page.once("dialog", async (dialog) => { await dialog.accept(); });
+  await page.getByRole("button", { name: "End session" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("Sync could not finish (forced_sync_failure)");
+  await expect(page.getByText(/End state: Saved on device/)).toBeVisible();
+  await expect(page.getByLabel("What happened or remains unresolved?")).toBeDisabled();
+  await expect(page.getByRole("radio", { name: "Ask" })).toBeDisabled();
+  await expect(page.getByRole("radio", { name: "Check" })).toBeDisabled();
+  await expect(page.getByRole("radio", { name: "Generate" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Submit ask" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "End intent saved" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Sync saved work" })).toBeEnabled();
+  expect(server.endPosts).toBe(0);
+});
+
+test("end storage failure leaves the live session unlocked", async ({ page }) => {
+  const server = serverState(); await installLive(page, server); await startSession(page, server);
+  await page.evaluate(() => {
+    Object.defineProperty(window, "indexedDB", {
+      configurable: true,
+      value: { open: () => { throw new Error("forced_local_queue_failure"); } },
+    });
+  });
+  page.once("dialog", async (dialog) => { await dialog.accept(); });
+  await page.getByRole("button", { name: "End session" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("End intent was not saved (forced_local_queue_failure)");
+  await expect(page.getByRole("button", { name: "Save capture" })).toBeEnabled();
+  for (const action of ["Ask", "Check", "Generate"] as const) {
+    const choice = page.getByRole("radio", { name: action });
+    await expect(choice).toBeEnabled();
+    await choice.check();
+    await expect(page.getByRole("button", { name: `Submit ${action.toLowerCase()}` })).toBeEnabled();
+  }
+  await expect(page.getByRole("button", { name: "End session" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "End intent saved" })).toHaveCount(0);
+  await expect(page.getByText(/End state:/)).toHaveCount(0);
+  expect(server.endPosts).toBe(0);
+});
+
 test("end barrier and post-session review include acknowledged captures from another tab", async ({ page }) => {
   const server = serverState(); await installLive(page, server); await startSession(page, server);
   const remoteEvent = { event_id: "event_remote", event_type: "confirmed_fact" as const, device_id: "device_remote", operation_id: "operation_remote", device_order: 1, payload_digest: "4".repeat(64), base_revision: "revision_two", grounding_eligible: true, record_id: "record-one" };
