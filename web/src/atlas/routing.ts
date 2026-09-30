@@ -1,6 +1,6 @@
 import type { AtlasAuthority, AtlasStatusFilter } from "../contracts/v2";
 
-export type AtlasRouteKind = "overview" | "records" | "record" | "drafts" | "proposals" | "revisions" | "invalid";
+export type AtlasRouteKind = "overview" | "records" | "record" | "drafts" | "proposals" | "revisions" | "live" | "invalid";
 export interface AtlasRoute {
   kind: AtlasRouteKind;
   campaignId: string;
@@ -17,6 +17,7 @@ export interface AtlasRoute {
   generationId: string | null;
   proposalId: string | null;
   proposalVersion: number | null;
+  sessionId: string | null;
 }
 
 const authorities = new Set<AtlasAuthority>(["preparation", "canon", "revealed"]);
@@ -34,6 +35,7 @@ export function parseAtlasRoute(location: string): AtlasRoute {
   else if (parts.length === 4 && parts[2] === "records") { kind = "record"; recordId = parts[3]; }
   else if (parts.length === 3 && (parts[2] === "drafts" || parts[2] === "proposals")) kind = parts[2];
   else if (parts.length === 3 && (parts[2] === "history" || parts[2] === "revisions")) kind = "revisions";
+  else if (parts.length === 3 && parts[2] === "live") kind = "live";
   const authority = url.searchParams.get("authority");
   const status = url.searchParams.get("status");
   const proposalId = url.searchParams.get("proposal");
@@ -58,6 +60,7 @@ export function parseAtlasRoute(location: string): AtlasRoute {
     generationId,
     proposalId: proposalVersion ? proposalId : null,
     proposalVersion,
+    sessionId: url.searchParams.get("session"),
   };
 }
 

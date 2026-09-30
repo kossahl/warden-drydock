@@ -94,6 +94,17 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
 .facet-groups ul { padding-left: 1.2rem; }
 .facet-groups a { overflow-wrap: anywhere; }
 .integration-boundary { border-style: dashed; }
+.live-header, .live-status { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 1rem; }
+.live-header h1 { overflow-wrap: anywhere; }
+.live-revision, .live-status p { min-width: 0; overflow-wrap: anywhere; }
+.live-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(16rem, 1fr); gap: 1rem; align-items: start; }
+.live-main, .live-rail { min-width: 0; }
+.live-rail { position: sticky; top: .5rem; max-height: calc(100vh - 1rem); overflow: auto; }
+.live-rail ol { padding-left: 1.3rem; }
+.live-rail li { overflow-wrap: anywhere; margin: .8rem 0; }
+.live-rail .button-link { width: 100%; justify-content: center; cursor: pointer; font: inherit; color: inherit; }
+.live-provenance dl { display: grid; gap: .5rem; }
+.live-provenance dd { margin: .15rem 0; overflow-wrap: anywhere; }
 .non-canon { border-left: .35rem double #9dbbe8; }
 .search-form > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: .6rem; align-items: start; }
 .search-form input { margin: .3rem 0 0; }
@@ -192,6 +203,9 @@ main { width: min(100%, 76rem); margin: 0 auto; padding: clamp(1.2rem, 4vw, 3rem
   .atlas-rail nav { flex-direction: row; flex-wrap: wrap; }
   .atlas-rail nav a { flex: 1 1 auto; text-align: center; }
   .metadata-grid, .totals, .facet-groups, .filters { grid-template-columns: 1fr; }
+  .live-grid { grid-template-columns: minmax(0, 1fr); }
+  .live-rail { position: static; max-height: none; overflow: visible; }
+  .live-header { align-items: flex-start; flex-direction: column; }
   .search-form > div { grid-template-columns: 1fr 1fr; }
   .search-form input { grid-column: 1 / -1; }
   .revision-banner { align-items: flex-start; flex-direction: column; }
