@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
+import shutil
 import tarfile
 from collections.abc import Iterable
 
@@ -60,11 +61,30 @@ def create_snapshot_archive(source: pathlib.Path, destination: pathlib.Path) -> 
 
 
 def extract_snapshot_archive(archive_path: pathlib.Path, destination: pathlib.Path) -> pathlib.Path:
+    destination.mkdir(parents=True, exist_ok=True)
+    if any(destination.iterdir()):
+        raise ValueError("snapshot_restore_destination_not_empty")
     staging = destination / "snapshot-restore-staging"
     staging.mkdir(parents=True, exist_ok=False)
+
+    def writable_member(member: tarfile.TarInfo, path: str) -> tarfile.TarInfo | None:
+        filtered = tarfile.data_filter(member, path)
+        if filtered is None:
+            return None
+        # Extract as the invoking service identity and ensure it owns enough
+        # permissions to update and remove its restored tree.
+        filtered.uid = None
+        filtered.gid = None
+        filtered.mode = (filtered.mode or 0) | (0o700 if filtered.isdir() else 0o600)
+        return filtered
+
     with tarfile.open(archive_path, "r") as archive:
-        archive.extractall(staging, members=safe_members(archive.getmembers()), filter="data")
-    return staging / "snapshots"
+        archive.extractall(staging, members=safe_members(archive.getmembers()), filter=writable_member)
+    restored = staging / "snapshots"
+    for child in restored.iterdir():
+        child.rename(destination / child.name)
+    shutil.rmtree(staging)
+    return destination
 
 
 def snapshot_archive_inventory(archive_path: pathlib.Path) -> str:

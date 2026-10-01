@@ -336,11 +336,21 @@ class RuntimeTests(unittest.TestCase):
             source = root / "source"
             (source / "nested").mkdir(parents=True)
             (source / "nested" / "snapshot.txt").write_text("content", encoding="utf-8")
+            (source / "nested" / "snapshot.txt").chmod(0o400)
+            (source / "nested").chmod(0o500)
             archive = root / "snapshots.tar"
             inventory = create_snapshot_archive(source, archive)
+            (source / "nested").chmod(0o700)
             self.assertEqual(inventory, snapshot_archive_inventory(archive))
-            restored = extract_snapshot_archive(archive, root)
-            self.assertEqual("content", (restored / "nested" / "snapshot.txt").read_text(encoding="utf-8"))
+            restored = extract_snapshot_archive(archive, root / "restored-volume")
+            snapshot = restored / "nested" / "snapshot.txt"
+            self.assertEqual("content", snapshot.read_text(encoding="utf-8"))
+            self.assertTrue(snapshot.stat().st_mode & 0o200)
+            self.assertTrue((restored / "nested").stat().st_mode & 0o200)
+            snapshot.write_text("updated", encoding="utf-8")
+            snapshot.unlink()
+            self.assertFalse(snapshot.exists())
+            self.assertFalse((restored / "snapshot-restore-staging").exists())
 
     def test_build_context_excludes_real_secrets(self) -> None:
         ignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
@@ -362,8 +372,12 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("finally", restore)
         self.assertIn("/var/lib/postgresql/data/.drydock-restore.dump", restore)
         self.assertLess(restore.index("up -d --wait db"), restore.index("pg_restore"))
-        self.assertLess(restore.index("pg_restore"), restore.index("snapshot restore copy"))
-        self.assertLess(restore.index("snapshot restore copy"), restore.index("application startup"))
+        self.assertIn("docker compose --project-name $RestoreProject run --rm --no-deps --entrypoint python --volume", restore)
+        self.assertIn("/var/lib/drydock/snapshots", restore)
+        self.assertIn("extract_snapshot_archive", restore)
+        self.assertNotIn("app:/var/lib/drydock/snapshots", restore)
+        self.assertLess(restore.index("pg_restore"), restore.index("snapshot archive validation and restore"))
+        self.assertLess(restore.index("snapshot archive validation and restore"), restore.index("application startup"))
         initializer = (ROOT / "docker" / "initialize-secrets.ps1").read_text(encoding="utf-8")
         self.assertIn("cmp -s", initializer)
         self.assertIn("440 0:20000", initializer)

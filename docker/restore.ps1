@@ -22,11 +22,8 @@ foreach ($suffix in @('postgres_data','snapshots','provider_secrets','database_s
     Assert-NativeSuccess 'restore volume inspection'
     if ($matches -contains $volumeName) { throw "Restore volume already exists: $volumeName" }
 }
-$stagingRoot = Join-Path $Backup 'snapshot-restore-staging'
+$snapshotArchive = (Resolve-Path -LiteralPath (Join-Path $Backup 'snapshots.tar')).Path
 $dumpPath = '/var/lib/postgresql/data/.drydock-restore.dump'
-if (Test-Path -LiteralPath $stagingRoot) { throw 'Restore staging path already exists' }
-python -c "import pathlib; from warden_drydock.hosted.operations.recovery import extract_snapshot_archive; print(extract_snapshot_archive(pathlib.Path(r'$Backup')/'snapshots.tar',pathlib.Path(r'$Backup')))"
-Assert-NativeSuccess 'snapshot archive validation'
 docker compose --project-name $RestoreProject build app
 Assert-NativeSuccess 'restored application image build'
 & (Join-Path $PSScriptRoot 'initialize-secrets.ps1') -ProjectName $RestoreProject
@@ -49,10 +46,8 @@ if ($restoreError) {
     throw $restoreError
 }
 if ($cleanupExit -ne 0) { throw "PostgreSQL restore staging cleanup failed with exit code $cleanupExit" }
-docker compose --project-name $RestoreProject create app
-Assert-NativeSuccess 'application recovery container creation'
-docker compose --project-name $RestoreProject cp (Join-Path $stagingRoot 'snapshots\.') app:/var/lib/drydock/snapshots
-Assert-NativeSuccess 'snapshot restore copy'
+docker compose --project-name $RestoreProject run --rm --no-deps --entrypoint python --volume "${snapshotArchive}:/restore/snapshots.tar:ro" app -c "import pathlib; from warden_drydock.hosted.operations.recovery import extract_snapshot_archive; extract_snapshot_archive(pathlib.Path('/restore/snapshots.tar'),pathlib.Path('/var/lib/drydock/snapshots'))"
+Assert-NativeSuccess 'snapshot archive validation and restore'
 docker compose --project-name $RestoreProject run --rm --no-deps app python -m warden_drydock.hosted.operations.recover
 Assert-NativeSuccess 'intent reconciliation and projection rebuild'
 docker compose --project-name $RestoreProject up -d app
