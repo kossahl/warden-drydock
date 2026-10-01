@@ -804,7 +804,7 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             _, snapshots, app = self._app(directory)
             head = self._ready_campaign(app)
-            session_id = "session_rollback"
+            session_id = f"session_rollback_{self.suffix}"
             app.live_start(self.campaign_id, self._start_payload(head, session_id))
             payload = self._capture_payload(session_id, key_suffix="rollback")
             from psycopg import sql
@@ -868,8 +868,11 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
                     ).format(sql.Identifier(function_name)))
                     cursor.execute(sql.SQL(
                         "CREATE TRIGGER {} BEFORE INSERT ON hosted_live_receipt "
-                        "FOR EACH ROW EXECUTE FUNCTION {}()"
-                    ).format(sql.Identifier(trigger_name), sql.Identifier(function_name)))
+                        "FOR EACH ROW WHEN (NEW.session_id = {}) EXECUTE FUNCTION {}()"
+                    ).format(
+                        sql.Identifier(trigger_name), sql.Literal(session_id),
+                        sql.Identifier(function_name),
+                    ))
                 with self.assertRaisesRegex(psycopg.errors.RaiseException, "forced live receipt rollback"):
                     app.live_capture(self.campaign_id, payload)
             finally:
