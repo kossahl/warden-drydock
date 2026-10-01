@@ -741,11 +741,24 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
             capture = self._capture_payload(
                 "session_takeover_race", key_suffix="takeover_race"
             )
-            barrier = threading.Barrier(2)
+            start_barrier = threading.Barrier(2)
+            read_barrier = threading.Barrier(2)
 
             def attempt(operation, payload):
                 local_app = self._app(directory)[2]
-                barrier.wait(timeout=5)
+                original_get_session = local_app.ai_repository.get_session
+                session_read_count = 0
+
+                def get_session_after_shared_read(session_id):
+                    nonlocal session_read_count
+                    session = original_get_session(session_id)
+                    session_read_count += 1
+                    if session_read_count == 2:
+                        read_barrier.wait(timeout=5)
+                    return session
+
+                local_app.ai_repository.get_session = get_session_after_shared_read
+                start_barrier.wait(timeout=5)
                 try:
                     if operation == "takeover":
                         status, result = local_app.live_takeover(self.campaign_id, payload)
