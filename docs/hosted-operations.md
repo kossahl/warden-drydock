@@ -120,3 +120,6 @@ accepted the restored heads, snapshot inventory, and projection digests.
 Database and provider secrets are excluded; restore initializes a fresh
 database-secret volume from current local configuration. The restored service remains behind provider setup
 and renewed-consent gates.
+
+See the [Hosted recovery QA runbook](hosted-recovery-qa.md) for the acceptance
+evidence matrix and post-restore head and projection-digest comparison.

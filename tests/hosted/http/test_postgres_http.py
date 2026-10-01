@@ -3,9 +3,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 import uuid
 from unittest import mock
+from concurrent.futures import ThreadPoolExecutor
 
 from warden_drydock.hosted.ai.repository import PostgresAIRepository
 from warden_drydock.hosted.http.application import HTTPFailure, SliceApplication, SyntheticProvider
@@ -721,6 +723,178 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
                 outcomes = list(pool.map(attempt, range(4)))
             self.assertEqual(1, outcomes.count("accepted"))
             self.assertEqual(3, outcomes.count("exact_replay"))
+
+    def test_concurrent_takeover_and_capture_serialize_on_session_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, app = self._app(directory)
+            head = self._ready_campaign(app)
+            app.live_start(self.campaign_id, self._start_payload(head, "session_takeover_race"))
+            takeover = self.bind({
+                "contract_name": "live_takeover_request", "contract_version": 2,
+                "operation_request": self.operation(
+                    "live_takeover", f"request_takeover_{self.suffix}",
+                    f"idem_takeover_{self.suffix}", expected_workflow_version=1,
+                ),
+                "campaign_id": self.campaign_id, "session_id": "session_takeover_race",
+                "controller_id": "controller_beta", "controller_epoch": 1,
+            })
+            capture = self._capture_payload(
+                "session_takeover_race", key_suffix="takeover_race"
+            )
+            barrier = threading.Barrier(2)
+
+            def attempt(operation, payload):
+                local_app = self._app(directory)[2]
+                barrier.wait(timeout=5)
+                try:
+                    if operation == "takeover":
+                        status, result = local_app.live_takeover(self.campaign_id, payload)
+                    else:
+                        status, result = local_app.live_capture(self.campaign_id, payload)
+                    return "ok", status, result
+                except HTTPFailure as exc:
+                    return "error", exc.status, exc.payload["error"]["code"]
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                takeover_future = pool.submit(attempt, "takeover", takeover)
+                capture_future = pool.submit(attempt, "capture", capture)
+                takeover_result = takeover_future.result(timeout=15)
+                capture_result = capture_future.result(timeout=15)
+
+            self.assertEqual(
+                1,
+                sum(result[0] == "ok" for result in (takeover_result, capture_result)),
+            )
+            self.assertEqual(
+                1,
+                sum(
+                    result[0] == "error" and result[1] == 409
+                    for result in (takeover_result, capture_result)
+                ),
+            )
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT workflow_version,controller_epoch,controller_id,mode FROM hosted_live_session WHERE session_id=%s",
+                    ("session_takeover_race",),
+                )
+                session = cursor.fetchone()
+                cursor.execute(
+                    "SELECT count(*) FROM hosted_live_capture WHERE session_id=%s",
+                    ("session_takeover_race",),
+                )
+                capture_count = cursor.fetchone()[0]
+                cursor.execute(
+                    "SELECT count(*) FROM hosted_live_receipt WHERE session_id=%s",
+                    ("session_takeover_race",),
+                )
+                receipt_count = cursor.fetchone()[0]
+
+            self.assertEqual(2, session[0])
+            self.assertEqual("active", session[3])
+            if takeover_result[0] == "ok":
+                self.assertEqual((2, "controller_beta"), session[1:3])
+                self.assertEqual((0, 0), (capture_count, receipt_count))
+                self.assertIn(capture_result[2], {"stale_controller_epoch", "stale_workflow_version"})
+            else:
+                self.assertEqual((1, "controller_alpha"), session[1:3])
+                self.assertEqual((1, 1), (capture_count, receipt_count))
+                self.assertEqual("stale_workflow_version", takeover_result[2])
+
+    def test_live_capture_transaction_rolls_back_and_exact_retry_commits_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, snapshots, app = self._app(directory)
+            head = self._ready_campaign(app)
+            session_id = "session_rollback"
+            app.live_start(self.campaign_id, self._start_payload(head, session_id))
+            payload = self._capture_payload(session_id, key_suffix="rollback")
+            from psycopg import sql
+
+            function_name = f"drydock_test_fail_live_receipt_{self.suffix}"
+            trigger_name = f"drydock_test_fail_live_receipt_trigger_{self.suffix}"
+
+            def durable_state():
+                with self.connect() as connection, connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT workflow_version,controller_epoch,controller_id,mode FROM hosted_live_session WHERE session_id=%s",
+                        (session_id,),
+                    )
+                    session = cursor.fetchone()
+                    cursor.execute(
+                        "SELECT count(*) FROM hosted_live_capture WHERE session_id=%s",
+                        (session_id,),
+                    )
+                    captures = cursor.fetchone()[0]
+                    cursor.execute(
+                        "SELECT count(*) FROM hosted_live_receipt WHERE session_id=%s",
+                        (session_id,),
+                    )
+                    receipts = cursor.fetchone()[0]
+                    cursor.execute(
+                        "SELECT revision_id,ordinal FROM hosted_campaign_head WHERE campaign_id=%s",
+                        (self.campaign_id,),
+                    )
+                    campaign_head = cursor.fetchone()
+                    cursor.execute(
+                        "SELECT count(*) FROM hosted_ai_generation WHERE campaign_id=%s",
+                        (self.campaign_id,),
+                    )
+                    generations = cursor.fetchone()[0]
+                    cursor.execute(
+                        "SELECT count(*) FROM hosted_ai_stream_event WHERE generation_id IN "
+                        "(SELECT generation_id FROM hosted_ai_generation WHERE campaign_id=%s)",
+                        (self.campaign_id,),
+                    )
+                    stream_events = cursor.fetchone()[0]
+                    cursor.execute(
+                        "SELECT count(*) FROM hosted_proposal_version WHERE campaign_id=%s",
+                        (self.campaign_id,),
+                    )
+                    proposals = cursor.fetchone()[0]
+                return session, captures, receipts, campaign_head, generations, stream_events, proposals
+
+            def snapshot_files():
+                return tuple(sorted(
+                    (path.relative_to(snapshots).as_posix(), path.read_bytes())
+                    for path in snapshots.rglob("*") if path.is_file()
+                ))
+
+            before = durable_state()
+            snapshots_before = snapshot_files()
+            try:
+                with self.connect() as connection, connection.cursor() as cursor:
+                    cursor.execute(sql.SQL(
+                        "CREATE FUNCTION {}() RETURNS trigger LANGUAGE plpgsql AS "
+                        "$$ BEGIN RAISE EXCEPTION 'forced live receipt rollback'; END $$"
+                    ).format(sql.Identifier(function_name)))
+                    cursor.execute(sql.SQL(
+                        "CREATE TRIGGER {} BEFORE INSERT ON hosted_live_receipt "
+                        "FOR EACH ROW EXECUTE FUNCTION {}()"
+                    ).format(sql.Identifier(trigger_name), sql.Identifier(function_name)))
+                with self.assertRaisesRegex(psycopg.errors.RaiseException, "forced live receipt rollback"):
+                    app.live_capture(self.campaign_id, payload)
+            finally:
+                with self.connect() as connection, connection.cursor() as cursor:
+                    cursor.execute(sql.SQL(
+                        "DROP TRIGGER IF EXISTS {} ON hosted_live_receipt"
+                    ).format(sql.Identifier(trigger_name)))
+                    cursor.execute(sql.SQL(
+                        "DROP FUNCTION IF EXISTS {}()"
+                    ).format(sql.Identifier(function_name)))
+
+            self.assertEqual(before, durable_state())
+            self.assertEqual(snapshots_before, snapshot_files())
+            _, _, retry_app = self._app(directory)
+            status, retry = retry_app.live_capture(self.campaign_id, payload)
+            self.assertEqual((200, "accepted"), (status, retry["outcome"]))
+            _, _, replay_app = self._app(directory)
+            _, replay = replay_app.live_capture(self.campaign_id, payload)
+            self.assertEqual("exact_replay", replay["outcome"])
+
+            after = durable_state()
+            self.assertEqual((2, 1, "controller_alpha", "active"), after[0])
+            self.assertEqual((1, 1), after[1:3])
+            self.assertEqual(before[3:], after[3:])
+            self.assertEqual(snapshots_before, snapshot_files())
 
     def test_concurrent_start_yields_one_session(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
