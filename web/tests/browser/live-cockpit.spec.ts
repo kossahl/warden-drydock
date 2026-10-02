@@ -205,6 +205,9 @@ test("offline capture survives IndexedDB reload and changes from device saved to
   await expect(page.getByText(sessionId)).toBeVisible();
   await expect(page.getByText("Observer · read only")).toBeVisible();
   await expect(page.getByText("Saved on device", { exact: true })).toBeVisible();
+  await expect(page.getByText("Syncing", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Synced", { exact: true })).toHaveCount(0);
+  expect(server.session?.events).toHaveLength(0);
   await page.getByRole("button", { name: "Take over control" }).click();
   await expect(page.getByText("This tab controls the session")).toBeVisible();
   server.failCaptures = false;
@@ -240,6 +243,72 @@ test("second tab observes, explicitly takes over, and old controller receives st
   await expect(observer.getByText("This tab controls the session")).toBeVisible();
   await expect(observer.getByRole("alert")).toHaveCount(0);
   await observer.close();
+});
+
+test("observer shows an in-flight capture as syncing until the server acknowledges it", async ({ page, context }) => {
+  const server = serverState(); await installLive(page, server);
+  const sessionId = await startSession(page, server);
+  let releaseCapture!: () => void;
+  let markCaptureStarted!: () => void;
+  const captureRequestStarted = new Promise<void>((resolve) => { markCaptureStarted = resolve; });
+  const captureResponse = new Promise<void>((resolve) => { releaseCapture = resolve; });
+  server.captureGate = { started: markCaptureStarted, response: captureResponse };
+
+  await saveFact(page, "A capture awaiting server acknowledgement.");
+  await captureRequestStarted;
+  expect(server.capturePosts).toBe(1);
+  expect(server.session?.events).toHaveLength(0);
+
+  const observer = await context.newPage(); await installLive(observer, server);
+  await observer.goto(liveRoute(sessionId));
+  await expect(observer.getByText("Observer · read only")).toBeVisible();
+  await expect(observer.getByText("A capture awaiting server acknowledgement.")).toBeVisible();
+  await expect(observer.getByText("Syncing", { exact: true })).toBeVisible();
+  await expect(observer.getByText("Saved on device", { exact: true })).toHaveCount(0);
+  await expect(observer.getByText("Synced", { exact: true })).toHaveCount(0);
+  expect(server.session?.events).toHaveLength(0);
+
+  releaseCapture();
+  await expect(observer.getByText("Synced", { exact: true })).toBeVisible({ timeout: 10000 });
+  await expect(observer.getByText("Syncing", { exact: true })).toHaveCount(0);
+  await expect(observer.getByText("Saved on device", { exact: true })).toHaveCount(0);
+  expect(server.session?.events).toHaveLength(1);
+  await observer.close();
+});
+
+test("active capture stays syncing without Web Locks until the server acknowledges it", async ({ page }) => {
+  const server = serverState(); await installLive(page, server);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "locks", { configurable: true, value: undefined });
+  });
+  await startSession(page, server);
+  await saveFact(page, "Previously acknowledged capture.");
+  const acknowledgedCapture = page.getByRole("listitem").filter({ hasText: "Previously acknowledged capture." });
+  await expect(acknowledgedCapture.getByText("Synced", { exact: true })).toBeVisible();
+  expect(server.session?.events).toHaveLength(1);
+
+  let releaseCapture!: () => void;
+  let markCaptureStarted!: () => void;
+  const captureRequestStarted = new Promise<void>((resolve) => { markCaptureStarted = resolve; });
+  const captureResponse = new Promise<void>((resolve) => { releaseCapture = resolve; });
+  server.captureGate = { started: markCaptureStarted, response: captureResponse };
+
+  await saveFact(page, "A second capture without Web Locks.");
+  await captureRequestStarted;
+  expect(server.capturePosts).toBe(2);
+  expect(server.session?.events).toHaveLength(1);
+  const pendingCapture = page.getByRole("listitem").filter({ hasText: "A second capture without Web Locks." });
+  await expect(pendingCapture.getByText("Syncing", { exact: true })).toBeVisible({ timeout: 10000 });
+  await expect(pendingCapture.getByText("Saved on device", { exact: true })).toHaveCount(0);
+  await expect(pendingCapture.getByText("Synced", { exact: true })).toHaveCount(0);
+  await expect(acknowledgedCapture.getByText("Synced", { exact: true })).toBeVisible();
+  expect(server.session?.events).toHaveLength(1);
+
+  releaseCapture();
+  await expect(pendingCapture.getByText("Synced", { exact: true })).toBeVisible();
+  await expect(pendingCapture.getByText("Syncing", { exact: true })).toHaveCount(0);
+  await expect(acknowledgedCapture.getByText("Synced", { exact: true })).toBeVisible();
+  expect(server.session?.events).toHaveLength(2);
 });
 
 test("observer cannot sync saved work until taking over control", async ({ page, context }) => {
@@ -447,7 +516,7 @@ test("end lookup failure keeps a reloaded live session locked", async ({ page })
   await expect(page.getByText("Observer · read only")).toBeVisible();
   await page.getByRole("button", { name: "Take over control" }).click();
   await expect(page.getByText("This tab controls the session")).toBeVisible();
-  await expect(page.getByRole("alert")).toContainText("Local live state could not be loaded (forced_end_lookup_failure)");
+  await expect(page.getByRole("alert")).toContainText("Local live state could not be refreshed (forced_end_lookup_failure). End status was not changed.");
   await expect(page.getByRole("button", { name: "Save capture" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Submit ask" })).toBeDisabled();
   expect(server.generationRequests).toHaveLength(0);

@@ -49,26 +49,47 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
   const [error, setError] = useState("");
   const [announcement, setAnnouncement] = useState("");
   const [syncStates, setSyncStates] = useState<Record<string, SaveSyncState>>({});
+  const [syncLockSessionId, setSyncLockSessionId] = useState<string | null>(null);
+  const [localSyncCounts, setLocalSyncCounts] = useState<Record<string, number>>({});
   const [endState, setEndState] = useState<{ sessionId: string; state: SaveSyncState | null } | null>(null);
   const endLookup = useRef(0);
+  const activeSessionId = session?.session_id ?? sessionId;
+  const activeSessionIdRef = useRef(activeSessionId);
+  activeSessionIdRef.current = activeSessionId;
   const [draftContext, setDraftContext] = useState<StoredCapture | null>(null);
   const ownController = controllerIdentity;
   const controller = session?.controller.controller_id === ownController;
   const aiReady = readiness?.ai_available === true;
-  const activeSessionId = session?.session_id ?? sessionId;
 
   const refreshLocal = useCallback(async () => {
-    if (!activeSessionId) return;
+    if (!activeSessionId || activeSessionIdRef.current !== activeSessionId) return;
     const lookup = ++endLookup.current;
-    setEndState(null);
+    const isCurrent = () => lookup === endLookup.current && activeSessionIdRef.current === activeSessionId;
     try {
       const captures = await store.listCaptures(activeSessionId);
+      if (!isCurrent()) return;
       setItems(captures);
+      setSyncStates((current) => {
+        if (!isCurrent()) return current;
+        const next = { ...current };
+        captures.forEach(({ key }) => { delete next[key]; });
+        return next;
+      });
+      try {
+        const locks = globalThis.navigator?.locks;
+        const held = locks ? await locks.query() : null;
+        if (!isCurrent()) return;
+        setSyncLockSessionId(held?.held?.some((lock) => lock.name === `warden-drydock-live-sync:${activeSessionId}`) ? activeSessionId : null);
+      } catch {
+        if (!isCurrent()) return;
+        setSyncLockSessionId(null);
+      }
+      if (!isCurrent()) return;
       if (!controller && captures.some((capture) => capture.lastError?.includes("stale_controller"))) setError("This tab lost live control. Its capture remains saved locally. Refresh the session and take over before writing again.");
       const end = await store.getEnd(activeSessionId);
-      if (lookup === endLookup.current) setEndState({ sessionId: activeSessionId, state: end?.state ?? null });
+      if (isCurrent()) setEndState({ sessionId: activeSessionId, state: end?.state ?? null });
     } catch (failure) {
-      if (lookup === endLookup.current) setError(`Local live state could not be loaded (${errorText(failure)}). Writing stays locked until it can be read.`);
+      if (isCurrent()) setError(`Local live state could not be refreshed (${errorText(failure)}). End status was not changed.`);
     }
   }, [activeSessionId, controller]);
 
@@ -94,6 +115,11 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
 
   useEffect(() => { void observe(); const timer = window.setInterval(() => void observe(), 5000); return () => window.clearInterval(timer); }, [observe]);
   useEffect(() => { void refreshLocal(); }, [refreshLocal]);
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const timer = window.setInterval(() => void refreshLocal(), 5000);
+    return () => window.clearInterval(timer);
+  }, [activeSessionId, refreshLocal]);
   useEffect(() => {
     let cancelled = false;
     void atlasApi.campaigns().then((result) => {
@@ -142,15 +168,32 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
   }
 
   async function sync() {
-    if (!activeSessionId || !controller) return;
+    const sessionToSync = activeSessionId;
+    if (!sessionToSync || !controller) return;
+    setLocalSyncCounts((current) => ({ ...current, [sessionToSync]: (current[sessionToSync] ?? 0) + 1 }));
+    let localSyncActive = true;
+    const finishLocalSync = () => {
+      if (!localSyncActive) return;
+      localSyncActive = false;
+      setLocalSyncCounts((current) => {
+        const remaining = (current[sessionToSync] ?? 1) - 1;
+        const next = { ...current };
+        if (remaining > 0) next[sessionToSync] = remaining;
+        else delete next[sessionToSync];
+        return next;
+      });
+    };
     try {
-      const result = await queue.sync(activeSessionId, ownController);
+      const result = await queue.sync(sessionToSync, ownController);
       const states: Record<string, SaveSyncState> = {};
       result.captures.forEach((item) => { states[item.key] = item.state; });
       if (result.end) states[result.end.key] = result.end.state;
-      setSyncStates(states); await refreshLocal();
+      setSyncStates(states);
+      finishLocalSync();
+      await refreshLocal();
       if (result.end?.state === "Synced") { setAnnouncement("Ended. Server acknowledged the complete required operation set; review is ready."); await observe(); }
     } catch (failure) { setError(`Sync could not finish (${errorText(failure)}). Local capture remains saved on this device.`); }
+    finally { finishLocalSync(); }
   }
 
   async function capture(event: FormEvent<HTMLFormElement>) {
@@ -228,6 +271,10 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
   const endStatus = endState?.sessionId === activeSessionId ? endState.state : undefined;
   const canWrite = controller && session?.mode === "active" && endStatus === null;
   const editLink = (capture: StoredCapture) => capture.recordId ? <><button type="button" className="button-link" onClick={() => openRecord(capture)}>Open affected record in editor</button>{capture.captureType === "confirmed_fact" && <button type="button" onClick={() => { setDraftContext(capture); setRecordId(capture.recordId!); setAction("generate"); document.querySelector<HTMLElement>("#live-prompt")?.focus(); }}>Generate Draft from this fact</button>}</> : null;
+  const captureState = (capture: StoredCapture) => {
+    if (capture.state === "Syncing" && (localSyncCounts[capture.sessionId] > 0 || capture.sessionId === syncLockSessionId)) return "Syncing";
+    return capture.state === "Syncing" ? syncStates[capture.key] ?? "Saved on device" : syncStates[capture.key] ?? capture.state;
+  };
 
   return <section className="live-cockpit" aria-labelledby="live-heading">
     <header className="live-header"><div><p className="eyebrow">Warden only · Live cockpit</p><h1 id="live-heading">{campaign.campaign_name}</h1></div><p className="live-revision"><strong>Live base revision</strong><br /><code>{session?.base_revision ?? revisionId}</code></p></header>
@@ -257,7 +304,7 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
           {!aiReady && <p>Provider or consent is unavailable. Capture remains available.</p>}{generation && <><p className="badge badge--draft">Draft · {generation.status}</p><p>Source revision <code>{generation.source_revision}</code> · session <code>{generation.session_id}</code></p><section aria-labelledby="live-sources-heading"><h3 id="live-sources-heading">Sources</h3>{generation.sources.length ? <ol>{generation.sources.map((source) => <li key={source.source_id}><code>{source.source_id}</code> · {source.authority} · <code>{source.revision_id}</code><pre>{source.excerpt}</pre></li>)}</ol> : <p>No sources were returned.</p>}</section>{generation.status === "pending" && <button type="button" disabled={busy} onClick={() => void resumeDraft()}>Resume stream after event {sequence}</button>}</>}{draft && <div className="draft-output"><h3>Draft answer</h3><pre>{generation?.terminal_content ?? draft}</pre>{generation?.status === "complete" && draftContext?.recordId && <button type="button" className="button-link" onClick={() => openRecord(draftContext)}>Open affected record in editor with Draft provenance</button>}</div>}
         </section>
         <section className="card"><h2>End session</h2><p>Ending waits until the server acknowledges every capture required by the end barrier.</p><button type="button" className="danger" disabled={!canWrite || busy} onClick={() => void end()}>{endStatus ? "End intent saved" : "End session"}</button><button type="button" disabled={!controller || busy} onClick={() => void sync()}>Sync saved work</button></section>
-      </div><aside className="live-rail" aria-label="Captured items"><section className="card"><h2>Confirmed table facts</h2>{facts.length ? <ol>{facts.map((item) => <li key={item.key}><p>{item.text}</p><p><strong>{syncStates[item.key] ?? item.state}</strong> · operation <code>{item.operationId}</code></p>{editLink(item)}</li>)}</ol> : <p>No confirmed table facts captured.</p>}</section><section className="card"><h2>Unresolved questions</h2><p>Excluded from live grounding.</p>{questions.length ? <ol>{questions.map((item) => <li key={item.key}><p>{item.text}</p><p><strong>{syncStates[item.key] ?? item.state}</strong> · operation <code>{item.operationId}</code></p>{editLink(item)}</li>)}</ol> : <p>No unresolved questions captured.</p>}</section></aside></div>
+      </div><aside className="live-rail" aria-label="Captured items"><section className="card"><h2>Confirmed table facts</h2>{facts.length ? <ol>{facts.map((item) => <li key={item.key}><p>{item.text}</p><p><strong>{captureState(item)}</strong> · operation <code>{item.operationId}</code></p>{editLink(item)}</li>)}</ol> : <p>No confirmed table facts captured.</p>}</section><section className="card"><h2>Unresolved questions</h2><p>Excluded from live grounding.</p>{questions.length ? <ol>{questions.map((item) => <li key={item.key}><p>{item.text}</p><p><strong>{captureState(item)}</strong> · operation <code>{item.operationId}</code></p>{editLink(item)}</li>)}</ol> : <p>No unresolved questions captured.</p>}</section></aside></div>
     </>}
     {error && <div className="error" role="alert">{error}</div>}
     <p className="announcer" role="status" aria-live="polite" aria-atomic="true">{announcement}</p>
