@@ -276,6 +276,41 @@ test("observer shows an in-flight capture as syncing until the server acknowledg
   await observer.close();
 });
 
+test("active capture stays syncing without Web Locks until the server acknowledges it", async ({ page }) => {
+  const server = serverState(); await installLive(page, server);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "locks", { configurable: true, value: undefined });
+  });
+  await startSession(page, server);
+  await saveFact(page, "Previously acknowledged capture.");
+  const acknowledgedCapture = page.getByRole("listitem").filter({ hasText: "Previously acknowledged capture." });
+  await expect(acknowledgedCapture.getByText("Synced", { exact: true })).toBeVisible();
+  expect(server.session?.events).toHaveLength(1);
+
+  let releaseCapture!: () => void;
+  let markCaptureStarted!: () => void;
+  const captureRequestStarted = new Promise<void>((resolve) => { markCaptureStarted = resolve; });
+  const captureResponse = new Promise<void>((resolve) => { releaseCapture = resolve; });
+  server.captureGate = { started: markCaptureStarted, response: captureResponse };
+
+  await saveFact(page, "A second capture without Web Locks.");
+  await captureRequestStarted;
+  expect(server.capturePosts).toBe(2);
+  expect(server.session?.events).toHaveLength(1);
+  const pendingCapture = page.getByRole("listitem").filter({ hasText: "A second capture without Web Locks." });
+  await expect(pendingCapture.getByText("Syncing", { exact: true })).toBeVisible({ timeout: 10000 });
+  await expect(pendingCapture.getByText("Saved on device", { exact: true })).toHaveCount(0);
+  await expect(pendingCapture.getByText("Synced", { exact: true })).toHaveCount(0);
+  await expect(acknowledgedCapture.getByText("Synced", { exact: true })).toBeVisible();
+  expect(server.session?.events).toHaveLength(1);
+
+  releaseCapture();
+  await expect(pendingCapture.getByText("Synced", { exact: true })).toBeVisible();
+  await expect(pendingCapture.getByText("Syncing", { exact: true })).toHaveCount(0);
+  await expect(acknowledgedCapture.getByText("Synced", { exact: true })).toBeVisible();
+  expect(server.session?.events).toHaveLength(2);
+});
+
 test("observer cannot sync saved work until taking over control", async ({ page, context }) => {
   const server = serverState(); server.failCaptures = true;
   await installLive(page, server);
