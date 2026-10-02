@@ -8,6 +8,7 @@ import tarfile
 import tempfile
 import unittest
 import uuid
+from contextlib import redirect_stderr
 from unittest import mock
 
 import yaml
@@ -17,6 +18,7 @@ from warden_drydock.hosted.operations.migrate import migration_body, migration_f
 from warden_drydock.hosted.operations.recovery import build_manifest, create_snapshot_archive, extract_snapshot_archive, safe_members, snapshot_archive_inventory, verify_manifest
 from warden_drydock.hosted.operations.runtime_guard import parse_version, require_minimum
 from warden_drydock.hosted.operations.secrets import SecretStore
+from warden_drydock.hosted.operations.server import Handler
 
 
 ROOT = pathlib.Path(__file__).parents[3]
@@ -81,6 +83,8 @@ class ComposePolicyTests(unittest.TestCase):
             app["environment"]["OPENAI_API_KEY_FILE"],
         )
         self.assertIn("provider_secrets:/var/lib/drydock/secrets", app["volumes"])
+        self.assertIn("snapshots:/var/lib/drydock/snapshots", app["volumes"])
+        self.assertNotIn("provider_secrets:/var/lib/drydock/snapshots", app["volumes"])
         self.assertNotIn("provider_secrets:/var/lib/drydock/secrets", self.compose["services"]["db"]["volumes"])
         self.assertNotIn("sk-", rendered)
         for service in self.compose["services"].values():
@@ -97,6 +101,12 @@ class ComposePolicyTests(unittest.TestCase):
         self.assertNotIn("OPENAI_API_KEY", dockerfile)
         self.assertNotIn("OPENAI_API_KEY", browser_sources)
         self.assertIn("database_secrets", self.compose["volumes"])
+
+    def test_http_access_log_never_emits_request_content(self) -> None:
+        output = io.StringIO()
+        with redirect_stderr(output):
+            Handler.log_message(object(), "request target %s", "synthetic-prompt-secret")
+        self.assertEqual("", output.getvalue())
 
     def test_web_builder_receives_authoritative_data(self) -> None:
         dockerfile = (ROOT / "docker" / "app.Dockerfile").read_text(encoding="utf-8")
@@ -378,6 +388,7 @@ class RuntimeTests(unittest.TestCase):
     def test_recovery_scripts_fail_closed(self) -> None:
         backup = (ROOT / "docker" / "backup.ps1").read_text(encoding="utf-8")
         restore = (ROOT / "docker" / "restore.ps1").read_text(encoding="utf-8")
+        self.assertNotIn("provider_secrets", backup)
         self.assertIn("docker compose stop app", backup)
         self.assertIn("pending publication intents", backup)
         self.assertIn("Assert-NativeSuccess", backup)
