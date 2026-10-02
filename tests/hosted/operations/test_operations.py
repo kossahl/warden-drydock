@@ -352,6 +352,24 @@ class RuntimeTests(unittest.TestCase):
             self.assertFalse(snapshot.exists())
             self.assertFalse((restored / "snapshot-restore-staging").exists())
 
+    def test_snapshot_restore_preserves_staging_named_campaign_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"
+            record = source / "snapshot-restore-staging" / "record.md"
+            record.parent.mkdir(parents=True)
+            record.write_text("campaign content", encoding="utf-8")
+            archive = root / "snapshots.tar"
+            create_snapshot_archive(source, archive)
+
+            restored = extract_snapshot_archive(archive, root / "restored-volume")
+            restored_record = restored / "snapshot-restore-staging" / "record.md"
+            self.assertEqual("campaign content", restored_record.read_text(encoding="utf-8"))
+            restored_record.write_text("updated content", encoding="utf-8")
+            restored_record.unlink()
+            (restored / "snapshot-restore-staging").rmdir()
+            self.assertEqual([], list(restored.iterdir()))
+
     def test_build_context_excludes_real_secrets(self) -> None:
         ignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
         self.assertIn("docker/secrets/*.txt", ignore)

@@ -64,9 +64,6 @@ def extract_snapshot_archive(archive_path: pathlib.Path, destination: pathlib.Pa
     destination.mkdir(parents=True, exist_ok=True)
     if any(destination.iterdir()):
         raise ValueError("snapshot_restore_destination_not_empty")
-    staging = destination / "snapshot-restore-staging"
-    staging.mkdir(parents=True, exist_ok=False)
-
     def writable_member(member: tarfile.TarInfo, path: str) -> tarfile.TarInfo | None:
         filtered = tarfile.data_filter(member, path)
         if filtered is None:
@@ -79,10 +76,36 @@ def extract_snapshot_archive(archive_path: pathlib.Path, destination: pathlib.Pa
         return filtered
 
     with tarfile.open(archive_path, "r") as archive:
-        archive.extractall(staging, members=safe_members(archive.getmembers()), filter=writable_member)
+        members = safe_members(archive.getmembers())
+        restored_names = {
+            pathlib.PurePosixPath(member.name).parts[1]
+            for member in members
+            if len(pathlib.PurePosixPath(member.name).parts) > 1
+        }
+        staging_name = "snapshot-restore-staging"
+        while staging_name in restored_names:
+            staging_name += "-"
+        staging = destination / staging_name
+        staging.mkdir(parents=True, exist_ok=False)
+        try:
+            archive.extractall(staging, members=members, filter=writable_member)
+        except BaseException:
+            shutil.rmtree(staging)
+            raise
     restored = staging / "snapshots"
-    for child in restored.iterdir():
-        child.rename(destination / child.name)
+    promoted: list[pathlib.Path] = []
+    try:
+        for child in restored.iterdir():
+            target = destination / child.name
+            child.rename(target)
+            promoted.append(target)
+    except BaseException:
+        try:
+            for target in reversed(promoted):
+                target.rename(restored / target.name)
+        finally:
+            shutil.rmtree(staging)
+        raise
     shutil.rmtree(staging)
     return destination
 
