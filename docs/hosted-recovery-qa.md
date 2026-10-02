@@ -113,7 +113,7 @@ loading data. Recovery verifies snapshot lineage and rebuilds projections from
 immutable snapshots. Record only sanitized hashes, counts, readiness, exit
 status, and whether the original volumes remain available.
 
-## Latest isolated restore result (2026-09-30)
+## Previous isolated restore result (2026-09-30)
 
 **Not passed with the stock restore steps.** The Linux Docker drill restored
 the database and rebuilt projections, but app startup failed during readiness:
@@ -125,6 +125,36 @@ manually. A test-only ownership correction in the synthetic restore volume
 allowed readiness and the comparison against a second recovery from the
 verified backup to pass; this does not count as a successful stock restore.
 
-The restore ownership defect is tracked in the [P4-COMPOSE follow-up (#308)](https://github.com/kossahl/warden-drydock/issues/308).
-Keep the fresh-volume restore acceptance criterion pending until the owning
-package corrects the copy ownership and the unmodified restore procedure passes.
+The restore ownership defect was tracked in the [P4-COMPOSE follow-up (#308)](https://github.com/kossahl/warden-drydock/issues/308).
+That failure is historical; the next result records the rerun after the fix
+merged.
+
+## Latest isolated restore result (2026-10-02)
+
+**Passed with the unmodified PowerShell backup and restore scripts** from
+`master` at `01bee88e2d025a56c37579f0fdb39857542cb171` (after #310 merged).
+PowerShell 7.6.6 ran `docker/backup.ps1` and `docker/restore.ps1` against fresh,
+dedicated projects and one synthetic campaign with one record. The restore
+completed database restore, snapshot archive validation and extraction,
+recovery reconciliation, projection rebuild, and application readiness.
+Both PowerShell scripts and the final readiness check exited with status 0.
+
+Verified backup artifact SHA-256 values: `postgres.dump`
+`cbe47597a5ce0eec4863a9f03a5e0530caf791fb8ac163c6309872d42277c2bf`,
+`snapshots.tar`
+`c310ee3af7068e5c6c3c0f7985f1ea5606e5310684ebc8b5570214810d20d935`, and
+`manifest.json`
+`1c020834f6c5e14076ed0da58525fba14255bcc69fac5485627d3cd5d3cd1b5a`.
+
+The restored database was compared with a temporary database loaded from the
+verified backup: one campaign head and one record, no head missing a projection
+checkpoint, and identical campaign head, revision, record count, and projection
+digest rows. The sanitized comparison row SHA-256 was
+`debb6ffe08b825962ed58ef9d38a1df7b04da497361031f97e7da7349658c45f`.
+Restored snapshot files were owned by UID/GID `10001:10001`. All source and
+restore database, snapshot, and secret volumes remained available.
+
+The host's loopback port `18080` was already occupied, so a temporary external
+Compose override published the restored app on `127.0.0.1:18082` and matched
+its allowed-host setting. The repository files and restore script were not
+changed for this accommodation. The restore acceptance criterion now passes.
