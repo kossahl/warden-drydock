@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import tempfile
 import threading
 import unittest
@@ -24,6 +25,59 @@ try:
     import psycopg
 except ImportError:  # pragma: no cover - opt-in live boundary
     psycopg = None
+
+
+class _LockBoundaryCursor:
+    """Observe PostgreSQL lock-taking SQL and coordinate at its execution boundary."""
+
+    def __init__(self, cursor, connection):
+        self._cursor = cursor
+        self._connection = connection
+
+    def execute(self, query, params=None):
+        normalized = re.sub(r"\s+", " ", str(query)).strip().lower()
+        if normalized.startswith(("insert ", "update ", "delete ")) or re.search(
+            r"\bfor\s+(?:(?:no key|key)\s+)?(?:update|share)\b", normalized
+        ):
+            self._connection.observe(normalized)
+        return self._cursor.execute(query, params)
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+    def __enter__(self):
+        self._cursor.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self._cursor.__exit__(*args)
+
+
+class _LockBoundaryConnection:
+    def __init__(self, connection, statements, barrier):
+        self._connection = connection
+        self._statements = statements
+        self._barrier = barrier
+        self._synchronized = False
+
+    def cursor(self, *args, **kwargs):
+        return _LockBoundaryCursor(self._connection.cursor(*args, **kwargs), self)
+
+    def observe(self, statement):
+        self._statements.append(statement)
+        if self._barrier is not None and not self._synchronized:
+            self._synchronized = True
+            self._barrier.wait(timeout=5)
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def __enter__(self):
+        self._connection.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self._connection.__exit__(*args)
 
 
 @unittest.skipUnless(DATABASE_URL and psycopg, "live PostgreSQL HTTP receipt test is opt-in")
@@ -601,6 +655,12 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
             atlas_repository=PostgresAtlasProjectionRepository(self.connect),
         )
 
+    def _observe_repository_locks(self, app, statements, *, barrier=None):
+        connect = app.ai_repository._connect
+        app.ai_repository._connect = lambda: _LockBoundaryConnection(
+            connect(), statements, barrier
+        )
+
     def _ready_campaign(self, app):
         readiness = app.provider_readiness()[1]
         consent = self.bind({"contract_name": "provider_consent_request", "contract_version": 2,
@@ -907,22 +967,14 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
             app.live_start(self.campaign_id, self._start_payload(head, session_id))
             capture = self._capture_payload(session_id, key_suffix="end_capture")
             end = self._end_payload(session_id, required_operation_ids=[], ewv=1)
-            read_barrier = threading.Barrier(2)
+            lock_boundary_barrier = threading.Barrier(2)
+            lock_statements = {"end": [], "capture": []}
 
             def attempt(operation, payload):
                 local_app = self._app(directory)[2]
-                original_get_session = local_app.ai_repository.get_session
-                reads = 0
-
-                def get_session_after_shared_read(target_session_id):
-                    nonlocal reads
-                    session = original_get_session(target_session_id)
-                    reads += 1
-                    if reads == 2:
-                        read_barrier.wait(timeout=5)
-                    return session
-
-                local_app.ai_repository.get_session = get_session_after_shared_read
+                self._observe_repository_locks(
+                    local_app, lock_statements[operation], barrier=lock_boundary_barrier
+                )
                 try:
                     if operation == "end":
                         status, result = local_app.live_end(self.campaign_id, payload)
@@ -949,6 +1001,8 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
                 end_result = end_future.result(timeout=15)
                 capture_result = capture_future.result(timeout=15)
 
+            self.assertTrue(lock_statements["end"][0].startswith("update hosted_live_session"))
+            self.assertTrue(lock_statements["capture"][0].startswith("update hosted_live_session"))
             self.assertEqual(1, sum(item[0] == "ok" for item in (end_result, capture_result)))
             self.assertEqual(1, sum(item[0] == "error" and item[1] == 409 for item in (end_result, capture_result)))
             self.assertEqual(200, (end_result if end_result[0] == "ok" else capture_result)[1])
@@ -1007,10 +1061,20 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
 
     def test_concurrent_end_and_takeover_reject_stale_controller_writes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            _, _, app = self._app(directory)
+            _, snapshots, app = self._app(directory)
             head = self._ready_campaign(app)
             session_id = f"session_end_takeover_{self.suffix}"
             app.live_start(self.campaign_id, self._start_payload(head, session_id))
+            snapshots_before = tuple(sorted(
+                (path.relative_to(snapshots).as_posix(), path.read_bytes())
+                for path in snapshots.rglob("*") if path.is_file()
+            ))
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT revision_id,ordinal FROM hosted_campaign_head WHERE campaign_id=%s",
+                    (self.campaign_id,),
+                )
+                head_before = cursor.fetchone()
             end = self._end_payload(session_id, required_operation_ids=[], ewv=1)
             takeover = self.bind({
                 "contract_name": "live_takeover_request", "contract_version": 2,
@@ -1021,22 +1085,14 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
                 "campaign_id": self.campaign_id, "session_id": session_id,
                 "controller_id": "controller_beta", "controller_epoch": 1,
             })
-            read_barrier = threading.Barrier(2)
+            lock_boundary_barrier = threading.Barrier(2)
+            lock_statements = {"end": [], "takeover": []}
 
             def attempt(operation, payload):
                 local_app = self._app(directory)[2]
-                original_get_session = local_app.ai_repository.get_session
-                reads = 0
-
-                def get_session_after_shared_read(target_session_id):
-                    nonlocal reads
-                    session = original_get_session(target_session_id)
-                    reads += 1
-                    if reads == 2:
-                        read_barrier.wait(timeout=5)
-                    return session
-
-                local_app.ai_repository.get_session = get_session_after_shared_read
+                self._observe_repository_locks(
+                    local_app, lock_statements[operation], barrier=lock_boundary_barrier
+                )
                 try:
                     if operation == "end":
                         status, result = local_app.live_end(self.campaign_id, payload)
@@ -1052,6 +1108,8 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
                 end_result = end_future.result(timeout=15)
                 takeover_result = takeover_future.result(timeout=15)
 
+            self.assertTrue(lock_statements["end"][0].startswith("update hosted_live_session"))
+            self.assertTrue(lock_statements["takeover"][0].startswith("update hosted_live_session"))
             self.assertEqual(1, sum(item[0] == "ok" for item in (end_result, takeover_result)))
             self.assertEqual(1, sum(item[0] == "error" and item[1] == 409 for item in (end_result, takeover_result)))
             self.assertEqual(200, (end_result if end_result[0] == "ok" else takeover_result)[1])
@@ -1073,8 +1131,21 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
                 session = cursor.fetchone()
                 cursor.execute("SELECT device_id,operation_id FROM hosted_live_receipt WHERE session_id=%s", (session_id,))
                 receipts = cursor.fetchall()
+                cursor.execute("SELECT event_id,device_id,operation_id FROM hosted_live_capture WHERE session_id=%s", (session_id,))
+                captures = cursor.fetchall()
+                cursor.execute(
+                    "SELECT revision_id,ordinal FROM hosted_campaign_head WHERE campaign_id=%s",
+                    (self.campaign_id,),
+                )
+                head_after = cursor.fetchone()
 
             self.assertEqual(2, session[0])
+            self.assertEqual([], captures)
+            self.assertEqual(head_before, head_after)
+            self.assertEqual(snapshots_before, tuple(sorted(
+                (path.relative_to(snapshots).as_posix(), path.read_bytes())
+                for path in snapshots.rglob("*") if path.is_file()
+            )))
             if takeover_result[0] == "ok":
                 self.assertEqual((2, "controller_beta", "active", None), session[1:])
                 self.assertEqual([], receipts)
@@ -1086,6 +1157,9 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
                 self.assertEqual(1, len(receipts))
                 self.assertEqual((1, "controller_alpha", "ended_review_pending"), session[1:4])
                 self.assertEqual("operation_end", session[4]["end_operation_id"])
+                self.assertEqual("device_one", session[4]["end_device_id"])
+                self.assertEqual([], session[4]["required_operation_ids"])
+                self.assertTrue(session[4]["ready_for_proposal"])
                 self.assertEqual({"device_one", "operation_end"}, {receipts[0][0], receipts[0][1]})
 
     def test_session_write_lock_order_is_parent_then_capture_then_receipt(self) -> None:
@@ -1095,52 +1169,7 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
             session_id = f"session_lock_order_{self.suffix}"
             app.live_start(self.campaign_id, self._start_payload(head, session_id))
             statements = []
-            connect = self.connect
-
-            class RecordingCursor:
-                def __init__(self, cursor):
-                    self.cursor = cursor
-
-                def execute(self, query, params=None):
-                    import re
-
-                    normalized = re.sub(r"\s+", " ", str(query)).strip().lower()
-                    if normalized.startswith((
-                        "update hosted_live_session",
-                        "insert into hosted_live_capture",
-                        "insert into hosted_live_receipt",
-                    )):
-                        statements.append(normalized)
-                    return self.cursor.execute(query, params)
-
-                def __getattr__(self, name):
-                    return getattr(self.cursor, name)
-
-                def __enter__(self):
-                    self.cursor.__enter__()
-                    return self
-
-                def __exit__(self, *args):
-                    return self.cursor.__exit__(*args)
-
-            class RecordingConnection:
-                def __init__(self, connection):
-                    self.connection = connection
-
-                def cursor(self, *args, **kwargs):
-                    return RecordingCursor(self.connection.cursor(*args, **kwargs))
-
-                def __getattr__(self, name):
-                    return getattr(self.connection, name)
-
-                def __enter__(self):
-                    self.connection.__enter__()
-                    return self
-
-                def __exit__(self, *args):
-                    return self.connection.__exit__(*args)
-
-            app.ai_repository._connect = lambda: RecordingConnection(connect())
+            self._observe_repository_locks(app, statements)
             status, result = app.live_capture(
                 self.campaign_id,
                 self._capture_payload(session_id, key_suffix="lock_order"),
