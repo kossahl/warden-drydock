@@ -195,7 +195,17 @@ class LiveSessionService:
                 required_operation_ids=tuple(sorted(required_set)),
                 ready_for_proposal=ready_for_proposal,
             )
-            self.repository.save_session(session, expected_workflow_version=expected_workflow_version, expected_epoch=controller_epoch)
+            try:
+                self.repository.save_session(session, expected_workflow_version=expected_workflow_version, expected_epoch=controller_epoch)
+            except ValueError as exc:
+                if str(exc) == "stale_workflow_version":
+                    fresh = self.repository.get_session(session_id)
+                    persisted = fresh.receipts.get((device_id, operation_id))
+                    if persisted == digest:
+                        return fresh
+                    if persisted is not None:
+                        raise ValueError("idempotency_digest_conflict") from exc
+                raise
             return session
 
     @staticmethod

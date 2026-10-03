@@ -724,6 +724,73 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
             self.assertEqual(1, outcomes.count("accepted"))
             self.assertEqual(3, outcomes.count("exact_replay"))
 
+    def test_concurrent_identical_ends_replay_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, snapshots, app = self._app(directory)
+            head = self._ready_campaign(app)
+            session_id = f"session_end_race_{self.suffix}"
+            app.live_start(self.campaign_id, self._start_payload(head, session_id))
+            payloads = []
+            for index in range(2):
+                payload = self._end_payload(session_id, required_operation_ids=[], ewv=1)
+                operation = payload["operation_request"]
+                operation["request_id"] = f"request_end_race_{index}_{self.suffix}"
+                operation["idempotency_key"] = f"idem_end_race_{index}_{self.suffix}"
+                payloads.append(self.bind(payload))
+
+            snapshots_before = tuple(sorted(
+                (path.relative_to(snapshots).as_posix(), path.read_bytes())
+                for path in snapshots.rglob("*") if path.is_file()
+            ))
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute("SELECT revision_id,ordinal FROM hosted_campaign_head WHERE campaign_id=%s", (self.campaign_id,))
+                head_before = cursor.fetchone()
+
+            write_barrier = threading.Barrier(2)
+
+            def attempt(index):
+                local_app = self._app(directory)[2]
+                repository = local_app.ai_repository
+                original_save = repository.save_session
+
+                def coordinated_save(session, *, expected_workflow_version=None, expected_epoch=None):
+                    write_barrier.wait(timeout=10)
+                    return original_save(session, expected_workflow_version=expected_workflow_version, expected_epoch=expected_epoch)
+
+                repository.save_session = coordinated_save
+                return local_app.live_end(self.campaign_id, payloads[index])
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(attempt, range(2)))
+            self.assertEqual([200, 200], [status for status, _ in results])
+            self.assertEqual(results[0][1], results[1][1])
+            returned = results[0][1]
+            self.assertEqual(2, returned["workflow_version"])
+            self.assertEqual("ended_review_pending", returned["mode"])
+            self.assertEqual("operation_end", returned["end_barrier"]["end_operation_id"])
+
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT workflow_version,mode,end_barrier,ended_at FROM hosted_live_session WHERE session_id=%s",
+                    (session_id,),
+                )
+                persisted = cursor.fetchone()
+                cursor.execute("SELECT count(*) FROM hosted_live_receipt WHERE session_id=%s", (session_id,))
+                receipt_count = cursor.fetchone()[0]
+                cursor.execute("SELECT revision_id,ordinal FROM hosted_campaign_head WHERE campaign_id=%s", (self.campaign_id,))
+                head_after = cursor.fetchone()
+            self.assertEqual((2, "ended_review_pending"), persisted[:2])
+            self.assertEqual(1, receipt_count)
+            self.assertIsNotNone(persisted[3])
+            durable_session = PostgresAIRepository(self.connect).get_session(session_id)
+            self.assertEqual(returned, app._live_session_view(durable_session))
+            self.assertEqual(persisted[3], durable_session.ended_at)
+            self.assertEqual(head_before, head_after)
+            self.assertEqual(snapshots_before, tuple(sorted(
+                (path.relative_to(snapshots).as_posix(), path.read_bytes())
+                for path in snapshots.rglob("*") if path.is_file()
+            )))
+
     def test_concurrent_takeover_and_capture_serialize_on_session_version(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             _, _, app = self._app(directory)
