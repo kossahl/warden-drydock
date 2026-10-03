@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import tempfile
 import threading
 import unittest
@@ -24,6 +25,59 @@ try:
     import psycopg
 except ImportError:  # pragma: no cover - opt-in live boundary
     psycopg = None
+
+
+class _LockBoundaryCursor:
+    """Observe PostgreSQL lock-taking SQL and coordinate at its execution boundary."""
+
+    def __init__(self, cursor, connection):
+        self._cursor = cursor
+        self._connection = connection
+
+    def execute(self, query, params=None):
+        normalized = re.sub(r"\s+", " ", str(query)).strip().lower()
+        if normalized.startswith(("insert ", "update ", "delete ")) or re.search(
+            r"\bfor\s+(?:(?:no key|key)\s+)?(?:update|share)\b", normalized
+        ):
+            self._connection.observe(normalized)
+        return self._cursor.execute(query, params)
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+    def __enter__(self):
+        self._cursor.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self._cursor.__exit__(*args)
+
+
+class _LockBoundaryConnection:
+    def __init__(self, connection, statements, barrier):
+        self._connection = connection
+        self._statements = statements
+        self._barrier = barrier
+        self._synchronized = False
+
+    def cursor(self, *args, **kwargs):
+        return _LockBoundaryCursor(self._connection.cursor(*args, **kwargs), self)
+
+    def observe(self, statement):
+        self._statements.append(statement)
+        if self._barrier is not None and not self._synchronized:
+            self._synchronized = True
+            self._barrier.wait(timeout=5)
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def __enter__(self):
+        self._connection.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self._connection.__exit__(*args)
 
 
 @unittest.skipUnless(DATABASE_URL and psycopg, "live PostgreSQL HTTP receipt test is opt-in")
@@ -601,6 +655,12 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
             atlas_repository=PostgresAtlasProjectionRepository(self.connect),
         )
 
+    def _observe_repository_locks(self, app, statements, *, barrier=None):
+        connect = app.ai_repository._connect
+        app.ai_repository._connect = lambda: _LockBoundaryConnection(
+            connect(), statements, barrier
+        )
+
     def _ready_campaign(self, app):
         readiness = app.provider_readiness()[1]
         consent = self.bind({"contract_name": "provider_consent_request", "contract_version": 2,
@@ -898,6 +958,228 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
                 self.assertEqual((1, "controller_alpha"), session[1:3])
                 self.assertEqual((1, 1), (capture_count, receipt_count))
                 self.assertEqual("stale_workflow_version", takeover_result[2])
+
+    def test_concurrent_end_and_capture_preserve_the_committed_barrier(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, snapshots, app = self._app(directory)
+            head = self._ready_campaign(app)
+            session_id = f"session_end_capture_{self.suffix}"
+            app.live_start(self.campaign_id, self._start_payload(head, session_id))
+            capture = self._capture_payload(session_id, key_suffix="end_capture")
+            end = self._end_payload(session_id, required_operation_ids=[], ewv=1)
+            lock_boundary_barrier = threading.Barrier(2)
+            lock_statements = {"end": [], "capture": []}
+
+            def attempt(operation, payload):
+                local_app = self._app(directory)[2]
+                self._observe_repository_locks(
+                    local_app, lock_statements[operation], barrier=lock_boundary_barrier
+                )
+                try:
+                    if operation == "end":
+                        status, result = local_app.live_end(self.campaign_id, payload)
+                    else:
+                        status, result = local_app.live_capture(self.campaign_id, payload)
+                    return "ok", status, result
+                except HTTPFailure as exc:
+                    return "error", exc.status, exc.payload["error"]["code"]
+
+            snapshots_before = tuple(sorted(
+                (path.relative_to(snapshots).as_posix(), path.read_bytes())
+                for path in snapshots.rglob("*") if path.is_file()
+            ))
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT revision_id,ordinal FROM hosted_campaign_head WHERE campaign_id=%s",
+                    (self.campaign_id,),
+                )
+                head_before = cursor.fetchone()
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                end_future = pool.submit(attempt, "end", end)
+                capture_future = pool.submit(attempt, "capture", capture)
+                end_result = end_future.result(timeout=15)
+                capture_result = capture_future.result(timeout=15)
+
+            self.assertTrue(lock_statements["end"][0].startswith("update hosted_live_session"))
+            self.assertTrue(lock_statements["capture"][0].startswith("update hosted_live_session"))
+            self.assertEqual(1, sum(item[0] == "ok" for item in (end_result, capture_result)))
+            self.assertEqual(1, sum(item[0] == "error" and item[1] == 409 for item in (end_result, capture_result)))
+            self.assertEqual(200, (end_result if end_result[0] == "ok" else capture_result)[1])
+            rejected = capture_result if end_result[0] == "ok" else end_result
+            self.assertEqual(("error", 409, "stale_workflow_version"), rejected)
+            session_view = end_result[2] if end_result[0] == "ok" else capture_result[2]["session"]
+            self.assertEqual(
+                [] if end_result[0] == "ok" else ["event_fact"],
+                [event["event_id"] for event in session_view["events"]],
+            )
+            self.assertEqual(
+                {("device_one", "operation_end")} if end_result[0] == "ok" else {("device_one", "operation_fact")},
+                {(item["device_id"], item["operation_id"]) for item in session_view["acknowledgements"]},
+            )
+
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT workflow_version,controller_epoch,controller_id,mode,end_barrier,ended_at "
+                    "FROM hosted_live_session WHERE session_id=%s",
+                    (session_id,),
+                )
+                session = cursor.fetchone()
+                cursor.execute("SELECT event_id,device_id,operation_id FROM hosted_live_capture WHERE session_id=%s", (session_id,))
+                captures = cursor.fetchall()
+                cursor.execute("SELECT device_id,operation_id FROM hosted_live_receipt WHERE session_id=%s", (session_id,))
+                receipts = cursor.fetchall()
+                cursor.execute(
+                    "SELECT revision_id,ordinal FROM hosted_campaign_head WHERE campaign_id=%s",
+                    (self.campaign_id,),
+                )
+                head_after = cursor.fetchone()
+
+            self.assertEqual(2, session[0])
+            self.assertEqual((1, "controller_alpha"), session[1:3])
+            self.assertEqual(1, len(receipts))
+            self.assertEqual(head_before, head_after)
+            self.assertEqual(snapshots_before, tuple(sorted(
+                (path.relative_to(snapshots).as_posix(), path.read_bytes())
+                for path in snapshots.rglob("*") if path.is_file()
+            )))
+            if end_result[0] == "ok":
+                self.assertEqual("ended_review_pending", session[3])
+                self.assertEqual([], captures)
+                self.assertEqual({"device_one", "operation_end"}, set(receipts[0]))
+                barrier = session[4]
+                self.assertEqual("operation_end", barrier["end_operation_id"])
+                self.assertEqual([], barrier["required_operation_ids"])
+                self.assertTrue(barrier["ready_for_proposal"])
+                self.assertIsNotNone(session[5])
+            else:
+                self.assertEqual("active", session[3])
+                self.assertIsNone(session[4])
+                self.assertIsNone(session[5])
+                self.assertEqual([("event_fact", "device_one", "operation_fact")], captures)
+                self.assertEqual({"device_one", "operation_fact"}, set(receipts[0]))
+
+    def test_concurrent_end_and_takeover_reject_stale_controller_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, snapshots, app = self._app(directory)
+            head = self._ready_campaign(app)
+            session_id = f"session_end_takeover_{self.suffix}"
+            app.live_start(self.campaign_id, self._start_payload(head, session_id))
+            snapshots_before = tuple(sorted(
+                (path.relative_to(snapshots).as_posix(), path.read_bytes())
+                for path in snapshots.rglob("*") if path.is_file()
+            ))
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT revision_id,ordinal FROM hosted_campaign_head WHERE campaign_id=%s",
+                    (self.campaign_id,),
+                )
+                head_before = cursor.fetchone()
+            end = self._end_payload(session_id, required_operation_ids=[], ewv=1)
+            takeover = self.bind({
+                "contract_name": "live_takeover_request", "contract_version": 2,
+                "operation_request": self.operation(
+                    "live_takeover", f"request_end_takeover_{self.suffix}",
+                    f"idem_end_takeover_{self.suffix}", expected_workflow_version=1,
+                ),
+                "campaign_id": self.campaign_id, "session_id": session_id,
+                "controller_id": "controller_beta", "controller_epoch": 1,
+            })
+            lock_boundary_barrier = threading.Barrier(2)
+            lock_statements = {"end": [], "takeover": []}
+
+            def attempt(operation, payload):
+                local_app = self._app(directory)[2]
+                self._observe_repository_locks(
+                    local_app, lock_statements[operation], barrier=lock_boundary_barrier
+                )
+                try:
+                    if operation == "end":
+                        status, result = local_app.live_end(self.campaign_id, payload)
+                    else:
+                        status, result = local_app.live_takeover(self.campaign_id, payload)
+                    return "ok", status, result
+                except HTTPFailure as exc:
+                    return "error", exc.status, exc.payload["error"]["code"]
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                end_future = pool.submit(attempt, "end", end)
+                takeover_future = pool.submit(attempt, "takeover", takeover)
+                end_result = end_future.result(timeout=15)
+                takeover_result = takeover_future.result(timeout=15)
+
+            self.assertTrue(lock_statements["end"][0].startswith("update hosted_live_session"))
+            self.assertTrue(lock_statements["takeover"][0].startswith("update hosted_live_session"))
+            self.assertEqual(1, sum(item[0] == "ok" for item in (end_result, takeover_result)))
+            self.assertEqual(1, sum(item[0] == "error" and item[1] == 409 for item in (end_result, takeover_result)))
+            self.assertEqual(200, (end_result if end_result[0] == "ok" else takeover_result)[1])
+            rejected = takeover_result if end_result[0] == "ok" else end_result
+            self.assertEqual(("error", 409, "stale_workflow_version"), rejected)
+            session_view = end_result[2] if end_result[0] == "ok" else takeover_result[2]
+            self.assertEqual([], session_view["events"])
+            self.assertEqual(
+                {("device_one", "operation_end")} if end_result[0] == "ok" else set(),
+                {(item["device_id"], item["operation_id"]) for item in session_view["acknowledgements"]},
+            )
+
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT workflow_version,controller_epoch,controller_id,mode,end_barrier "
+                    "FROM hosted_live_session WHERE session_id=%s",
+                    (session_id,),
+                )
+                session = cursor.fetchone()
+                cursor.execute("SELECT device_id,operation_id FROM hosted_live_receipt WHERE session_id=%s", (session_id,))
+                receipts = cursor.fetchall()
+                cursor.execute("SELECT event_id,device_id,operation_id FROM hosted_live_capture WHERE session_id=%s", (session_id,))
+                captures = cursor.fetchall()
+                cursor.execute(
+                    "SELECT revision_id,ordinal FROM hosted_campaign_head WHERE campaign_id=%s",
+                    (self.campaign_id,),
+                )
+                head_after = cursor.fetchone()
+
+            self.assertEqual(2, session[0])
+            self.assertEqual([], captures)
+            self.assertEqual(head_before, head_after)
+            self.assertEqual(snapshots_before, tuple(sorted(
+                (path.relative_to(snapshots).as_posix(), path.read_bytes())
+                for path in snapshots.rglob("*") if path.is_file()
+            )))
+            if takeover_result[0] == "ok":
+                self.assertEqual((2, "controller_beta", "active", None), session[1:])
+                self.assertEqual([], receipts)
+                stale_end = self._end_payload(session_id, required_operation_ids=[], ewv=2)
+                with self.assertRaises(HTTPFailure) as ctx:
+                    self._app(directory)[2].live_end(self.campaign_id, stale_end)
+                self.assertEqual((409, "stale_controller_epoch"), (ctx.exception.status, ctx.exception.payload["error"]["code"]))
+            else:
+                self.assertEqual(1, len(receipts))
+                self.assertEqual((1, "controller_alpha", "ended_review_pending"), session[1:4])
+                self.assertEqual("operation_end", session[4]["end_operation_id"])
+                self.assertEqual("device_one", session[4]["end_device_id"])
+                self.assertEqual([], session[4]["required_operation_ids"])
+                self.assertTrue(session[4]["ready_for_proposal"])
+                self.assertEqual({"device_one", "operation_end"}, {receipts[0][0], receipts[0][1]})
+
+    def test_session_write_lock_order_is_parent_then_capture_then_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, app = self._app(directory)
+            head = self._ready_campaign(app)
+            session_id = f"session_lock_order_{self.suffix}"
+            app.live_start(self.campaign_id, self._start_payload(head, session_id))
+            statements = []
+            self._observe_repository_locks(app, statements)
+            status, result = app.live_capture(
+                self.campaign_id,
+                self._capture_payload(session_id, key_suffix="lock_order"),
+            )
+
+            self.assertEqual((200, "accepted"), (status, result["outcome"]))
+            self.assertEqual(3, len(statements))
+            self.assertTrue(statements[0].startswith("update hosted_live_session"))
+            self.assertTrue(statements[1].startswith("insert into hosted_live_capture"))
+            self.assertTrue(statements[2].startswith("insert into hosted_live_receipt"))
 
     def test_live_capture_transaction_rolls_back_and_exact_retry_commits_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
