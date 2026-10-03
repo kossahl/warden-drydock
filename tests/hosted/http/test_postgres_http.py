@@ -752,19 +752,37 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
                 local_app = self._app(directory)[2]
                 repository = local_app.ai_repository
                 original_save = repository.save_session
+                cas_lost = False
+                returned_sessions = []
 
                 def coordinated_save(session, *, expected_workflow_version=None, expected_epoch=None):
+                    nonlocal cas_lost
                     write_barrier.wait(timeout=10)
-                    return original_save(session, expected_workflow_version=expected_workflow_version, expected_epoch=expected_epoch)
+                    try:
+                        return original_save(session, expected_workflow_version=expected_workflow_version, expected_epoch=expected_epoch)
+                    except ValueError as exc:
+                        cas_lost = str(exc) == "stale_workflow_version"
+                        raise
 
                 repository.save_session = coordinated_save
-                return local_app.live_end(self.campaign_id, payloads[index])
+                original_end = local_app.live.end
+
+                def capture_end_result(*args, **kwargs):
+                    session = original_end(*args, **kwargs)
+                    returned_sessions.append(session)
+                    return session
+
+                local_app.live.end = capture_end_result
+                status, view = local_app.live_end(self.campaign_id, payloads[index])
+                return status, view, returned_sessions[0], cas_lost
 
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results = list(pool.map(attempt, range(2)))
-            self.assertEqual([200, 200], [status for status, _ in results])
+            self.assertEqual([200, 200], [status for status, _, _, _ in results])
             self.assertEqual(results[0][1], results[1][1])
             returned = results[0][1]
+            self.assertEqual(1, sum(cas_lost for _, _, _, cas_lost in results))
+            loser_session = next(session for _, _, session, cas_lost in results if cas_lost)
             self.assertEqual(2, returned["workflow_version"])
             self.assertEqual("ended_review_pending", returned["mode"])
             self.assertEqual("operation_end", returned["end_barrier"]["end_operation_id"])
@@ -782,6 +800,7 @@ class PostgresLiveSessionIntegrationTests(unittest.TestCase):
             self.assertEqual((2, "ended_review_pending"), persisted[:2])
             self.assertEqual(1, receipt_count)
             self.assertIsNotNone(persisted[3])
+            self.assertEqual(persisted[3], loser_session.ended_at)
             durable_session = PostgresAIRepository(self.connect).get_session(session_id)
             self.assertEqual(returned, app._live_session_view(durable_session))
             self.assertEqual(persisted[3], durable_session.ended_at)
