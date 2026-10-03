@@ -516,10 +516,106 @@ test("end lookup failure keeps a reloaded live session locked", async ({ page })
   await expect(page.getByText("Observer · read only")).toBeVisible();
   await page.getByRole("button", { name: "Take over control" }).click();
   await expect(page.getByText("This tab controls the session")).toBeVisible();
-  await expect(page.getByRole("alert")).toContainText("Local live state could not be refreshed (forced_end_lookup_failure). End status was not changed.");
+  await expect(page.getByRole("alert")).toContainText("Local live state could not be refreshed (forced_end_lookup_failure). End status is unknown; local captures remain on this device.");
   await expect(page.getByRole("button", { name: "Save capture" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Submit ask" })).toBeDisabled();
   expect(server.generationRequests).toHaveLength(0);
+});
+
+test("a later end lookup failure locks an active session until local state recovers", async ({ page }) => {
+  const server = serverState(); server.failCaptures = true;
+  await page.clock.install();
+  await installLive(page, server);
+  await page.addInitScript(() => {
+    const originalGetAll = IDBIndex.prototype.getAll;
+    const state = { armed: false, failed: false, successfulEmptyReads: 0 };
+    Object.defineProperty(window, "__laterEndReadFailure", { configurable: true, value: state });
+    IDBIndex.prototype.getAll = function (this: IDBIndex, ...args: Parameters<typeof originalGetAll>) {
+      if (this.objectStore.name === "ends" && state.armed && !state.failed) {
+        state.failed = true;
+        throw new Error("forced_later_end_lookup_failure");
+      }
+      const request = originalGetAll.apply(this, args);
+      if (this.objectStore.name !== "ends") return request;
+      return new Proxy(request, {
+        get(target, property) { return Reflect.get(target, property, target); },
+        set(target, property, value) {
+          if (property === "onsuccess" && typeof value === "function") {
+            return Reflect.set(target, property, function (this: IDBRequest, event: Event) {
+              if (Array.isArray(this.result) && this.result.length === 0) state.successfulEmptyReads += 1;
+              value.call(this, event);
+            }, target);
+          }
+          return Reflect.set(target, property, value, target);
+        },
+      });
+    };
+  });
+  await startSession(page, server);
+  await expect.poll(() => page.evaluate(() => (window as Window & { __laterEndReadFailure?: { successfulEmptyReads: number } }).__laterEndReadFailure?.successfulEmptyReads ?? 0)).toBeGreaterThan(0);
+  await expect(page.getByRole("button", { name: "End session" })).toBeEnabled();
+
+  const emptyReadsBeforeCapture = await page.evaluate(() => (window as Window & { __laterEndReadFailure?: { successfulEmptyReads: number } }).__laterEndReadFailure!.successfulEmptyReads);
+  await saveFact(page, "Capture retained while end status is unknown.");
+  await expect(page.getByText("Capture retained while end status is unknown.")).toBeVisible();
+  await expect(page.getByText("Saved on device", { exact: true })).toBeVisible();
+  // Let the failed capture sync and its final local refresh settle before arming the next read failure.
+  await expect.poll(() => page.evaluate(() => (window as Window & { __laterEndReadFailure?: { successfulEmptyReads: number } }).__laterEndReadFailure!.successfulEmptyReads)).toBeGreaterThan(emptyReadsBeforeCapture + 4);
+  expect(server.capturePosts).toBe(1);
+  expect(server.session?.events).toHaveLength(0);
+  await page.evaluate(() => { (window as Window & { __laterEndReadFailure?: { armed: boolean } }).__laterEndReadFailure!.armed = true; });
+  await page.clock.fastForward(5000);
+
+  await expect(page.getByRole("alert")).toContainText("forced_later_end_lookup_failure");
+  await expect(page.getByText("Local end status is unknown. Live actions and end writes stay locked until local state can be reread.")).toBeVisible();
+  await expect(page.getByText("Capture retained while end status is unknown.")).toBeVisible();
+  await expect(page.getByText("Saved on device", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save capture" })).toBeDisabled();
+  for (const action of ["Ask", "Check", "Generate"] as const) {
+    await expect(page.getByRole("radio", { name: action })).toBeDisabled();
+  }
+  await expect(page.getByRole("button", { name: "Submit ask" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "End session" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Sync saved work" })).toBeDisabled();
+  const writesBeforeBlockedAttempts = { captures: server.capturePosts, ends: server.endPosts, generations: server.generationRequests.length };
+  await page.locator("#capture-text").evaluate((control) => {
+    const textarea = control as HTMLTextAreaElement;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "Must not be captured while end status is unknown.");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await page.locator("#live-prompt").evaluate((control) => {
+    const textarea = control as HTMLTextAreaElement;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, "Must not be sent while end status is unknown.");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await page.getByRole("button", { name: "End session" }).dispatchEvent("click");
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await page.clock.runFor(100);
+  expect(server.capturePosts).toBe(writesBeforeBlockedAttempts.captures);
+  expect(server.endPosts).toBe(writesBeforeBlockedAttempts.ends);
+  expect(server.generationRequests).toHaveLength(writesBeforeBlockedAttempts.generations);
+  expect(await page.evaluate(() => (window as Window & { __laterEndReadFailure?: { failed: boolean; successfulEmptyReads: number } }).__laterEndReadFailure)).toMatchObject({ failed: true, successfulEmptyReads: expect.any(Number) });
+
+  const emptyReadsBeforeRecovery = await page.evaluate(() => (window as Window & { __laterEndReadFailure?: { successfulEmptyReads: number } }).__laterEndReadFailure!.successfulEmptyReads);
+  server.failCaptures = false;
+  await page.clock.fastForward(5000);
+  await expect.poll(() => page.evaluate(() => (window as Window & { __laterEndReadFailure?: { successfulEmptyReads: number } }).__laterEndReadFailure!.successfulEmptyReads)).toBeGreaterThan(emptyReadsBeforeRecovery);
+  await expect(page.getByRole("button", { name: "Save capture" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Submit ask" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "End session" })).toBeEnabled();
+  await page.getByRole("button", { name: "Sync saved work" }).click();
+  await expect(page.getByText("Synced", { exact: true })).toBeVisible();
+  page.once("dialog", async (dialog) => { await dialog.accept(); });
+  await page.getByRole("button", { name: "End session" }).click();
+  await expect(page.getByText(/End state: Ended - review pending/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save capture" })).toBeDisabled();
+  await expect(page.getByRole("radio", { name: "Ask" })).toBeDisabled();
+  await expect(page.getByRole("radio", { name: "Check" })).toBeDisabled();
+  await expect(page.getByRole("radio", { name: "Generate" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "End intent saved" })).toBeDisabled();
+  expect(server.endPosts).toBe(1);
 });
 
 test("end barrier and post-session review include acknowledged captures from another tab", async ({ page }) => {

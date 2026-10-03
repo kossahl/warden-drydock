@@ -51,7 +51,7 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
   const [syncStates, setSyncStates] = useState<Record<string, SaveSyncState>>({});
   const [syncLockSessionId, setSyncLockSessionId] = useState<string | null>(null);
   const [localSyncCounts, setLocalSyncCounts] = useState<Record<string, number>>({});
-  const [endState, setEndState] = useState<{ sessionId: string; state: SaveSyncState | null } | null>(null);
+  const [endState, setEndState] = useState<{ sessionId: string; state: SaveSyncState | null | undefined } | null>(null);
   const endLookup = useRef(0);
   const activeSessionId = session?.session_id ?? sessionId;
   const activeSessionIdRef = useRef(activeSessionId);
@@ -89,7 +89,10 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
       const end = await store.getEnd(activeSessionId);
       if (isCurrent()) setEndState({ sessionId: activeSessionId, state: end?.state ?? null });
     } catch (failure) {
-      if (isCurrent()) setError(`Local live state could not be refreshed (${errorText(failure)}). End status was not changed.`);
+      if (isCurrent()) {
+        setEndState({ sessionId: activeSessionId, state: undefined });
+        setError(`Local live state could not be refreshed (${errorText(failure)}). End status is unknown; local captures remain on this device.`);
+      }
     }
   }, [activeSessionId, controller]);
 
@@ -169,7 +172,8 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
 
   async function sync() {
     const sessionToSync = activeSessionId;
-    if (!sessionToSync || !controller) return;
+    const localEndStateKnown = endState !== null && endState.sessionId === sessionToSync && endState.state !== undefined;
+    if (!sessionToSync || !controller || !localEndStateKnown) return;
     setLocalSyncCounts((current) => ({ ...current, [sessionToSync]: (current[sessionToSync] ?? 0) + 1 }));
     let localSyncActive = true;
     const finishLocalSync = () => {
@@ -296,6 +300,7 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
     {!session && <div className="card"><p>Start a live session at the current campaign head, or observe the active session in another tab.</p><button type="button" className="primary" disabled={busy} onClick={() => void start()}>{busy ? "Starting…" : "Start live session"}</button>{sessionId && <button type="button" disabled={busy} onClick={() => void observe()}>Retry session read</button>}</div>}
     {session && <>
       {endStatus && <p className="warning" role="status">End state: {session.mode === "ended_review_pending" ? "Ended - review pending" : endStatus}. The end action is locked locally; retry synchronization to confirm the server barrier.</p>}
+      {endState?.sessionId === activeSessionId && endStatus === undefined && <p className="warning" role="status">Local end status is unknown. Live actions and end writes stay locked until local state can be reread.</p>}
       <div className="live-grid"><div className="live-main">
         <section className="card" aria-labelledby="capture-heading"><h2 id="capture-heading">Capture</h2><p>Capture is stored on this device before success is shown. Only confirmed table facts can ground later AI actions. Questions stay separate.</p>
           <form onSubmit={(event) => void capture(event)}><fieldset disabled={!canWrite || busy}><legend>Capture type</legend><label className="radio-label"><input type="radio" name="capture-type" checked={type === "confirmed_fact"} onChange={() => setType("confirmed_fact")} />Confirmed table fact</label><label className="radio-label"><input type="radio" name="capture-type" checked={type === "unresolved_question"} onChange={() => setType("unresolved_question")} />Unresolved question</label><label htmlFor="capture-text">What happened or remains unresolved?</label><textarea id="capture-text" value={captureText} onChange={(event) => setCaptureText(event.target.value)} rows={3} required /><label htmlFor="capture-record">Affected record ID, if known</label><input id="capture-record" value={recordId} onChange={(event) => setRecordId(event.target.value)} autoComplete="off" /><button className="primary" type="submit">Save capture</button></fieldset></form>
@@ -303,7 +308,7 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
         <section className="card" aria-labelledby="live-ai-heading"><h2 id="live-ai-heading">{action === "ask" ? "Ask" : action === "check" ? "Check" : "Generate"}</h2><form onSubmit={(event) => void runAi(event)}><fieldset disabled={!canWrite || busy || !aiReady}><legend>Live action</legend><label className="radio-label"><input type="radio" name="live-action" checked={action === "ask"} onChange={() => { setAction("ask"); setDraftContext(null); }} />Ask</label><label className="radio-label"><input type="radio" name="live-action" checked={action === "check"} onChange={() => { setAction("check"); setDraftContext(null); }} />Check</label><label className="radio-label"><input type="radio" name="live-action" checked={action === "generate"} onChange={() => setAction("generate")} />Generate</label><label htmlFor="live-prompt">{action === "ask" ? "Question" : action === "check" ? "Claim to check" : "Generation brief"}</label><textarea id="live-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={3} required /><button type="submit" disabled={!aiReady || !canWrite || busy}>Submit {action}</button></fieldset></form>
           {!aiReady && <p>Provider or consent is unavailable. Capture remains available.</p>}{generation && <><p className="badge badge--draft">Draft · {generation.status}</p><p>Source revision <code>{generation.source_revision}</code> · session <code>{generation.session_id}</code></p><section aria-labelledby="live-sources-heading"><h3 id="live-sources-heading">Sources</h3>{generation.sources.length ? <ol>{generation.sources.map((source) => <li key={source.source_id}><code>{source.source_id}</code> · {source.authority} · <code>{source.revision_id}</code><pre>{source.excerpt}</pre></li>)}</ol> : <p>No sources were returned.</p>}</section>{generation.status === "pending" && <button type="button" disabled={busy} onClick={() => void resumeDraft()}>Resume stream after event {sequence}</button>}</>}{draft && <div className="draft-output"><h3>Draft answer</h3><pre>{generation?.terminal_content ?? draft}</pre>{generation?.status === "complete" && draftContext?.recordId && <button type="button" className="button-link" onClick={() => openRecord(draftContext)}>Open affected record in editor with Draft provenance</button>}</div>}
         </section>
-        <section className="card"><h2>End session</h2><p>Ending waits until the server acknowledges every capture required by the end barrier.</p><button type="button" className="danger" disabled={!canWrite || busy} onClick={() => void end()}>{endStatus ? "End intent saved" : "End session"}</button><button type="button" disabled={!controller || busy} onClick={() => void sync()}>Sync saved work</button></section>
+        <section className="card"><h2>End session</h2><p>Ending waits until the server acknowledges every capture required by the end barrier.</p><button type="button" className="danger" disabled={!canWrite || busy} onClick={() => void end()}>{endStatus ? "End intent saved" : "End session"}</button><button type="button" disabled={!controller || busy || endStatus === undefined} onClick={() => void sync()}>Sync saved work</button></section>
       </div><aside className="live-rail" aria-label="Captured items"><section className="card"><h2>Confirmed table facts</h2>{facts.length ? <ol>{facts.map((item) => <li key={item.key}><p>{item.text}</p><p><strong>{captureState(item)}</strong> · operation <code>{item.operationId}</code></p>{editLink(item)}</li>)}</ol> : <p>No confirmed table facts captured.</p>}</section><section className="card"><h2>Unresolved questions</h2><p>Excluded from live grounding.</p>{questions.length ? <ol>{questions.map((item) => <li key={item.key}><p>{item.text}</p><p><strong>{captureState(item)}</strong> · operation <code>{item.operationId}</code></p>{editLink(item)}</li>)}</ol> : <p>No unresolved questions captured.</p>}</section></aside></div>
     </>}
     {error && <div className="error" role="alert">{error}</div>}
