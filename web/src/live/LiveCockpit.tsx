@@ -52,6 +52,7 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
   const [syncLockSessionId, setSyncLockSessionId] = useState<string | null>(null);
   const [localSyncCounts, setLocalSyncCounts] = useState<Record<string, number>>({});
   const [endState, setEndState] = useState<{ sessionId: string; state: SaveSyncState | null | undefined } | null>(null);
+  const endStateRef = useRef(endState);
   const endLookup = useRef(0);
   const activeSessionId = session?.session_id ?? sessionId;
   const activeSessionIdRef = useRef(activeSessionId);
@@ -87,10 +88,16 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
       if (!isCurrent()) return;
       if (!controller && captures.some((capture) => capture.lastError?.includes("stale_controller"))) setError("This tab lost live control. Its capture remains saved locally. Refresh the session and take over before writing again.");
       const end = await store.getEnd(activeSessionId);
-      if (isCurrent()) setEndState({ sessionId: activeSessionId, state: end?.state ?? null });
+      if (isCurrent()) {
+        const nextEndState = { sessionId: activeSessionId, state: end?.state ?? null };
+        endStateRef.current = nextEndState;
+        setEndState(nextEndState);
+      }
     } catch (failure) {
       if (isCurrent()) {
-        setEndState({ sessionId: activeSessionId, state: undefined });
+        const nextEndState = { sessionId: activeSessionId, state: undefined };
+        endStateRef.current = nextEndState;
+        setEndState(nextEndState);
         setError(`Local live state could not be refreshed (${errorText(failure)}). End status is unknown; local captures remain on this device.`);
       }
     }
@@ -172,7 +179,8 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
 
   async function sync() {
     const sessionToSync = activeSessionId;
-    const localEndStateKnown = endState !== null && endState.sessionId === sessionToSync && endState.state !== undefined;
+    const currentEndState = endStateRef.current;
+    const localEndStateKnown = currentEndState !== null && currentEndState.sessionId === sessionToSync && currentEndState.state !== undefined;
     if (!sessionToSync || !controller || !localEndStateKnown) return;
     setLocalSyncCounts((current) => ({ ...current, [sessionToSync]: (current[sessionToSync] ?? 0) + 1 }));
     let localSyncActive = true;
@@ -246,15 +254,29 @@ export function LiveCockpit({ campaign, initialHead, api, atlasApi, readiness, n
 
   async function end() {
     if (!session || !canWrite) return;
+    const sessionToEnd = session.session_id;
+    const localEndStateIsActive = () => {
+      const current = endStateRef.current;
+      return activeSessionIdRef.current === sessionToEnd && current?.sessionId === sessionToEnd && current.state === null;
+    };
+    if (!localEndStateIsActive()) return;
     if (!window.confirm("End this live session? Unsynced captures will remain on this device until the server acknowledges them.")) return;
     setBusy(true); setError("");
     try {
-      const local = await store.listCaptures(session.session_id);
+      const local = await store.listCaptures(sessionToEnd);
+      if (!localEndStateIsActive()) return;
       const required = new Map(local.map(({ deviceId, operationId }) => [`${deviceId}\u0000${operationId}`, { deviceId, operationId }]));
       for (const receipt of session.acknowledgements) required.set(`${receipt.device_id}\u0000${receipt.operation_id}`, { deviceId: receipt.device_id, operationId: receipt.operation_id });
       const storedEnd = await queue.end({ campaignId: session.campaign_id, sessionId: session.session_id, baseRevision: session.base_revision, controllerId: session.controller.controller_id, controllerEpoch: session.controller.epoch, workflowVersion: session.workflow_version, requiredOperationIds: [...required.values()] });
+      if (activeSessionIdRef.current !== sessionToEnd) return;
+      const currentEndState = endStateRef.current;
+      if (currentEndState?.sessionId !== sessionToEnd || currentEndState.state === undefined) return;
       endLookup.current += 1;
-      setEndState({ sessionId: session.session_id, state: storedEnd.state });
+      if (currentEndState.state === null) {
+        const nextEndState = { sessionId: sessionToEnd, state: storedEnd.state };
+        endStateRef.current = nextEndState;
+        setEndState(nextEndState);
+      }
       setAnnouncement("Ended - review pending. Waiting for server acknowledgement of the exact operation set.");
       await sync();
     } catch (failure) { setError(`End intent was not saved (${errorText(failure)}).`); }
