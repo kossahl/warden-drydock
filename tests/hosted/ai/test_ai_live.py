@@ -731,6 +731,59 @@ class LiveSessionServiceTests(unittest.TestCase):
             repo.save_session = original
         self.assertEqual("stale_workflow_version", str(raised.exception))
 
+    def test_end_cas_loss_reloads_exact_replay_and_detects_divergence(self):
+        repo = InMemoryAIRepository()
+        service = LiveSessionService(repo)
+        service.start("session_end_cas", "campaign_end_cas", "revision_one", "controller_one")
+        original = repo.save_session
+
+        def exact_winner(session, *, expected_workflow_version=None, expected_epoch=None):
+            # Simulate the other request having committed this end operation.
+            original(session, expected_workflow_version=expected_workflow_version, expected_epoch=expected_epoch)
+            raise ValueError("stale_workflow_version")
+
+        repo.save_session = exact_winner
+        ended = service.end("session_end_cas", "controller_one", 1, 1,
+                            device_id="device_one", operation_id="end_one")
+        self.assertEqual("ended_review_pending", ended.mode)
+        self.assertEqual(2, ended.workflow_version)
+        self.assertIsNotNone(ended.ended_at)
+        self.assertEqual("end_one", ended.end_barrier.end_operation_id)
+
+        other_repo = InMemoryAIRepository()
+        other_service = LiveSessionService(other_repo)
+        other_service.start("session_end_conflict", "campaign_end_conflict", "revision_one", "controller_one")
+
+        def divergent_winner(session, *, expected_workflow_version=None, expected_epoch=None):
+            stored = other_repo.sessions[session.session_id]
+            stored.receipts[("device_one", "end_one")] = "f" * 64
+            stored.workflow_version += 1
+            raise ValueError("stale_workflow_version")
+
+        other_repo.save_session = divergent_winner
+        with self.assertRaisesRegex(ValueError, "idempotency_digest_conflict"):
+            other_service.end("session_end_conflict", "controller_one", 1, 1,
+                              device_id="device_one", operation_id="end_one")
+
+    def test_end_cas_loss_distinct_operation_preserves_stale_workflow(self):
+        repo = InMemoryAIRepository()
+        service = LiveSessionService(repo)
+        service.start("session_end_stale", "campaign_end_stale", "revision_one", "controller_one")
+
+        def stale_save(session, *, expected_workflow_version=None, expected_epoch=None):
+            stored = repo.sessions[session.session_id]
+            stored.workflow_version += 1
+            stored.mode = "active"
+            stored.end_barrier = None
+            stored.ended_at = None
+            stored.receipts.pop(("device_one", "end_one"), None)
+            raise ValueError("stale_workflow_version")
+
+        repo.save_session = stale_save
+        with self.assertRaisesRegex(ValueError, "stale_workflow_version"):
+            service.end("session_end_stale", "controller_one", 1, 1,
+                        device_id="device_one", operation_id="end_one")
+
     def test_campaign_session_selects_most_recent_ended_session(self):
         # P1-B: after multiple ended sessions, readback selects the newest by
         # persisted creation order, identically to PostgreSQL.
